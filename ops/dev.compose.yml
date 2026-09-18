@@ -18,7 +18,7 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: cineflow
@@ -36,7 +36,7 @@ services:
 
   # 一次性初始化：创建工件 bucket（内容寻址，key 即 BLAKE3 哈希）
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     depends_on:
       minio:
         condition: service_healthy
