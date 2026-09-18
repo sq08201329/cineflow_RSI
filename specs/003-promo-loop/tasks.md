@@ -90,8 +90,8 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T225 [P] CI 更新 .github/workflows/ci.yml：新增 contract job（tests/contract）；覆盖率口径加 agents（--cov=core --cov=agents --cov-fail-under=85）
-- [ ] T226 [P] 实现端到端演示 ops/demo_promo_loop.py（quickstart 验证 3 全流程；本地真实执行，退出码 0）
+- [ ] T225 [P] CI 更新 .github/workflows/ci.yml：新增 contract job（tests/contract）；覆盖率口径加 agents（--cov=core --cov=agents --cov-fail-under=85）；同步修改 pyproject.toml 的 coverage source 为 ["core", "agents"]，保证本地与 CI 口径一致
+- [ ] T226 [P] 实现端到端演示 ops/demo_promo_loop.py（quickstart 验证 3 全流程；含端到端耗时 < 5 分钟断言（SC-002）并写入报告；本地真实执行，退出码 0）
 - [ ] T227 运行 quickstart.md 全部验证步骤并记录结果
 - [ ] T228 [P] 更新 README.md（宣发闭环用法、适配器凭证配置说明、门禁清单现状）
 

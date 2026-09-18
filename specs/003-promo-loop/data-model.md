@@ -54,6 +54,18 @@
 }
 ```
 
+## 1.5 宣发树形态（回放匹配的落点）
+
+- **根节点 = 探索轮次锚点**：`agent_id="promo"`、`policy_version`=当期策略版本、
+  `prompt`=轮次目标描述、`artifact_hash`=轮次计划工件、`eval_breakdown={}`、
+  `status=evaluated`、`score=0.0`（锚点仅作结构起点，不参与质量比较）；
+- **物料尝试 = 根节点的子节点**：`parent_id`=根节点；`observation_context["gen_params"]`
+  记录物料生成参数（batch_size、temperature 档等）——即 002 回放精确匹配的匹配键；
+  `eval_breakdown` 含 §3 的三评估器明细；投放被拒/失败的尝试同样落子节点（FAILED 或
+  合规拦截，成本照常入账）；
+- 回放时策略自根节点按不同 gen_params 档 probe，命中历史物料批次——与 002 的
+  规范化精确匹配语义直接兼容。
+
 ## 2. 存储层增量：迁移 0002 `promo_campaigns`（**可变**运营表）
 
 | 列 | 类型 | 约束 |
@@ -78,14 +90,15 @@
 ```json
 "eval_breakdown": {
   "rule.material_compliance@1.0.0": {"score": 1.0, "diagnostics": {...}},
-  "proxy.ctr_history@<快照哈希前12位>": {"score": 0.62, "diagnostics": {...}},
+  "proxy.ctr_history@1.0.0+<数据快照哈希前12位>": {"score": 0.62, "diagnostics": {...}},
   "human.platform_metrics@1.0.0": {"score": 0.58, "diagnostics": {"ctr": ..., "completion_rate": ...}}
 }
 ```
 
 - `human.platform_metrics` 的 score = 平台真值的归一化合成（完播率/CTR/转化按 configs
   权重），diagnostics 保留原始指标；
-- CTR 代理的版本号携带数据快照哈希（research 决策 4）；
+- CTR 代理的版本号携带数据快照哈希（`1.0.0+<快照哈希前12位>`），数据变即版本变；
+  `calibration` 字段仅存人评校准记录（research 决策 4）；
 - 合成权重来自 `configs/movie.yaml` 的 `evaluator_weights.promo` 段（冻结进 config_snapshot）。
 
 ## 4. 闭环状态机

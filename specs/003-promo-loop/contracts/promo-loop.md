@@ -21,7 +21,7 @@ def run_round(round_id: str, policy: ExplorationPolicy,
 | 成本入账 | 生成/投放/LLM/耗时全部进节点 CostRecord；FAILED 节点不例外（FR-007） |
 | 落树 | 指标回流后一次性构造完整节点 INSERT（research 决策 1）；节点状态 evaluated/failed |
 | 对账 | 轮次结束时输出成本对账：树内节点成本合计 == 运营表扣减合计 == 网关/适配器账目（SC-003） |
-| 失败 | 适配器失败按重试策略（上限 3 次退避）；最终失败节点 FAILED，轮次继续其余物料 |
+| 失败 | 适配器调用失败按重试策略（上限 3 次退避）；**网关失败不再重试**（网关内部已退避 3 次，双层重试禁止叠加放大）；最终失败节点 FAILED，轮次继续其余物料 |
 
 ## 3. RoundResult（返回与 JSON 报告）
 
