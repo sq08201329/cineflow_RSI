@@ -1,0 +1,45 @@
+# CI：单元测试覆盖率门禁（≥85%，宪章里程碑门禁）+ 集成测试（PG/MinIO）
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+      - name: 安装依赖（Python 3.11 由 .python-version 锁定）
+        run: uv sync
+      - name: ruff 检查
+        run: |
+          uvx ruff check core ops tests
+          uvx ruff format --check core ops tests
+      - name: 单元测试 + 覆盖率门禁（≥85%）
+        run: uv run pytest tests/unit --cov=core --cov-report=term-missing --cov-fail-under=85
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+      - run: uv sync
+      - name: 起开发依赖（PostgreSQL 16 + MinIO）
+        run: docker compose -f ops/dev.compose.yml up -d --wait
+      - name: 执行 Alembic 迁移（含 immutable 触发器与应用账号 REVOKE）
+        run: uv run alembic -c ops/alembic.ini upgrade head
+        env:
+          CINEFLOW_PG_DSN: postgresql+psycopg://cineflow:cineflow@localhost:5432/cineflow
+      - name: 集成测试（immutable 双保险 / jsonb / 三维索引 / 3 万节点基准）
+        run: uv run pytest tests/integration -m integration
+        env:
+          CINEFLOW_PG_TEST_DSN: postgresql+psycopg://cineflow:cineflow@localhost:5432/cineflow
+      - name: 清理
+        if: always()
+        run: docker compose -f ops/dev.compose.yml down -v
