@@ -6,9 +6,9 @@
 """
 
 import pytest
-from core.evaluators.composite import composite_score
 
 from core.evaluators.base import EvalResult
+from core.evaluators.composite import composite_score
 from core.evaluators.errors import WeightMismatchError
 
 
@@ -68,3 +68,18 @@ class Test键不匹配:
         weights = {"rule.gate": 0.0}
         with pytest.raises(WeightMismatchError):
             composite_score(breakdown, weights)
+
+
+class Test版本化键对齐:
+    def test_带版本键与裸键权重对齐(self):
+        from core.evaluators.composite import composite_score_versioned
+
+        breakdown = _breakdown(**{"rule.gate@1.0.0": 1.0, "proxy.a@2.1.0": 0.8})
+        weights = {"rule.gate": 0.0, "proxy.a": 1.0}
+        assert composite_score_versioned(breakdown, weights) == pytest.approx(0.8)
+
+    def test_版本化键_gate_仍触发(self):
+        from core.evaluators.composite import composite_score_versioned
+
+        breakdown = _breakdown(**{"rule.gate@1.0.0": 0.0, "proxy.a@1.0.0": 1.0})
+        assert composite_score_versioned(breakdown, {"rule.gate": 0.0, "proxy.a": 1.0}) == 0.0

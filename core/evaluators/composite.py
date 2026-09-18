@@ -32,3 +32,16 @@ def composite_score(breakdown: dict[str, EvalResult], weights: dict[str, float])
             return 0.0
 
     return sum(weights[key] * result.score for key, result in breakdown.items())
+
+
+def composite_score_versioned(breakdown: dict[str, EvalResult], weights: dict[str, float]) -> float:
+    """breakdown 键带 @version 后缀（evaluator_id@version）时对齐 weights 裸键再合成。
+
+    权重来自形态配置（裸键），节点明细键带版本（宪章原则一）；
+    对齐规则：恰一个 @，去掉版本段后与权重键精确对应，其余语义不变。
+    """
+    aligned: dict[str, EvalResult] = {}
+    for key, result in breakdown.items():
+        base = key.rsplit("@", 1)[0] if "@" in key else key
+        aligned[base] = result
+    return composite_score(aligned, weights)
