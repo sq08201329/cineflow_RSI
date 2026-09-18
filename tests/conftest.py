@@ -177,8 +177,9 @@ def make_trajectory():
 @pytest.fixture()
 def campaigns_engine():
     """运营表夹具：SQLite 内存库建 promo_campaigns（可变表，无 immutable 触发器）。"""
-    from agents.promo.db import create_campaigns_schema
     from sqlalchemy import create_engine
+
+    from agents.promo.db import create_campaigns_schema
 
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_campaigns_schema(engine)
@@ -204,9 +205,7 @@ def mock_gateway(promo_config):
     from core.llm_gateway.backends.mock import MockBackend
     from core.llm_gateway.gateway import LLMGateway
 
-    return LLMGateway(
-        MockBackend(), price_book=promo_config.model_prices, sleep=lambda _: None
-    )
+    return LLMGateway(MockBackend(), price_book=promo_config.model_prices, sleep=lambda _: None)
 
 
 @pytest.fixture()

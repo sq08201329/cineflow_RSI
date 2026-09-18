@@ -34,13 +34,12 @@ promo_campaigns = Table(
     Column(
         "status",
         Text,
-        CheckConstraint(
-            "status IN ('created', 'delivering', 'delivered', 'ingested', 'failed')"
-        ),
+        CheckConstraint("status IN ('created', 'delivering', 'delivered', 'ingested', 'failed')"),
         nullable=False,
     ),
-    Column("spent_usd", Float, CheckConstraint("spent_usd >= 0"),
-           nullable=False, server_default="0"),
+    Column(
+        "spent_usd", Float, CheckConstraint("spent_usd >= 0"), nullable=False, server_default="0"
+    ),
     Column("external_id", Text, nullable=True),
     Column("metrics", _jsonb(), nullable=True),  # 回流后写入一次
     Column("created_at", Float, nullable=False),

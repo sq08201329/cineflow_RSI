@@ -12,17 +12,17 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T201 创建目录：agents/promo/{evaluators,platform}、core/llm_gateway/backends/、tests/contract/、policies/history/promo/
-- [ ] T202 [P] configs/movie.yaml 追加 promo 段（exploration_per_round_usd、promo_pilot_ratio、物料规格、敏感词库、模型价目表、模拟平台分布参数）
+- [x] T201 创建目录：agents/promo/{evaluators,platform}、core/llm_gateway/backends/、tests/contract/、policies/history/promo/
+- [x] T202 [P] configs/movie.yaml 追加 promo 段（exploration_per_round_usd、promo_pilot_ratio、物料规格、敏感词库、模型价目表、模拟平台分布参数）
 
 ## 阶段 2：基础（阻塞性前置条件）
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T203 迁移 0002：可变运营表 promo_campaigns（ops/migrations/versions/0002_promo_campaigns.py；唯一键 (round_id, material_id)；不加 immutable 触发器）
-- [ ] T204 网关测试 tests/unit/test_llm_gateway.py（计费入账、缓存命中零成本、重试退避、缺价目报错、Mock 确定性）——先写确认失败
-- [ ] T205 网关实现 core/llm_gateway/gateway.py + backends/mock.py + backends/http.py（骨架，凭证环境变量注入；契约见 contracts/llm-gateway.md）
-- [ ] T206 [P] 测试夹具扩展 tests/conftest.py（运营表引擎夹具、SimulatedPlatform 工厂、Mock 网关工厂）
+- [x] T203 迁移 0002：可变运营表 promo_campaigns（ops/migrations/versions/0002_promo_campaigns.py；唯一键 (round_id, material_id)；不加 immutable 触发器）
+- [x] T204 网关测试 tests/unit/test_llm_gateway.py（计费入账、缓存命中零成本、重试退避、缺价目报错、Mock 确定性）——先写确认失败
+- [x] T205 网关实现 core/llm_gateway/gateway.py + backends/mock.py + backends/http.py（骨架，凭证环境变量注入；契约见 contracts/llm-gateway.md）
+- [x] T206 [P] 测试夹具扩展 tests/conftest.py（运营表引擎夹具、SimulatedPlatform 工厂、Mock 网关工厂）
 
 **检查点**: 迁移可执行、网关可用——用户故事可开始
 
@@ -36,22 +36,22 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T207 [P] [US1] 合规评估器单测 tests/unit/test_promo_compliance.py（尺寸/时长/敏感词拦截；缺配置拒投而非放行）
-- [ ] T208 [P] [US1] CTR 估计器单测 tests/unit/test_ctr.py（分桶贝塔平滑、稀疏桶回退先验、快照哈希版本化、确定性）
-- [ ] T209 [P] [US1] 平台真值评估器单测 tests/unit/test_platform_metrics.py（归一化合成、越界指标拒绝、写入即冻结语义）
-- [ ] T210 [US1] 执行器单测 tests/unit/test_promo_loop.py（2% 边界含最小货币单位、事务扣减防双花、重复触发幂等、FAILED 成本入账、对账一致）
-- [ ] T211 [US1] 适配器契约套件 tests/contract/test_platform_adapter.py（花费上限/幂等键/状态机/指标 schema/错误映射；双实现同跑，真实实现无凭证跳过）
+- [x] T207 [P] [US1] 合规评估器单测 tests/unit/test_promo_compliance.py（尺寸/时长/敏感词拦截；缺配置拒投而非放行）
+- [x] T208 [P] [US1] CTR 估计器单测 tests/unit/test_ctr.py（分桶贝塔平滑、稀疏桶回退先验、快照哈希版本化、确定性）
+- [x] T209 [P] [US1] 平台真值评估器单测 tests/unit/test_platform_metrics.py（归一化合成、越界指标拒绝、写入即冻结语义）
+- [x] T210 [US1] 执行器单测 tests/unit/test_promo_loop.py（2% 边界含最小货币单位、事务扣减防双花、重复触发幂等、FAILED 成本入账、对账一致）
+- [x] T211 [US1] 适配器契约套件 tests/contract/test_platform_adapter.py（花费上限/幂等键/状态机/指标 schema/错误映射；双实现同跑，真实实现无凭证跳过）
 
 ### 用户故事 1 的实现
 
-- [ ] T212 [P] [US1] 实现 agents/promo/evaluators/compliance.py（rule.material_compliance@1.0.0 注册）
-- [ ] T213 [P] [US1] 实现 agents/promo/evaluators/ctr.py（proxy.ctr_history，分桶平滑 + 快照版本化）
-- [ ] T214 [P] [US1] 实现 agents/promo/evaluators/platform_metrics.py（human.platform_metrics，真值归一化）
-- [ ] T215 [P] [US1] 实现 agents/promo/platform/base.py + simulated.py（PromoMaterial/Campaign/MetricSnapshot 模型 + 确定性模拟平台 + 内部账本）
-- [ ] T216 [US1] 实现 agents/promo/material.py（网关生成物料 → 工件内容寻址落库；依赖 T205、T215）
-- [ ] T217 [US1] 实现 agents/promo/loop.py（执行器：门禁/幂等/状态机/对账/RoundResult；依赖 T212-T216、T203）
-- [ ] T218 [US1] 实现 ops/ingest_metrics.py（回流管道：快照校验 → 一次性完整节点 INSERT 冻结；依赖 T217）
-- [ ] T219 [P] [US1] 实现 agents/promo/platform/http_real.py（契约同构真实适配器骨架，凭证注入）
+- [x] T212 [P] [US1] 实现 agents/promo/evaluators/compliance.py（rule.material_compliance@1.0.0 注册）
+- [x] T213 [P] [US1] 实现 agents/promo/evaluators/ctr.py（proxy.ctr_history，分桶平滑 + 快照版本化）
+- [x] T214 [P] [US1] 实现 agents/promo/evaluators/platform_metrics.py（human.platform_metrics，真值归一化）
+- [x] T215 [P] [US1] 实现 agents/promo/platform/base.py + simulated.py（PromoMaterial/Campaign/MetricSnapshot 模型 + 确定性模拟平台 + 内部账本）
+- [x] T216 [US1] 实现 agents/promo/material.py（网关生成物料 → 工件内容寻址落库；依赖 T205、T215）
+- [x] T217 [US1] 实现 agents/promo/loop.py（执行器：门禁/幂等/状态机/对账/RoundResult；依赖 T212-T216、T203）
+- [x] T218 [US1] 实现 ops/ingest_metrics.py（回流管道：快照校验 → 一次性完整节点 INSERT 冻结；依赖 T217）
+- [x] T219 [P] [US1] 实现 agents/promo/platform/http_real.py（契约同构真实适配器骨架，凭证注入）
 
 **检查点**: 模拟平台一轮闭环跑通，对账一致、幂等成立
 
