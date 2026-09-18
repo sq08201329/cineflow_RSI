@@ -1,0 +1,24 @@
+---
+name: speckit-implement
+description: 执行任务并实现功能
+compatibility: Requires spec-kit project structure with .specify/ directory
+metadata:
+  author: github-spec-kit
+  source: preset:chinese
+---
+
+# Speckit Implement Skill
+
+请根据任务列表（`tasks.md`）逐个实现功能。
+
+**语言要求**：
+- 代码注释使用中文
+- 提交信息使用中文
+- 对话和解释使用中文
+
+执行步骤：
+1. 从任务列表中选择下一个任务
+2. 先编写测试（如要求），验证失败
+3. 实现功能，确保测试通过
+4. 提交变更
+5. 继续下一个任务

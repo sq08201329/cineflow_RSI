@@ -1,0 +1,70 @@
+schema_version: "1.0"
+
+preset:
+  id: "chinese"
+  name: "中文工作流"
+  version: "1.0.0"
+  description: "中文语言预设——所有 Spec Kit 文档模板和 AI 输出均使用中文"
+  author: "local"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=0.6.0"
+
+provides:
+  templates:
+    - type: "template"
+      name: "constitution-template"
+      file: "templates/constitution-template.md"
+      replaces: "constitution-template"
+
+    - type: "template"
+      name: "spec-template"
+      file: "templates/spec-template.md"
+      replaces: "spec-template"
+
+    - type: "template"
+      name: "plan-template"
+      file: "templates/plan-template.md"
+      replaces: "plan-template"
+
+    - type: "template"
+      name: "tasks-template"
+      file: "templates/tasks-template.md"
+      replaces: "tasks-template"
+
+    - type: "command"
+      name: "speckit.constitution"
+      file: "commands/speckit.constitution.md"
+      description: "创建或更新项目宪章（中文版）"
+      replaces: "speckit.constitution"
+
+    - type: "command"
+      name: "speckit.specify"
+      file: "commands/speckit.specify.md"
+      description: "编写功能规格说明（中文版）"
+      replaces: "speckit.specify"
+
+    - type: "command"
+      name: "speckit.plan"
+      file: "commands/speckit.plan.md"
+      description: "制定技术实现计划（中文版）"
+      replaces: "speckit.plan"
+
+    - type: "command"
+      name: "speckit.tasks"
+      file: "commands/speckit.tasks.md"
+      description: "生成任务列表（中文版）"
+      replaces: "speckit.tasks"
+
+    - type: "command"
+      name: "speckit.implement"
+      file: "commands/speckit.implement.md"
+      description: "执行任务并实现功能（中文版）"
+      replaces: "speckit.implement"
+
+tags:
+  - "chinese"
+  - "language"
+  - "i18n"
+  - "zh-CN"

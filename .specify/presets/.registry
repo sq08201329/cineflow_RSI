@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "presets": {
+    "chinese": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:7ea9b230cae96ed3a989d211d10c5ca5774d41e2ea0e7754b3137a7ad3546379",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "kimi": [
+          "speckit.constitution",
+          "speckit.specify",
+          "speckit.plan",
+          "speckit.tasks",
+          "speckit.implement"
+        ]
+      },
+      "registered_skills": {
+        "kimi": [
+          "speckit-constitution",
+          "speckit-specify",
+          "speckit-plan",
+          "speckit-tasks",
+          "speckit-implement"
+        ]
+      },
+      "installed_at": "2026-09-18T07:55:43.355826+00:00"
+    }
+  }
+}
