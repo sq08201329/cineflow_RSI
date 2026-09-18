@@ -172,3 +172,46 @@ def make_trajectory():
         return ReplayTrajectory(**fields)
 
     return _make
+
+
+@pytest.fixture()
+def campaigns_engine():
+    """运营表夹具：SQLite 内存库建 promo_campaigns（可变表，无 immutable 触发器）。"""
+    from agents.promo.db import create_campaigns_schema
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_campaigns_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def promo_config():
+    """宣发形态配置夹具：直接读 configs/movie.yaml 的 promo 段（真实配置路径）。"""
+    from pathlib import Path
+
+    import yaml
+
+    from agents.promo.config import PromoConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return PromoConfig.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+@pytest.fixture()
+def mock_gateway(promo_config):
+    """Mock 网关夹具：确定性后端 + 形态价目表；测试可用 sleep 注入消除真实退避。"""
+    from core.llm_gateway.backends.mock import MockBackend
+    from core.llm_gateway.gateway import LLMGateway
+
+    return LLMGateway(
+        MockBackend(), price_book=promo_config.model_prices, sleep=lambda _: None
+    )
+
+
+@pytest.fixture()
+def simulated_platform(promo_config):
+    """确定性模拟平台夹具（决策 3：物料哈希种子，逐字节可复现）。"""
+    from agents.promo.platform.simulated import SimulatedPlatform
+
+    return SimulatedPlatform(promo_config.simulated_platform)

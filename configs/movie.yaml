@@ -11,6 +11,10 @@ evaluator_weights:
     proxy.identity_consistency: 0.35
     proxy.flicker: 0.15
     judge.cinematic: 0.25
+  promo:
+    rule.material_compliance: gate
+    proxy.ctr_history: 0.4
+    human.platform_metrics: 0.6
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
@@ -20,3 +24,24 @@ replay:
   latency_quantum_ms: 50
   validation_split: latest_tree
   unbiasedness_tau_threshold: 0.95
+
+# 宣发（promo）形态参数：预算门禁、物料规格、敏感词库、模型价目表、模拟平台分布
+promo:
+  exploration_per_round_usd: 500
+  promo_pilot_ratio: 0.02 # 单轮 ≤ 总预算 2%（预算门禁，FR-002）
+  default_model: mock-copy-v1
+  materials_per_round: 4
+  material_spec:
+    max_copy_chars: 120
+    poster_size: "1080x1920"
+    max_duration_seconds: 30
+  sensitive_words: ["最", "第一", "国家级"] # 示例敏感词库；缺配置即拒投不放行
+  ctr_prior: {alpha: 2.0, beta: 40.0} # 分桶贝塔平滑先验强度
+  ctr_cap: 0.2 # CTR 归一化上限（score = min(1, ctr / cap)）
+  metric_weights: {ctr: 0.5, completion_rate: 0.3, conversions: 0.2} # 真值归一化合成
+  model_prices: # 模型价目表（美元/千 token）；缺价目即报错，不允许静默零成本
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+  simulated_platform: # 模拟平台分布参数（Beta 先验）
+    base_impressions: 1000
+    ctr_beta: [2.0, 40.0]
+    completion_beta: [3.0, 7.0]
