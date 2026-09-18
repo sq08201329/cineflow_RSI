@@ -18,10 +18,10 @@
 
 **目的**: 项目初始化与基本结构
 
-- [ ] T001 按 plan.md 创建目录结构：core/tree/、core/evaluators/、configs/、tests/unit/、tests/integration/、ops/migrations/
-- [ ] T002 用 uv 初始化 Python 3.11+ 项目，pyproject.toml 声明依赖：sqlalchemy>=2.0、psycopg[binary]、alembic、boto3、blake3、uuid-utils、pyyaml；dev 依赖：pytest、pytest-cov
-- [ ] T003 [P] 配置 pytest（pyproject.toml：markers `integration`、testpaths、coverage 源=core）
-- [ ] T004 [P] 配置 ruff（lint + format）
+- [x] T001 按 plan.md 创建目录结构：core/tree/、core/evaluators/、configs/、tests/unit/、tests/integration/、ops/migrations/
+- [x] T002 用 uv 初始化 Python 3.11+ 项目，pyproject.toml 声明依赖：sqlalchemy>=2.0、psycopg[binary]、alembic、boto3、blake3、uuid-utils、pyyaml；dev 依赖：pytest、pytest-cov
+- [x] T003 [P] 配置 pytest（pyproject.toml：markers `integration`、testpaths、coverage 源=core）
+- [x] T004 [P] 配置 ruff（lint + format）
 
 ---
 
@@ -31,12 +31,12 @@
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T005 创建错误类型体系 core/tree/errors.py（TreeStoreError 基类 → ValidationError / DuplicateError / NotFoundError / ImmutableViolationError，见 contracts/tree-store.md）
-- [ ] T006 [P] 创建 ops/dev.compose.yml（PostgreSQL 16 + MinIO 开发依赖，见 research.md 决策 5）
-- [ ] T007 初始化 Alembic 迁移框架 ops/migrations/（env.py 指向 PG；迁移账号与应用账号分离，应用账号执行 REVOKE）
-- [ ] T008 编写首个迁移：tree_nodes / discovery_trees 表 + reject_mutation() 触发器 + REVOKE UPDATE,DELETE（DDL 见 data-model.md §2；依赖 T007）
-- [ ] T009 [P] 创建 configs/movie.yaml 最小骨架（evaluator_weights 占位，供 US3 读取）
-- [ ] T010 [P] 创建测试公共夹具 tests/conftest.py（SQLite 内存引擎、临时目录 LocalArtifactStore 的 fixture；桩评估器不在此定义，唯一定义来源见 T025 tests/stubs.py）
+- [x] T005 创建错误类型体系 core/tree/errors.py（TreeStoreError 基类 → ValidationError / DuplicateError / NotFoundError / ImmutableViolationError，见 contracts/tree-store.md）
+- [x] T006 [P] 创建 ops/dev.compose.yml（PostgreSQL 16 + MinIO 开发依赖，见 research.md 决策 5）
+- [x] T007 初始化 Alembic 迁移框架 ops/migrations/（env.py 指向 PG；迁移账号与应用账号分离，应用账号执行 REVOKE）
+- [x] T008 编写首个迁移：tree_nodes / discovery_trees 表 + reject_mutation() 触发器 + REVOKE UPDATE,DELETE（DDL 见 data-model.md §2；依赖 T007）
+- [x] T009 [P] 创建 configs/movie.yaml 最小骨架（evaluator_weights 占位，供 US3 读取）
+- [x] T010 [P] 创建测试公共夹具 tests/conftest.py（SQLite 内存引擎、临时目录 LocalArtifactStore 的 fixture；桩评估器不在此定义，唯一定义来源见 T025 tests/stubs.py）
 
 **检查点**: 迁移可执行、触发器生效、测试夹具可用——用户故事可开始
 
@@ -50,19 +50,19 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T011 [P] [US1] 领域模型单测 tests/unit/test_tree_models.py（frozen 不可改、score/status 一致性、depth 递推校验、PLANNED 拒落盘）
-- [ ] T012 [P] [US1] TreeStore 契约单测 tests/unit/test_tree_store.py（SQLite：append/get/children/trees_by/nodes_of；eval_breakdown 键格式校验 FR-009；错误语义按契约表）
-- [ ] T013 [P] [US1] ArtifactStore 单测 tests/unit/test_artifact_store.py（Local 实现：内容寻址、幂等去重、未命中 ArtifactNotFoundError、内容不符 ArtifactCorruptedError）
-- [ ] T014 [US1] immutable 集成测试 tests/integration/test_immutability.py（Docker PG：UPDATE/DELETE 被触发器与权限双重拒绝；随机抽样节点重算 score 与落盘一致）
-- [ ] T015 [US1] PG 行为集成测试 tests/integration/test_tree_store_pg.py（jsonb 读写、三维索引过滤正确性、3 万节点基准：append p99 < 50ms、children p99 < 100ms）
+- [x] T011 [P] [US1] 领域模型单测 tests/unit/test_tree_models.py（frozen 不可改、score/status 一致性、depth 递推校验、PLANNED 拒落盘）
+- [x] T012 [P] [US1] TreeStore 契约单测 tests/unit/test_tree_store.py（SQLite：append/get/children/trees_by/nodes_of；eval_breakdown 键格式校验 FR-009；错误语义按契约表）
+- [x] T013 [P] [US1] ArtifactStore 单测 tests/unit/test_artifact_store.py（Local 实现：内容寻址、幂等去重、未命中 ArtifactNotFoundError、内容不符 ArtifactCorruptedError）
+- [x] T014 [US1] immutable 集成测试 tests/integration/test_immutability.py（Docker PG：UPDATE/DELETE 被触发器与权限双重拒绝；随机抽样节点重算 score 与落盘一致）
+- [x] T015 [US1] PG 行为集成测试 tests/integration/test_tree_store_pg.py（jsonb 读写、三维索引过滤正确性、3 万节点基准：append p99 < 50ms、children p99 < 100ms）
 
 ### 用户故事 1 的实现
 
-- [ ] T016 [P] [US1] 实现领域模型 core/tree/models.py（NodeStatus/CostRecord/TreeNode/DiscoveryTree，校验规则见 data-model.md §1）
-- [ ] T017 [P] [US1] 实现表定义 core/tree/db.py（SQLAlchemy Core Table + 索引，对齐迁移 DDL）
-- [ ] T018 [P] [US1] 实现内容寻址存储 core/tree/artifacts.py（blake3 哈希 + LocalArtifactStore + S3ArtifactStore）
-- [ ] T019 [US1] 实现 TreeStore core/tree/store.py（追加/读取/谱系查询，存储层异常转换为 ImmutableViolationError；依赖 T016、T017）
-- [ ] T020 [US1] US1 检查点验证：全部 US1 测试通过且以 frozen/触发器两条路径各自证明不可变
+- [x] T016 [P] [US1] 实现领域模型 core/tree/models.py（NodeStatus/CostRecord/TreeNode/DiscoveryTree，校验规则见 data-model.md §1）
+- [x] T017 [P] [US1] 实现表定义 core/tree/db.py（SQLAlchemy Core Table + 索引，对齐迁移 DDL）
+- [x] T018 [P] [US1] 实现内容寻址存储 core/tree/artifacts.py（blake3 哈希 + LocalArtifactStore + S3ArtifactStore）
+- [x] T019 [US1] 实现 TreeStore core/tree/store.py（追加/读取/谱系查询，存储层异常转换为 ImmutableViolationError；依赖 T016、T017）
+- [x] T020 [US1] US1 检查点验证：全部 US1 测试通过且以 frozen/触发器两条路径各自证明不可变
 
 **检查点**: US1 完整可运行、可独立演示（探索全程可追溯）
 
