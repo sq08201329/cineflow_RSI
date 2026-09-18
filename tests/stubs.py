@@ -14,6 +14,7 @@ from core.evaluators.base import (
     EvaluatorKind,
     EvaluatorSpec,
 )
+from policies.base import Budget, ExplorationPolicy, SimulatorEnv
 
 
 def make_spec(
@@ -114,3 +115,41 @@ class StubNonDeterministicEvaluator(_FixedScoreStub):
             ),
             score=0.5,
         )
+
+
+class ReferencePolicy(ExplorationPolicy):
+    """确定性贪心参考策略（回放单测/演示/无偏性共用的唯一参考策略）。
+
+    每轮：observed() → 选已揭示中得分最高者（平分按 node_id 字典序，保证确定性）
+    → 用参数网格中的下一组参数 probe 该节点；预算耗尽或轮数用尽即停止。
+    版本号 = 类源码 BLAKE3 前 12 位（FR-015，策略即代码）。
+    """
+
+    def __init__(self, param_grid: list[dict] | None = None, max_rounds: int = 8) -> None:
+        self.param_grid = param_grid or [{"temperature": 0.3}, {"temperature": 0.7}]
+        self.max_rounds = max_rounds
+
+    @property
+    def policy_version(self) -> str:
+        import inspect
+
+        import blake3
+
+        return blake3.blake3(inspect.getsource(type(self)).encode()).hexdigest()[:12]
+
+    def solve(self, env: SimulatorEnv, budget: Budget) -> str:
+        best_id: str | None = None
+        probes = 0
+        for round_no in range(self.max_rounds):
+            observations = env.observed()
+            scored = sorted(
+                ((o.score, o.node_id) for o in observations.values() if o.score is not None),
+                key=lambda item: (-item[0], item[1]),
+            )
+            if scored:
+                best_id = scored[0][1]
+            if best_id is None or probes >= budget.max_probes:
+                break
+            env.probe(best_id, self.param_grid[round_no % len(self.param_grid)])
+            probes += 1
+        return best_id or ""

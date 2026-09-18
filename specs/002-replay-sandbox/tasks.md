@@ -12,20 +12,20 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T101 按 plan.md 创建目录：core/replay/、core/sandbox/backends/、policies/history/、tests/adversarial/、tests/unbiasedness/
-- [ ] T102 [P] 配置 pytest 新 markers（`adversarial`、`unbiasedness`）与覆盖率口径（core 含 replay/sandbox）
-- [ ] T103 [P] configs/movie.yaml 追加 replay 段（worker_count、latency_quantum_ms、unbiasedness_tau_threshold，对齐开发文档 §7 示例）
+- [x] T101 按 plan.md 创建目录：core/replay/、core/sandbox/backends/、policies/history/、tests/adversarial/、tests/unbiasedness/
+- [x] T102 [P] 配置 pytest 新 markers（`adversarial`、`unbiasedness`）与覆盖率口径（core 含 replay/sandbox）
+- [x] T103 [P] configs/movie.yaml 追加 replay 段（worker_count、latency_quantum_ms、unbiasedness_tau_threshold，对齐开发文档 §7 示例）
 
 ## 阶段 2：基础（阻塞性前置条件）
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T104 实现 VirtualClock core/replay/clock.py（tick_decision/tick_execution ⌈k/W⌉；worker_count≥1、batch≥1 校验）
-- [ ] T105 [P] 实现 ReplayTrajectory core/replay/trajectory.py（frozen + JSON 报告序列化；结局状态机）
-- [ ] T106 [P] 实现 Budget 与 SimulatorEnv/ExplorationPolicy 协议 policies/base.py（回放装配时 max_generation_calls 强制为 0 的断言）
-- [ ] T107 [P] 实现生成参数规范化 core/replay/matching.py（规范化 JSON 精确相等，决策 5）
-- [ ] T108 [P] 实现观测投影 core/replay/observation.py（Observation/ProbeResult 模型 + 字段白名单投影）
-- [ ] T109 [P] 测试夹具扩展 tests/conftest.py（小树构建工厂：可控父/参/得分的历史树；录制轨迹夹具生成器）
+- [x] T104 实现 VirtualClock core/replay/clock.py（tick_decision/tick_execution ⌈k/W⌉；worker_count≥1、batch≥1 校验）
+- [x] T105 [P] 实现 ReplayTrajectory core/replay/trajectory.py（frozen + JSON 报告序列化；结局状态机）
+- [x] T106 [P] 实现 Budget 与 SimulatorEnv/ExplorationPolicy 协议 policies/base.py（回放装配时 max_generation_calls 强制为 0 的断言）
+- [x] T107 [P] 实现生成参数规范化 core/replay/matching.py（规范化 JSON 精确相等，决策 5）
+- [x] T108 [P] 实现观测投影 core/replay/observation.py（Observation/ProbeResult 模型 + 字段白名单投影）
+- [x] T109 [P] 测试夹具扩展 tests/conftest.py（小树构建工厂：可控父/参/得分的历史树；录制轨迹夹具生成器）
 
 **检查点**: 时钟/轨迹/匹配/投影单测通过，模拟器可开始
 
@@ -39,17 +39,17 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T110 [P] [US1] 时钟单测 tests/unit/test_clock.py（⌈k/W⌉、决策轮计数、非法参数）
-- [ ] T111 [P] [US1] 匹配与投影单测 tests/unit/test_matching_observation.py（规范化相等、缺字段不匹配、白名单投影不泄漏）
-- [ ] T112 [P] [US1] 模拟器单测 tests/unit/test_simulator.py（揭示状态机、UNKNOWN 不得分、多节点同揭示、FAILED 节点可回放、预算耗尽拒绝、已揭示单调递增、零生成断言）
-- [ ] T113 [P] [US1] 模拟器池单测 tests/unit/test_pool.py（多树合并、未冻结树拒绝、异 Agent 拒绝、空池空轨迹）
-- [ ] T114 [US1] 参考策略端到端回放单测 tests/unit/test_replay_e2e.py（确定性手工策略全程回放，轨迹与手工预期逐字段一致——US1 验收场景 1-6）
+- [x] T110 [P] [US1] 时钟单测 tests/unit/test_clock.py（⌈k/W⌉、决策轮计数、非法参数）
+- [x] T111 [P] [US1] 匹配与投影单测 tests/unit/test_matching_observation.py（规范化相等、缺字段不匹配、白名单投影不泄漏）
+- [x] T112 [P] [US1] 模拟器单测 tests/unit/test_simulator.py（揭示状态机、UNKNOWN 不得分、多节点同揭示、FAILED 节点可回放、预算耗尽拒绝、已揭示单调递增、零生成断言）
+- [x] T113 [P] [US1] 模拟器池单测 tests/unit/test_pool.py（多树合并、未冻结树拒绝、异 Agent 拒绝、空池空轨迹）
+- [x] T114 [US1] 参考策略端到端回放单测 tests/unit/test_replay_e2e.py（确定性手工策略全程回放，轨迹与手工预期逐字段一致——US1 验收场景 1-6）
 
 ### 用户故事 1 的实现
 
-- [ ] T115 [US1] 实现 ReplaySimulator core/replay/simulator.py（from_trees/observed/probe/trajectory；预算递减；揭示迁移；依赖 T104-T109）
-- [ ] T116 [US1] 实现模拟器池 core/replay/pool.py（冻结校验、同 Agent 校验、合并候选视图；依赖 T115）
-- [ ] T117 [US1] 实现参考手工策略 tests/stubs.py 追加 ReferencePolicy（确定性贪心，供单测/演示/无偏性共用）
+- [x] T115 [US1] 实现 ReplaySimulator core/replay/simulator.py（from_trees/observed/probe/trajectory；预算递减；揭示迁移；依赖 T104-T109）
+- [x] T116 [US1] 实现模拟器池 core/replay/pool.py（冻结校验、同 Agent 校验、合并候选视图；依赖 T115）
+- [x] T117 [US1] 实现参考手工策略 tests/stubs.py 追加 ReferencePolicy（确定性贪心，供单测/演示/无偏性共用）
 
 **检查点**: US1 全部单测通过——进程内回放语义完整正确
 
