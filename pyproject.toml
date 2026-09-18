@@ -28,6 +28,8 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "integration: 需要 Docker 化 PostgreSQL/MinIO 的集成测试（本地无 Docker 时自动跳过）",
+    "adversarial: 对抗测试套件（合并阻塞门禁，需 Docker；无 Docker 报错而非跳过）",
+    "unbiasedness: 无偏性验收测试（发布阻塞门禁）",
 ]
 
 [tool.coverage.run]

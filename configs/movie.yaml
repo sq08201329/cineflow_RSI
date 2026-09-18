@@ -11,3 +11,12 @@ evaluator_weights:
     proxy.identity_consistency: 0.35
     proxy.flicker: 0.15
     judge.cinematic: 0.25
+
+# 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
+# latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
+# unbiasedness_tau_threshold 为回放无偏性 Kendall τ 发布门槛
+replay:
+  worker_count: 4
+  latency_quantum_ms: 50
+  validation_split: latest_tree
+  unbiasedness_tau_threshold: 0.95

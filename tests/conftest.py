@@ -90,3 +90,85 @@ def make_node():
         return TreeNode(**fields)
 
     return _make
+
+
+@pytest.fixture()
+def build_historical_tree(tree_store, make_tree, make_node):
+    """小树构建工厂（功能 002 回放夹具）。
+
+    nodes_spec 元素：(parent_idx | None, gen_params, score | None, status, cost)。
+    根节点 parent_idx=None；depth 自动递推；gen_params 记入 observation_context
+    （回放精确匹配的依据）；观测白名单默认含 gen_params。
+    返回 (tree, node_ids 按 spec 顺序)。
+    """
+    from core.tree.models import CostRecord, NodeStatus, new_id
+
+    def _build(
+        nodes_spec,
+        *,
+        project_id="proj-replay",
+        agent_id="agent-replay",
+        policy_version="a1b2c3d4e5f6",
+        observation_fields=("gen_params",),
+    ):
+        tree = make_tree(
+            project_id=project_id,
+            agent_id=agent_id,
+            policy_version=policy_version,
+            config_snapshot={
+                "evaluator_weights": {"rule.x": 0.0},
+                "observation_fields": list(observation_fields),
+            },
+        )
+        tree_store.create_tree(tree)
+
+        node_ids: list[str] = []
+        depths: list[int] = []
+        for i, (parent_idx, gen_params, score, status, cost) in enumerate(nodes_spec):
+            parent_id = None if parent_idx is None else node_ids[parent_idx]
+            depth = 0 if parent_idx is None else depths[parent_idx] + 1
+            node = make_node(
+                node_id=tree.root_id if i == 0 else new_id(),
+                tree_id=tree.tree_id,
+                parent_id=parent_id,
+                depth=depth,
+                agent_id=agent_id,
+                policy_version=policy_version,
+                observation_context={"gen_params": gen_params},
+                eval_breakdown={}
+                if status is NodeStatus.FAILED
+                else {"rule.x@1": {"score": score}},
+                score=score,
+                cost=cost or CostRecord(),
+                status=status,
+                created_at=float(i + 1),
+            )
+            tree_store.append_node(node)
+            node_ids.append(node.node_id)
+            depths.append(depth)
+        return tree, node_ids
+
+    return _build
+
+
+@pytest.fixture()
+def make_trajectory():
+    """录制轨迹夹具生成器（回放轨迹报告/无偏性验收用）。"""
+    from core.replay.trajectory import ReplayTrajectory, TrajectoryStatus
+    from core.tree.models import CostRecord
+
+    def _make(**overrides):
+        fields = {
+            "policy_version": "a1b2c3d4e5f6",
+            "best_score_curve": [0.4, 0.5],
+            "probe_count": 1,
+            "effective_sequential_rounds": 1.0,
+            "total_cost": CostRecord(),
+            "final_node_id": "n1",
+            "status": TrajectoryStatus.COMPLETED,
+            "diagnostics": {},
+        }
+        fields.update(overrides)
+        return ReplayTrajectory(**fields)
+
+    return _make
