@@ -1,0 +1,13 @@
+# 形态配置：电影（movie）
+# 形态即配置：评估器组合与权重在此表达，切换形态零代码改动（宪章原则五）。
+# 参照 docs/CineFlow开发文档.md §7 示例；本特性仅落地 evaluator_weights 骨架，供 US3 读取。
+form: movie
+
+evaluator_weights:
+  visual:
+    # gate 表示硬规则门禁：score 为 0 时总分直接为 0
+    rule.format_compliance: gate
+    proxy.aesthetic: 0.25
+    proxy.identity_consistency: 0.35
+    proxy.flicker: 0.15
+    judge.cinematic: 0.25
