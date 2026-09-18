@@ -78,6 +78,7 @@ class ReplaySimulator:
         self._probe_count = 0
         self._total_cost = CostRecord()
         self._best_curve: list[float] = []
+        self._agent_id: str | None = None
         self._policy_version = ""
         self._final_node_id: str | None = None
         self._status = TrajectoryStatus.COMPLETED
@@ -110,6 +111,7 @@ class ReplaySimulator:
         simulator = cls(
             worker_count=worker_count, budget=budget, latency_quantum_ms=latency_quantum_ms
         )
+        simulator._agent_id = trees[0].agent_id if trees else None
         for tree in trees:
             simulator._whitelist_by_tree[tree.tree_id] = observation_whitelist(tree.config_snapshot)
             for node in store.nodes_of(tree.tree_id):
@@ -123,6 +125,11 @@ class ReplaySimulator:
     @property
     def budget(self) -> Budget:
         return self._budget
+
+    @property
+    def agent_id(self) -> str | None:
+        """池内树的 agent_id（空池为 None）；版本落盘路径的谱系字段。"""
+        return self._agent_id
 
     @property
     def clock(self) -> VirtualClock:

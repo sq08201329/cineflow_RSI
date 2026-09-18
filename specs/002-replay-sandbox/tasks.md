@@ -63,21 +63,21 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T118 [P] [US2] IPC 协议单测 tests/unit/test_ipc_protocol.py（消息 schema、白名单、1MB 上限、超时映射 protocol_violation、值语义校验）
-- [ ] T119 [P] [US2] 静态检查单测 tests/unit/test_static_check.py（白名单 import 通过；socket/open/eval/getattr 逃逸被拒）
-- [ ] T120 [US2] 作弊策略实现 tests/adversarial/cheating_policies.py（peek_latent / timing_side_channel / hash_oracle 三件套 + 网络与文件 IO 尝试）
-- [ ] T121 [US2] 对抗测试 tests/adversarial/test_adversarial.py（三件套必然失败/被拒；计时断言双重判定：全部响应时间 ∈ 时延量子整数倍，且与隐藏得分 |Pearson r| < 0.1（SC-007）；**无 Docker 报错而非 skip**）
-- [ ] T122 [US2] 沙箱端到端集成测试 tests/integration/test_sandbox_e2e.py（正常策略容器内回放全程：版本落盘、轨迹回传、容器回收无孤儿）
+- [x] T118 [P] [US2] IPC 协议单测 tests/unit/test_ipc_protocol.py（消息 schema、白名单、1MB 上限、超时映射 protocol_violation、值语义校验）
+- [x] T119 [P] [US2] 静态检查单测 tests/unit/test_static_check.py（白名单 import 通过；socket/open/eval/getattr 逃逸被拒）
+- [x] T120 [US2] 作弊策略实现 tests/adversarial/cheating_policies.py（peek_latent / timing_side_channel / hash_oracle 三件套 + 网络与文件 IO 尝试）
+- [x] T121 [US2] 对抗测试 tests/adversarial/test_adversarial.py（三件套必然失败/被拒；计时断言双重判定：全部响应时间 ∈ 时延量子整数倍，且与隐藏得分 |Pearson r| < 0.1（SC-007）；**无 Docker 报错而非 skip**）
+- [x] T122 [US2] 沙箱端到端集成测试 tests/integration/test_sandbox_e2e.py（正常策略容器内回放全程：版本落盘、轨迹回传、容器回收无孤儿）
 
 ### 用户故事 2 的实现
 
-- [ ] T123 [P] [US2] 实现协议层 core/sandbox/protocol.py（编码/解码/校验/抖动填充）
-- [ ] T124 [P] [US2] 实现静态检查 policies/static_check.py（AST 白名单）
-- [ ] T125 [P] [US2] 实现策略版本管理 policies/history 写入逻辑 policies/versioning.py（BLAKE3 前 12 位、幂等）
-- [ ] T126 [US2] 实现沙箱入口 core/sandbox/runner.py（静态检查→版本落盘→起容器→IPC 桥接→回收；依赖 T123-T125）
-- [ ] T127 [P] [US2] 实现后端 core/sandbox/backends/docker_hardened.py（加固旗标，本地兜底）
-- [ ] T128 [P] [US2] 实现后端 core/sandbox/backends/docker_gvisor.py（--runtime=runsc，CI 权威）与后端探测装配 available() 链
-- [ ] T129 [US2] 沙箱内策略侧 IPC 客户端 core/sandbox/policy_side.py（容器入口：读策略文件、跑 solve、应答 IPC；依赖 T123）
+- [x] T123 [P] [US2] 实现协议层 core/sandbox/protocol.py（编码/解码/校验/抖动填充）
+- [x] T124 [P] [US2] 实现静态检查 policies/static_check.py（AST 白名单）
+- [x] T125 [P] [US2] 实现策略版本管理 policies/history 写入逻辑 policies/versioning.py（BLAKE3 前 12 位、幂等）
+- [x] T126 [US2] 实现沙箱入口 core/sandbox/runner.py（静态检查→版本落盘→起容器→IPC 桥接→回收；依赖 T123-T125）
+- [x] T127 [P] [US2] 实现后端 core/sandbox/backends/docker_hardened.py（加固旗标，本地兜底）
+- [x] T128 [P] [US2] 实现后端 core/sandbox/backends/docker_gvisor.py（--runtime=runsc，CI 权威）与后端探测装配 available() 链
+- [x] T129 [US2] 沙箱内策略侧 IPC 客户端 core/sandbox/policy_side.py（容器入口：读策略文件、跑 solve、应答 IPC；依赖 T123）
 
 **检查点**: 对抗套件全绿（作弊全拦截）、正常策略容器内回放成功
 

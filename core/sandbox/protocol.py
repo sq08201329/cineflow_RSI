@@ -112,3 +112,39 @@ def error_code_for_exception(exc: Exception) -> ErrorCode:
     if isinstance(exc, (TreeValidationError, ReplayValidationError)):
         return ErrorCode.VALIDATION
     return ErrorCode.INTERNAL
+
+
+def observation_to_dict(obs) -> dict:
+    """Observation → 线上值语义字典（cost 展开为纯字典）。"""
+    return {
+        "node_id": obs.node_id,
+        "depth": obs.depth,
+        "score": obs.score,
+        "cost": {
+            "llm_calls": obs.cost.llm_calls,
+            "llm_tokens": obs.cost.llm_tokens,
+            "generation_api_calls": obs.cost.generation_api_calls,
+            "generation_api_cost_usd": obs.cost.generation_api_cost_usd,
+            "human_review_minutes": obs.cost.human_review_minutes,
+            "wall_clock_seconds": obs.cost.wall_clock_seconds,
+        },
+        "fields": obs.fields,
+    }
+
+
+def probe_result_to_dict(result) -> dict:
+    """ProbeResult → 线上值语义字典；unknown 态零信息。"""
+    if result.status == "unknown":
+        return {"status": "unknown"}
+    return {
+        "status": "ok",
+        "nodes": [observation_to_dict(obs) for obs in result.nodes],
+        "virtual_cost": {
+            "llm_calls": result.virtual_cost.llm_calls,
+            "llm_tokens": result.virtual_cost.llm_tokens,
+            "generation_api_calls": result.virtual_cost.generation_api_calls,
+            "generation_api_cost_usd": result.virtual_cost.generation_api_cost_usd,
+            "human_review_minutes": result.virtual_cost.human_review_minutes,
+            "wall_clock_seconds": result.virtual_cost.wall_clock_seconds,
+        },
+    }
