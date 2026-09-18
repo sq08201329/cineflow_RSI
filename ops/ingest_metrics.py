@@ -107,6 +107,10 @@ def ingest_round(
             observation_context={
                 "gen_params": metrics_payload["gen_params"],
                 "material_id": row.material_id,
+                # 物料分桶信息随节点落盘：CTR 历史汇聚（FR-012）的读取落点
+                "material_kind": metrics_payload["material"]["kind"],
+                "material_tags": metrics_payload["material"]["tags"],
+                "material_platform": metrics_payload["material"]["platform"],
             },
             artifact_hash=metrics_payload["material"]["artifact_hash"],
             eval_breakdown=breakdown,

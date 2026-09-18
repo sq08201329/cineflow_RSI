@@ -37,6 +37,10 @@ ADAPTER_MAX_RETRIES = 3  # 适配器瞬时错误退避上限（网关失败不�
 STATUS_POLL_MAX = 5  # delivered 轮询上限
 
 
+class PromoLoopError(Exception):
+    """宣发闭环错误（冻结校验失败等）。"""
+
+
 class PromoPolicy(Protocol):
     """宣发策略协议（做梦层接入前的手工策略形态）：产出物料生成简报列表。"""
 
@@ -109,6 +113,14 @@ def run_round(
     policy_version = getattr(policy, "policy_version", "unknown")
     cap = config.budget_cap_usd
 
+    compliance = MaterialComplianceEvaluator(config)
+    ctr = CtrHistoryEvaluator(
+        # 只用已冻结的历史回流数据（FR-012）：默认从冻结树的 human 明细汇聚
+        ctr_history if ctr_history is not None else collect_ctr_history(store),
+        ctr_prior=config.ctr_prior,
+        ctr_cap=config.ctr_cap,
+    )
+
     # ---- 幂等：树锚点已存在 → 直接重建首轮结果返回 ----
     tree = DiscoveryTree(
         tree_id=tree_id,
@@ -117,7 +129,7 @@ def run_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot={"promo": _config_snapshot(config)},
+        config_snapshot=_config_snapshot(config, compliance, ctr),
     )
     try:
         store.create_tree(tree)
@@ -127,8 +139,6 @@ def run_round(
         return _reconstruct(round_id, store, engine, config)
 
     gateway_before = gateway.total_cost_usd
-    compliance = MaterialComplianceEvaluator(config)
-    ctr = CtrHistoryEvaluator(ctr_history or [], ctr_prior=config.ctr_prior, ctr_cap=config.ctr_cap)
 
     materials: list[dict] = []
     for index, brief in enumerate(briefs):
@@ -170,14 +180,23 @@ def run_round(
     return result
 
 
-def _config_snapshot(config: PromoConfig) -> dict:
-    """快照冻结：物料规格/敏感词/权重/先验全部随树冻结（可复现前提）。"""
+def _config_snapshot(config: PromoConfig, compliance, ctr) -> dict:
+    """快照冻结：评估器版本组合 + 权重 + 物料规格/敏感词/先验随树冻结
+    （宪章原则一：评估器版本组合冻结进树，回放/审计可复现）。"""
     return {
-        "material_spec": config.material_spec,
-        "sensitive_words": config.sensitive_words,
         "evaluator_weights": config.evaluator_weights,
-        "ctr_prior": config.ctr_prior,
-        "metric_weights": config.metric_weights,
+        "evaluator_versions": {
+            "rule.material_compliance": compliance.spec.version,
+            "proxy.ctr_history": ctr.spec.version,
+            "human.platform_metrics": "1.0.0",
+        },
+        "observation_fields": ["gen_params", "material_id"],
+        "promo": {
+            "material_spec": config.material_spec,
+            "sensitive_words": config.sensitive_words,
+            "ctr_prior": config.ctr_prior,
+            "metric_weights": config.metric_weights,
+        },
     }
 
 
@@ -229,7 +248,13 @@ def _append_child(
     reason: str | None,
 ) -> str:
     """拒投/失败节点轮次内直接落盘（投放成功节点由回流管道一次性落盘）。"""
-    observation = {"gen_params": gen_params, "material_id": material.material_id}
+    observation = {
+        "gen_params": gen_params,
+        "material_id": material.material_id,
+        "material_kind": material.kind,
+        "material_tags": material.tags,
+        "material_platform": material.platform,
+    }
     if reason:
         observation["reject_reason"] = reason
     node = TreeNode(
@@ -615,3 +640,64 @@ def _reconstruct(
         budget_cap_usd=config.budget_cap_usd,
         cost_reconciliation={},
     )
+
+
+def collect_ctr_history(store: TreeStore, agent_id: str = "promo") -> list[dict]:
+    """从已冻结树的 human.platform_metrics 明细汇聚 CTR 历史（FR-012）。
+
+    只读已落盘（即已冻结）节点；返回 CTR 评估器的历史记录形态
+    [{platform, kind, tags, impressions, clicks}]。
+    """
+    records: list[dict] = []
+    for tree in store.trees_by(agent_id=agent_id):
+        for node in store.nodes_of(tree.tree_id):
+            if node.status is not NodeStatus.EVALUATED:
+                continue
+            fragment = next(
+                (
+                    v
+                    for k, v in node.eval_breakdown.items()
+                    if k.startswith("human.platform_metrics@")
+                ),
+                None,
+            )
+            if fragment is None:
+                continue
+            diagnostics = fragment["diagnostics"]
+            ctx = node.observation_context
+            records.append(
+                {
+                    "platform": ctx.get("material_platform", ""),
+                    "kind": ctx.get("material_kind", ""),
+                    "tags": list(ctx.get("material_tags", [])),
+                    "impressions": int(diagnostics["impressions"]),
+                    "clicks": int(diagnostics["clicks"]),
+                }
+            )
+    return records
+
+
+def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> DiscoveryTree:
+    """轮次树显式冻结入口（契约边界：调用方在轮次完成后触发，非自行冻结）。
+
+    校验：全部运营记录已到终态（ingested/failed）——delivered 未回流
+    不得冻结入池；通过后返回树对象供 002 SimulatorPool 入池。
+    """
+    tree_id = round_tree_id(round_id)
+    store.get_node(_round_root_id(round_id))  # 不存在 → NotFoundError
+    with engine.connect() as conn:
+        pending = conn.execute(
+            select(func.count())
+            .select_from(promo_campaigns)
+            .where(
+                promo_campaigns.c.round_id == round_id,
+                promo_campaigns.c.status.in_(["created", "delivering", "delivered"]),
+            )
+        ).scalar()
+    if pending:
+        raise PromoLoopError(f"轮次 {round_id} 尚有 {pending} 条投放未回流完成，不得冻结入池")
+    trees = store.trees_by(project_id="promo", agent_id="promo")
+    matches = [t for t in trees if t.tree_id == tree_id]
+    if not matches:
+        raise PromoLoopError(f"轮次树不存在：{tree_id}")
+    return matches[0]
