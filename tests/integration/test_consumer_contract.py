@@ -48,9 +48,7 @@ def test_回放消费方全路径_仅公开接口(pg_store, make_tree, make_node
     # 4) 结构读取：全树节点按 depth 排序、子节点枚举
     all_nodes = pg_store.nodes_of(tree.tree_id)
     assert [n.depth for n in all_nodes] == [0, 1, 1, 2]
-    assert {n.node_id for n in pg_store.children(root.node_id)} == {
-        c.node_id for c in children
-    }
+    assert {n.node_id for n in pg_store.children(root.node_id)} == {c.node_id for c in children}
 
     # 5) 失败节点读取：score 为 None、成本完整入账
     got = pg_store.get_node(failed.node_id)

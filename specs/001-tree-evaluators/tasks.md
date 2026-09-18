@@ -113,13 +113,13 @@
 
 **目的**: 验收门禁与跨故事的收尾
 
-- [ ] T030 [P] 覆盖率门禁接入 CI（pytest --cov=core --cov-fail-under=85；GitHub Actions 工作流 .github/workflows/ci.yml，集成测试步骤使用 T006 的 compose）
-- [ ] T031 [P] 实现 immutable 审计脚本 ops/audit_immutable.py（随机抽 100 个历史节点重算 score 与落盘值比对，不一致即非零退出——宪章每日定时任务的最小实现）
-- [ ] T032 实现端到端演示脚本 ops/demo_tree_eval.py（quickstart.md 验证 3 的六步场景，输出 JSON 报告）
-- [ ] T035 [US1] 消费方模拟契约测试 tests/integration/test_consumer_contract.py（模拟回放消费方，仅通过 TreeStore 公开接口跑通建树→追加→三维查询→失败节点读取全路径，验证 SC-005）
-- [ ] T036 [US1] schema 一致性集成断言 tests/integration/test_schema_consistency.py（迁移后的 PG schema 与 core/tree/db.py 的 SQLAlchemy metadata 逐表比对，防迁移 DDL 与 Table 定义双份维护漂移）
-- [ ] T033 运行 quickstart.md 全部验证步骤并记录结果（覆盖率、集成测试、演示退出码）
-- [ ] T034 [P] 编写 README.md（开发环境搭建、测试命令、目录约定）
+- [x] T030 [P] 覆盖率门禁接入 CI（pytest --cov=core --cov-fail-under=85；GitHub Actions 工作流 .github/workflows/ci.yml，集成测试步骤使用 T006 的 compose）
+- [x] T031 [P] 实现 immutable 审计脚本 ops/audit_immutable.py（随机抽 100 个历史节点重算 score 与落盘值比对，不一致即非零退出——宪章每日定时任务的最小实现）
+- [x] T032 实现端到端演示脚本 ops/demo_tree_eval.py（quickstart.md 验证 3 的六步场景，输出 JSON 报告）
+- [x] T035 [US1] 消费方模拟契约测试 tests/integration/test_consumer_contract.py（模拟回放消费方，仅通过 TreeStore 公开接口跑通建树→追加→三维查询→失败节点读取全路径，验证 SC-005）
+- [x] T036 [US1] schema 一致性集成断言 tests/integration/test_schema_consistency.py（迁移后的 PG schema 与 core/tree/db.py 的 SQLAlchemy metadata 逐表比对，防迁移 DDL 与 Table 定义双份维护漂移）
+- [x] T033 运行 quickstart.md 全部验证步骤并记录结果（覆盖率、集成测试、演示退出码）
+- [x] T034 [P] 编写 README.md（开发环境搭建、测试命令、目录约定）
 
 ---
 
