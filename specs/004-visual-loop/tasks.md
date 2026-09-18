@@ -14,7 +14,7 @@
 
 - [ ] T301 创建目录 agents/visual/{evaluators,platform}
 - [ ] T302 [P] 新增依赖 numpy、imageio、imageio-ffmpeg（uv add；版本锁定进 uv.lock）
-- [ ] T303 [P] configs/movie.yaml visual 段补全（片段规格、生成预算、锚点集、judge 3 提示词文本、帧采样规则、五评估器权重）
+- [ ] T303 [P] configs/movie.yaml visual 段补全（片段规格、生成预算、judge 锚点集=固定生成参数集（经确定性模拟生成器产出锚点工件，参数+工件哈希进 judge 版本号）、judge 3 提示词文本、帧采样规则、五评估器权重）
 
 ## 阶段 2：基础（阻塞性前置条件）
 
