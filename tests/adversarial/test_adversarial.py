@@ -11,7 +11,6 @@ import subprocess
 
 import pytest
 
-from core.sandbox.backends.docker_hardened import DockerHardenedBackend
 from core.sandbox.runner import RunLimits, RunStatus, create_io_handler, run_policy
 from core.tree.models import CostRecord, NodeStatus
 from tests.adversarial.cheating_policies import (
@@ -55,10 +54,14 @@ def _pearson(xs: list[float], ys: list[float]) -> float:
 
 @pytest.fixture(scope="module")
 def backend():
-    candidate = DockerHardenedBackend()
-    if not candidate.available():
-        pytest.fail("对抗门禁不允许跳过：Docker 不可用（HardenedBackend 为本地兜底后端）")
-    return candidate
+    """装配链探测：CI 上必须 gVisor（权威后端），本地兜底 hardened；
+    两者皆不可用 → 报错而非 skip（门禁不允许静默豁免）。"""
+    from core.sandbox.backends import NoBackendAvailableError, select_backend
+
+    try:
+        return select_backend()
+    except NoBackendAvailableError as exc:
+        pytest.fail(f"对抗门禁不允许跳过：{exc}")
 
 
 @pytest.fixture()

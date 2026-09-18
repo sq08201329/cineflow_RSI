@@ -43,3 +43,39 @@ jobs:
       - name: 清理
         if: always()
         run: docker compose -f ops/dev.compose.yml down -v
+
+  # 对抗测试（合并阻塞门禁）：CI 以 gVisor 后端为权威——装 runsc 并注册
+  # docker runtime；装配探测失败即 CI 失败，不允许降级到加固容器
+  adversarial:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+      - run: uv sync
+      - name: 安装 gVisor runsc 并注册为 docker runtime
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list
+          sudo apt-get update && sudo apt-get install -y runsc
+          sudo runsc install
+          sudo systemctl restart docker
+      - name: gVisor 后端必须可用（否则 CI 失败而非降级）
+        run: |
+          docker info --format '{{json .Runtimes}}' | grep -q runsc
+          uv run python -c "from core.sandbox.backends.docker_gvisor import DockerGVisorBackend; assert DockerGVisorBackend().available(), 'runsc 不可用'"
+      - name: 对抗测试套件（三件套作弊策略全拦截）
+        run: uv run pytest tests/adversarial -m adversarial
+
+  # 无偏性验收（发布阻塞门禁）：一致轨迹放行、注入偏差 100% 拒绝
+  unbiasedness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+      - run: uv sync
+      - name: 无偏性验收套件
+        run: uv run pytest tests/unbiasedness -m unbiasedness

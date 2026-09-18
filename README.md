@@ -76,12 +76,37 @@ uv run python ops/audit_immutable.py   # 默认读 CINEFLOW_PG_DSN，可用 --ds
 随机抽 100 个历史节点（不足则全量）按冻结快照复算 score 比对，
 任一不一致即非零退出并输出 JSON 差异明细。
 
+## 回放与沙箱（功能 002）
+
+```bash
+# 回放语义单测（进程内模拟器，离线）
+uv run pytest tests/unit -k "replay or clock or kendall"
+
+# 对抗测试套件（合并阻塞门禁；本地 Docker 用加固容器，CI 用 gVisor；
+# 无 Docker 报错而非跳过）
+uv run pytest tests/adversarial -m adversarial
+
+# 无偏性验收（发布阻塞门禁：Kendall τ ≥ 0.95）
+uv run pytest tests/unbiasedness -m unbiasedness
+
+# 端到端演示：小树 → 模拟器 → 沙箱容器回放 → 轨迹 JSON（生成调用恒 0 断言）
+uv run python ops/demo_replay.py
+
+# 3 万节点基准（SC-006：全程 < 10 分钟；优先 PG，不可用退 SQLite）
+uv run pytest tests/integration/test_replay_benchmark.py -m integration
+```
+
+门禁要点：回放零生成（max_generation_calls 装配强制归零）；probe 规范化
+精确匹配、无匹配 UNKNOWN 不得分；策略沙箱无网络/无凭证/只读/限额；
+作弊三件套（peek_latent / timing_side_channel / hash_oracle）全拦截。
+
 ## spec-kit 工作流
 
-本特性由 spec-kit 驱动，设计文档见 `specs/001-tree-evaluators/`：
+本仓库由 spec-kit 驱动：
 
-- `spec.md`：用户故事与功能需求（US1 树存储 / US2 注册冻结 / US3 合成评分）
-- `plan.md` / `research.md` / `data-model.md`：技术计划、选型决策、数据模型
-- `contracts/`：TreeStore / ArtifactStore / 评估器注册中心接口契约
-- `tasks.md`：任务分解（T001–T036 全部完成）
-- `quickstart.md`：端到端验证指南
+- `specs/001-tree-evaluators/`：发现树与评估器框架（T001–T036 全部完成）
+- `specs/002-replay-sandbox/`：回放模拟器与沙箱化策略执行（T101–T138 全部完成）
+
+每个特性目录含 `spec.md`（用户故事与需求）、`plan.md` / `research.md` /
+`data-model.md`（技术设计）、`contracts/`（接口契约）、`tasks.md`（任务分解）、
+`quickstart.md`（端到端验证指南）。

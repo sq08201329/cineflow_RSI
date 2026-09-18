@@ -91,13 +91,13 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T130 [P] [US3] τ 计算单测 tests/unit/test_kendall.py（τ-b 同分处理、样本不足拒绝、已知答案对照）
-- [ ] T131 [US3] 无偏性验收测试 tests/unbiasedness/test_unbiasedness.py（一致轨迹放行、注入偏差 100% 拒绝、报告 schema 校验、FAILED 轮次剔除）
+- [x] T130 [P] [US3] τ 计算单测 tests/unit/test_kendall.py（τ-b 同分处理、样本不足拒绝、已知答案对照）
+- [x] T131 [US3] 无偏性验收测试 tests/unbiasedness/test_unbiasedness.py（一致轨迹放行、注入偏差 100% 拒绝、报告 schema 校验、FAILED 轮次剔除）
 
 ### 用户故事 3 的实现
 
-- [ ] T132 [US3] 实现 core/replay/unbiasedness.py（kendall_tau + verify_unbiasedness + UnbiasednessReport）
-- [ ] T133 [US3] 实现轨迹夹具 tests/unbiasedness/fixtures.py（一致轨迹对与 N 种注入偏差轨迹对的生成器）
+- [x] T132 [US3] 实现 core/replay/unbiasedness.py（kendall_tau + verify_unbiasedness + UnbiasednessReport）
+- [x] T133 [US3] 实现轨迹夹具 tests/unbiasedness/fixtures.py（一致轨迹对与 N 种注入偏差轨迹对的生成器）
 
 **检查点**: 三故事全部独立可用
 
@@ -105,11 +105,11 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T134 [P] CI 接入：.github/workflows/ci.yml 增加 adversarial job（装 runsc 并以 gVisor 后端跑对抗套件，失败即阻塞）与 unbiasedness job；单测 job 覆盖率口径不变
-- [ ] T135 [P] 实现端到端演示 ops/demo_replay.py（quickstart 验证 4：小树→模拟器→沙箱回放→轨迹 JSON；生成调用审计断言）
-- [ ] T138 [US1] 3 万节点回放性能基准 tests/integration/test_replay_benchmark.py（SC-006：分支因子 10 建树 → 构建模拟器 → 沙箱/进程内回放参考策略，全程 < 10 分钟断言；优先 PG，不可用时退 SQLite 内存库，保证本地可跑）
-- [ ] T136 运行 quickstart.md 全部验证步骤并记录结果
-- [ ] T137 [P] 更新 README.md（回放/沙箱/对抗/无偏性的用法与门禁说明）
+- [x] T134 [P] CI 接入：.github/workflows/ci.yml 增加 adversarial job（装 runsc 并以 gVisor 后端跑对抗套件，失败即阻塞）与 unbiasedness job；单测 job 覆盖率口径不变
+- [x] T135 [P] 实现端到端演示 ops/demo_replay.py（quickstart 验证 4：小树→模拟器→沙箱回放→轨迹 JSON；生成调用审计断言）
+- [x] T138 [US1] 3 万节点回放性能基准 tests/integration/test_replay_benchmark.py（SC-006：分支因子 10 建树 → 构建模拟器 → 沙箱/进程内回放参考策略，全程 < 10 分钟断言；优先 PG，不可用时退 SQLite 内存库，保证本地可跑）
+- [x] T136 运行 quickstart.md 全部验证步骤并记录结果
+- [x] T137 [P] 更新 README.md（回放/沙箱/对抗/无偏性的用法与门禁说明）
 
 ---
 
