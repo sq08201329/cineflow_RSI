@@ -33,7 +33,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["core"]
+source = ["core", "agents"]
 
 [tool.ruff]
 target-version = "py311"

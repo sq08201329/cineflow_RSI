@@ -100,12 +100,38 @@ uv run pytest tests/integration/test_replay_benchmark.py -m integration
 精确匹配、无匹配 UNKNOWN 不得分；策略沙箱无网络/无凭证/只读/限额；
 作弊三件套（peek_latent / timing_side_channel / hash_oracle）全拦截。
 
+## 宣发闭环（功能 003）
+
+```bash
+# 单元测试 + 覆盖率门禁（core + agents 合计 ≥ 85%）
+uv run pytest tests/unit --cov=core --cov=agents --cov-fail-under=85
+
+# 平台适配器契约套件（模拟实现全过；真实实现无凭证按用例跳过）
+uv run pytest tests/contract
+
+# 闭环端到端演示（模拟平台 + Mock 网关，离线可跑）：
+# 一轮探索 → 合规/预算门禁 → 投放 → 幂等二次触发 → 回流冻结 → 入池回放 → 进化报告
+uv run python ops/demo_promo_loop.py
+
+# 回流管道（生产 PG；无 DSN 返回退出码 2）
+uv run python ops/ingest_metrics.py --round-id <round_id>
+```
+
+门禁现状：预算门禁（单轮 ≤ 总预算 × pilot_ratio，分为单位事务扣减）、
+轮次幂等（唯一键 + 确定性派生 ID，二次触发零重复扣费）、成本对账三方一致
+（树内 + 待回流 == 网关 + 适配器）、回流指标越界拒绝、写入即冻结。
+
+真实渠道接入是凭证配置的运维动作（代码路径不变）：平台适配器
+`PROMO_PLATFORM_BASE_URL` / `PROMO_PLATFORM_API_KEY`；LLM 网关
+`OPENAI_BASE_URL` / `OPENAI_API_KEY`。缺凭证不假装投放（原则六）。
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
 
 - `specs/001-tree-evaluators/`：发现树与评估器框架（T001–T036 全部完成）
 - `specs/002-replay-sandbox/`：回放模拟器与沙箱化策略执行（T101–T138 全部完成）
+- `specs/003-promo-loop/`：宣发 Agent 全闭环（T201–T228 全部完成）
 
 每个特性目录含 `spec.md`（用户故事与需求）、`plan.md` / `research.md` /
 `data-model.md`（技术设计）、`contracts/`（接口契约）、`tasks.md`（任务分解）、

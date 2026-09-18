@@ -65,8 +65,8 @@
 
 ### 用户故事 2 的测试与实现
 
-- [ ] T220 [US2] 集成测试 tests/integration/test_promo_replay.py（先写：冻结校验、真值回放得分即冻结常数、生成调用恒 0、τ 报告对接 002 门禁语义；PG 可用时真实执行，否则 SQLite）
-- [ ] T221 [US2] 实现轮次树冻结入口（loop.py 增加 freeze_round_tree：config_snapshot 冻结评估器版本组合与权重 → 复用 002 pool 入池；依赖 T217）
+- [x] T220 [US2] 集成测试 tests/integration/test_promo_replay.py（先写：冻结校验、真值回放得分即冻结常数、生成调用恒 0、τ 报告对接 002 门禁语义；PG 可用时真实执行，否则 SQLite）
+- [x] T221 [US2] 实现轮次树冻结入口（loop.py 增加 freeze_round_tree：config_snapshot 冻结评估器版本组合与权重 → 复用 002 pool 入池；依赖 T217）
 
 **检查点**: 真实回流数据可回放，无偏性链路可用
 
@@ -80,9 +80,9 @@
 
 ### 用户故事 3 的测试与实现
 
-- [ ] T222 [US3] 报告单测 tests/unit/test_evolution_report.py（先写：双曲线、成本、pareto_auc/并行惩罚分量、verdict、谱系引用）
-- [ ] T223 [P] [US3] 手写基线与变体策略 policies/history/promo/（经 002 versioning 落版本号；两策略探索参数不同）
-- [ ] T224 [US3] 实现 agents/promo/report.py（复用 002 模拟器池回放两版本 → EvolutionReport；依赖 T221、T223）
+- [x] T222 [US3] 报告单测 tests/unit/test_evolution_report.py（先写：双曲线、成本、pareto_auc/并行惩罚分量、verdict、谱系引用）
+- [x] T223 [P] [US3] 手写基线与变体策略 policies/history/promo/（经 002 versioning 落版本号；两策略探索参数不同）
+- [x] T224 [US3] 实现 agents/promo/report.py（复用 002 模拟器池回放两版本 → EvolutionReport；依赖 T221、T223）
 
 **检查点**: 首轮进化曲线产出（里程碑验收）
 
@@ -90,10 +90,10 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T225 [P] CI 更新 .github/workflows/ci.yml：新增 contract job（tests/contract）；覆盖率口径加 agents（--cov=core --cov=agents --cov-fail-under=85）；同步修改 pyproject.toml 的 coverage source 为 ["core", "agents"]，保证本地与 CI 口径一致
-- [ ] T226 [P] 实现端到端演示 ops/demo_promo_loop.py（quickstart 验证 3 全流程；含端到端耗时 < 5 分钟断言（SC-002）并写入报告；本地真实执行，退出码 0）
-- [ ] T227 运行 quickstart.md 全部验证步骤并记录结果
-- [ ] T228 [P] 更新 README.md（宣发闭环用法、适配器凭证配置说明、门禁清单现状）
+- [x] T225 [P] CI 更新 .github/workflows/ci.yml：新增 contract job（tests/contract）；覆盖率口径加 agents（--cov=core --cov=agents --cov-fail-under=85）；同步修改 pyproject.toml 的 coverage source 为 ["core", "agents"]，保证本地与 CI 口径一致
+- [x] T226 [P] 实现端到端演示 ops/demo_promo_loop.py（quickstart 验证 3 全流程；含端到端耗时 < 5 分钟断言（SC-002）并写入报告；本地真实执行，退出码 0）
+- [x] T227 运行 quickstart.md 全部验证步骤并记录结果
+- [x] T228 [P] 更新 README.md（宣发闭环用法、适配器凭证配置说明、门禁清单现状）
 
 ---
 
