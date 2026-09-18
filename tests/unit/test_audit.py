@@ -54,12 +54,11 @@ class TestRecomputeNodeScore:
         with pytest.raises(ValidationError, match="score"):
             recompute_node_score(breakdown, SNAPSHOT)
 
-    def test_权重有而_breakdown_缺评估器_由_composite_拒绝(self):
-        from core.evaluators.errors import WeightMismatchError
-
+    def test_缺片段节点按交集权重复算(self):
+        """新语义：缺 human 片段的拦截节点按 快照权重 ∩ 明细 复算（不误报）。"""
         breakdown = {"rule.gate@1.0.0": {"score": 1.0}, "proxy.a@1.0.0": {"score": 0.8}}
-        with pytest.raises(WeightMismatchError):
-            recompute_node_score(breakdown, SNAPSHOT)
+        # 交集 = {rule.gate: 0.0, proxy.a: 0.5} → 0.0*1.0 + 0.5*0.8 = 0.4
+        assert recompute_node_score(breakdown, SNAPSHOT) == pytest.approx(0.4)
 
 
 class TestAuditSample:
@@ -100,7 +99,25 @@ class TestAuditSamples:
         assert [f["node_id"] for f in report["failures"]] == ["n2"]
 
     def test_空样本(self):
-        assert audit_samples([]) == {"checked": 0, "ok": 0, "failures": []}
+        assert audit_samples([]) == {"checked": 0, "ok": 0, "skipped": 0, "failures": []}
+
+    def test_锚点节点跳过并计数(self):
+        """明细为空的锚点节点（轮次结构起点）跳过复算，计入 skipped 不误报。"""
+        anchor = _node_fields(node_id="anchor", eval_breakdown={}, score=0.0)
+        normal = _node_fields(node_id="n9")
+        report = audit_samples([(anchor, SNAPSHOT), (normal, SNAPSHOT)])
+        assert report["checked"] == 2
+        assert report["skipped"] == 1
+        assert report["ok"] == 1
+        assert report["failures"] == []
+
+    def test_FAILED_空明细节点不跳过_仍校验不变量(self):
+        """FAILED 节点明细可为空，但 score=None 不变量仍受审计。"""
+        ok_failed = _node_fields(node_id="f1", status="failed", score=None, eval_breakdown={})
+        bad_failed = _node_fields(node_id="f2", status="failed", score=0.5, eval_breakdown={})
+        report = audit_samples([(ok_failed, SNAPSHOT), (bad_failed, SNAPSHOT)])
+        assert report["skipped"] == 0
+        assert [f["node_id"] for f in report["failures"]] == ["f2"]
 
 
 class Test主程序入口:

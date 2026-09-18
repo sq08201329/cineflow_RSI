@@ -32,8 +32,11 @@ def _weight_key_of(breakdown_key: str, weights: dict[str, float]) -> str | None:
 def recompute_node_score(eval_breakdown: dict, config_snapshot: dict) -> float:
     """按冻结快照中的权重复算节点总分（纯函数）。
 
-    快照缺权重、breakdown 键与权重键对不齐、明细缺 score 字段，一律抛
-    ValidationError——审计宁可报错也不放行。
+    复算语义（"快照权重 ∩ 明细"）：
+    - 明细为空的锚点节点由 audit_samples 直接跳过（不进本函数）；
+    - 缺片段节点（如拦截节点无 human 明细）按交集权重复算；
+    - 明细中出现权重表外的评估器键、缺 score 明细、快照缺权重，仍一律报错
+      ——审计宁可报错也不放行。
     """
     weights = config_snapshot.get("evaluator_weights")
     if not isinstance(weights, dict) or not weights:
@@ -48,8 +51,9 @@ def recompute_node_score(eval_breakdown: dict, config_snapshot: dict) -> float:
             raise ValidationError(f"breakdown[{key!r}] 缺少 score 明细，无法复算")
         aligned[weight_key] = EvalResult(score=diag["score"])
 
-    # composite_score 自带键集合一致性校验（WeightMismatchError）与 gate 语义
-    return composite_score(aligned, weights)
+    # 交集权重：缺片段节点按已有明细复算（gate 语义不受影响——rule.* 零分仍短路）
+    effective_weights = {key: weights[key] for key in aligned}
+    return composite_score(aligned, effective_weights)
 
 
 def audit_sample(node_fields: dict[str, Any], config_snapshot: dict) -> dict[str, Any] | None:
@@ -83,13 +87,28 @@ def audit_sample(node_fields: dict[str, Any], config_snapshot: dict) -> dict[str
 
 
 def audit_samples(samples: list[tuple[dict[str, Any], dict]]) -> dict[str, Any]:
-    """批量比对（纯函数）：samples 为 (节点字段字典, 该树 config_snapshot) 列表。"""
+    """批量比对（纯函数）：samples 为 (节点字段字典, 该树 config_snapshot) 列表。
+
+    锚点节点（eval_breakdown 为空，如轮次结构起点）无明细可复算：
+    跳过并计入 skipped。
+    """
     failures = []
+    skipped = 0
     for node_fields, snapshot in samples:
+        # 锚点节点（evaluated 且明细为空，如轮次结构起点）无明细可复算：
+        # 跳过并计数；FAILED 节点明细虽空但仍须校验 score=None 不变量，不跳过
+        if not node_fields["eval_breakdown"] and node_fields["status"] != "failed":
+            skipped += 1
+            continue
         finding = audit_sample(node_fields, snapshot)
         if finding is not None:
             failures.append(finding)
-    return {"checked": len(samples), "ok": len(samples) - len(failures), "failures": failures}
+    return {
+        "checked": len(samples),
+        "ok": len(samples) - skipped - len(failures),
+        "skipped": skipped,
+        "failures": failures,
+    }
 
 
 def _load_samples(dsn: str, sample_size: int, seed: int) -> list[tuple[dict, dict]]:
