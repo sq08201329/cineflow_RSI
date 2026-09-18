@@ -76,14 +76,14 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T021 [P] [US2] 评估器模型单测 tests/unit/test_evaluator_models.py（EvaluatorSpec 必填校验、EvalResult score ∈ [0,1] 校验）
-- [ ] T022 [P] [US2] 注册中心单测 tests/unit/test_registry.py（契约表全行覆盖：重复键、非确定性、human 例外、缺字段、get 未命中含可用版本列表）
+- [x] T021 [P] [US2] 评估器模型单测 tests/unit/test_evaluator_models.py（EvaluatorSpec 必填校验、EvalResult score ∈ [0,1] 校验）
+- [x] T022 [P] [US2] 注册中心单测 tests/unit/test_registry.py（契约表全行覆盖：重复键、非确定性、human 例外、缺字段、get 未命中含可用版本列表）
 
 ### 用户故事 2 的实现
 
-- [ ] T023 [P] [US2] 实现 core/evaluators/base.py（EvaluatorKind/EvaluatorSpec/EvalResult/ArtifactRef/Evaluator 抽象基类）
-- [ ] T024 [US2] 实现注册中心 core/evaluators/registry.py（register/get/list_all + RegistrationError；依赖 T023）
-- [ ] T025 [US2] 创建确定性桩评估器 tests/stubs.py（rule/proxy/judge/human 各一 + 非确定性反例；桩评估器的唯一定义来源，conftest 仅做 fixture 包装；供 US2/US3 与集成测试共用）
+- [x] T023 [P] [US2] 实现 core/evaluators/base.py（EvaluatorKind/EvaluatorSpec/EvalResult/ArtifactRef/Evaluator 抽象基类）
+- [x] T024 [US2] 实现注册中心 core/evaluators/registry.py（register/get/list_all + RegistrationError；依赖 T023）
+- [x] T025 [US2] 创建确定性桩评估器 tests/stubs.py（rule/proxy/judge/human 各一 + 非确定性反例；桩评估器的唯一定义来源，conftest 仅做 fixture 包装；供 US2/US3 与集成测试共用）
 
 **检查点**: US1、US2 各自独立工作
 
@@ -97,13 +97,13 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T026 [P] [US3] 合成评分单测 tests/unit/test_composite.py（gate 语义、加权求和、WeightMismatchError、不做隐式归一化）
-- [ ] T027 [P] [US3] 权重读取单测 tests/unit/test_weights.py（从 configs/movie.yaml 读取、缺键报错、与快照冻结配合）
+- [x] T026 [P] [US3] 合成评分单测 tests/unit/test_composite.py（gate 语义、加权求和、WeightMismatchError、不做隐式归一化）
+- [x] T027 [P] [US3] 权重读取单测 tests/unit/test_weights.py（从 configs/movie.yaml 读取、缺键报错、与快照冻结配合）
 
 ### 用户故事 3 的实现
 
-- [ ] T028 [US3] 实现 core/evaluators/composite.py（composite_score：硬规则门禁 + 加权求和 + WeightMismatchError，语义表见 contracts/evaluator-registry.md §3）
-- [ ] T029 [US3] 实现权重配置读取 core/evaluators/weights.py（读取 configs/*.yaml，产出注入 composite_score 的 weights；依赖 T028、T009）
+- [x] T028 [US3] 实现 core/evaluators/composite.py（composite_score：硬规则门禁 + 加权求和 + WeightMismatchError，语义表见 contracts/evaluator-registry.md §3）
+- [x] T029 [US3] 实现权重配置读取 core/evaluators/weights.py（读取 configs/*.yaml，产出注入 composite_score 的 weights；依赖 T028、T009）
 
 **检查点**: 三个用户故事全部独立可用，"评估 → 合成 → 落盘"闭环打通
 
