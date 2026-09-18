@@ -66,7 +66,7 @@
 - [ ] T118 [P] [US2] IPC 协议单测 tests/unit/test_ipc_protocol.py（消息 schema、白名单、1MB 上限、超时映射 protocol_violation、值语义校验）
 - [ ] T119 [P] [US2] 静态检查单测 tests/unit/test_static_check.py（白名单 import 通过；socket/open/eval/getattr 逃逸被拒）
 - [ ] T120 [US2] 作弊策略实现 tests/adversarial/cheating_policies.py（peek_latent / timing_side_channel / hash_oracle 三件套 + 网络与文件 IO 尝试）
-- [ ] T121 [US2] 对抗测试 tests/adversarial/test_adversarial.py（三件套必然失败/被拒；响应时间量子化统计断言；**无 Docker 报错而非 skip**）
+- [ ] T121 [US2] 对抗测试 tests/adversarial/test_adversarial.py（三件套必然失败/被拒；计时断言双重判定：全部响应时间 ∈ 时延量子整数倍，且与隐藏得分 |Pearson r| < 0.1（SC-007）；**无 Docker 报错而非 skip**）
 - [ ] T122 [US2] 沙箱端到端集成测试 tests/integration/test_sandbox_e2e.py（正常策略容器内回放全程：版本落盘、轨迹回传、容器回收无孤儿）
 
 ### 用户故事 2 的实现
@@ -107,6 +107,7 @@
 
 - [ ] T134 [P] CI 接入：.github/workflows/ci.yml 增加 adversarial job（装 runsc 并以 gVisor 后端跑对抗套件，失败即阻塞）与 unbiasedness job；单测 job 覆盖率口径不变
 - [ ] T135 [P] 实现端到端演示 ops/demo_replay.py（quickstart 验证 4：小树→模拟器→沙箱回放→轨迹 JSON；生成调用审计断言）
+- [ ] T138 [US1] 3 万节点回放性能基准 tests/integration/test_replay_benchmark.py（SC-006：分支因子 10 建树 → 构建模拟器 → 沙箱/进程内回放参考策略，全程 < 10 分钟断言；优先 PG，不可用时退 SQLite 内存库，保证本地可跑）
 - [ ] T136 运行 quickstart.md 全部验证步骤并记录结果
 - [ ] T137 [P] 更新 README.md（回放/沙箱/对抗/无偏性的用法与门禁说明）
 
@@ -119,7 +120,7 @@
 - **搭建（阶段 1）**: 无依赖
 - **基础（阶段 2）**: 依赖搭建完成——阻塞所有用户故事
 - **用户故事（阶段 3+）**: 全部依赖基础阶段；US2 的沙箱桥接依赖 US1 的模拟器接口（T126/T129 依赖 T115），US3 依赖 US1 的轨迹产出
-- **打磨（阶段 6）**: T134-T136 依赖全部故事完成；T137 可在基础完成后开始
+- **打磨（阶段 6）**: T134、T135、T136、T138 依赖全部用户故事完成（T138 依赖 US1 的模拟器与参考策略 T117）；T137 可在基础完成后开始
 
 ### 用户故事依赖
 

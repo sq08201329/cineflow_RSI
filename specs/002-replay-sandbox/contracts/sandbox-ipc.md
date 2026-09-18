@@ -44,7 +44,7 @@ def run_policy(policy_source: str, simulator: ReplaySimulator,
 | 静态检查 | AST 白名单（决策 6）不过 → 不起容器，直接 `policy_error` |
 | 版本固定 | version = blake3(policy_source)[:12]；写入 `policies/history/{agent_id}/{version}.py`（幂等） |
 | 容器隔离 | 无网络（--network=none）、只读根fs、drop 全部 capabilities、no-new-privileges、seccomp、内存/CPU/PID 限额、无对象存储凭证（不挂载、不注入环境变量） |
-| 素材访问 | 如挂载素材库则只读 |
+| 素材访问 | 一期沙箱**不挂载任何素材卷**；本条款为二期预留（视觉 Agent 接入素材库时再定义，届时一律只读） |
 | 回收 | 结束/超时/违例一律强制回收容器，不留孤儿进程 |
 
 ## 4. 后端选择
