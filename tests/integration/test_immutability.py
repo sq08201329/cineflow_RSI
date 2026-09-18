@@ -5,45 +5,16 @@
 本地无 Docker 时整体跳过。
 """
 
-import os
 import random
 
 import pytest
-from sqlalchemy import create_engine, delete, text, update
+from sqlalchemy import delete, text, update
 
 from core.tree.errors import ImmutableViolationError
 from core.tree.models import CostRecord, NodeStatus
-from core.tree.store import create_tree_store, translate_immutable_errors
+from core.tree.store import translate_immutable_errors
 
 pytestmark = pytest.mark.integration
-
-PG_DSN = os.environ.get(
-    "CINEFLOW_PG_TEST_DSN", "postgresql+psycopg://cineflow:cineflow@localhost:5432/cineflow"
-)
-
-
-@pytest.fixture(scope="module")
-def pg_engine():
-    from core.tree.db import create_schema, metadata
-
-    engine = create_engine(PG_DSN)
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception as exc:  # noqa: BLE001 - 无 PG 环境一律跳过
-        pytest.skip(f"PostgreSQL 不可用，跳过集成测试：{exc}")
-    with engine.begin() as conn:  # 隔离命名：drop 后重建，避免污染开发库
-        metadata.drop_all(conn)
-    create_schema(engine)
-    yield engine
-    with engine.begin() as conn:
-        metadata.drop_all(conn)
-    engine.dispose()
-
-
-@pytest.fixture()
-def pg_store(pg_engine):
-    return create_tree_store(pg_engine)
 
 
 def _seed_tree(pg_store, make_tree, make_node, n_children=5):
