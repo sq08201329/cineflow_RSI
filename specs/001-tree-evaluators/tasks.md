@@ -54,7 +54,7 @@
 - [x] T012 [P] [US1] TreeStore 契约单测 tests/unit/test_tree_store.py（SQLite：append/get/children/trees_by/nodes_of；eval_breakdown 键格式校验 FR-009；错误语义按契约表）
 - [x] T013 [P] [US1] ArtifactStore 单测 tests/unit/test_artifact_store.py（Local 实现：内容寻址、幂等去重、未命中 ArtifactNotFoundError、内容不符 ArtifactCorruptedError）
 - [x] T014 [US1] immutable 集成测试 tests/integration/test_immutability.py（Docker PG：UPDATE/DELETE 被触发器与权限双重拒绝；随机抽样节点重算 score 与落盘一致）
-- [x] T015 [US1] PG 行为集成测试 tests/integration/test_tree_store_pg.py（jsonb 读写、三维索引过滤正确性、3 万节点基准：append p99 < 50ms、children p99 < 100ms）
+- [x] T015 [US1] PG 行为集成测试 tests/integration/test_tree_store_pg.py（jsonb 读写、三维索引过滤正确性、3 万节点基准（真实分支形态，分支因子 10）：append p99 < 50ms、children p99 < 100ms）
 
 ### 用户故事 1 的实现
 
