@@ -124,3 +124,24 @@ class TestVerdict:
     )
     def test_判定(self, baseline, variant, expected):
         assert decide_verdict(baseline, variant) == expected
+
+
+class Test口径对齐权威实现:
+    """T425（F1 修复）：promo 报告的 pareto_auc 复用 dreaming/reward.py
+    梯形归一化口径；两入口同值 + 已知曲线期望值对照。"""
+
+    def test_两入口同值(self):
+        from agents.promo.report import pareto_auc as promo_auc
+        from dreaming.reward import pareto_auc as dream_auc
+
+        for curve in ([0.0, 0.5, 1.0], [0.9, 0.9, 0.9], [0.4], [], [0.4, 0.4]):
+            assert promo_auc(list(curve), probe_count=4) == dream_auc(list(curve))
+
+    def test_梯形口径期望值(self):
+        from agents.promo.report import pareto_auc as promo_auc
+
+        # 曲线 [0.0, 0.5, 1.0]：梯形面积 1.0 / 满分红线 2.0 = 0.5（非均值 0.5 巧合，
+        # 用 [0.2, 0.4, 0.9] 区分：梯形 (0.3+0.65)/2? 见下）
+        # [0.2, 0.4, 0.9]：梯形 = (0.2+0.4)/2 + (0.4+0.9)/2 = 0.95；/2 = 0.475
+        # 均值口径 = 0.5 —— 两口径可区分
+        assert promo_auc([0.2, 0.4, 0.9], probe_count=2) == pytest.approx(0.475)

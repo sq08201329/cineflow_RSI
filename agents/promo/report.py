@@ -21,10 +21,13 @@ VERDICT_MARGIN = 0.01  # 奖励差显著阈值：小于此判 inconclusive
 
 
 def pareto_auc(best_score_curve: list[float], probe_count: int) -> float:
-    """奖励分量：逐轮最优得分曲线的均值（曲线下的归一化面积）。"""
-    if not best_score_curve:
-        return 0.0
-    return sum(best_score_curve) / len(best_score_curve)
+    """奖励分量：委托 dreaming.reward 的梯形归一化权威口径（决策 1 / T425 对齐）。
+
+    probe_count 保留在签名中兼容既有调用；口径本身不依赖它。
+    """
+    from dreaming.reward import pareto_auc as _authoritative
+
+    return _authoritative(best_score_curve)
 
 
 def parallel_penalty(effective_sequential_rounds: float, probe_count: int) -> float:
