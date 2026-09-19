@@ -125,6 +125,30 @@ uv run python ops/ingest_metrics.py --round-id <round_id>
 `PROMO_PLATFORM_BASE_URL` / `PROMO_PLATFORM_API_KEY`；LLM 网关
 `OPENAI_BASE_URL` / `OPENAI_API_KEY`。缺凭证不假装投放（原则六）。
 
+## 视觉闭环（功能 004）
+
+```bash
+# 单元测试 + 覆盖率（五评估器单测含退化输入不崩溃断言）
+uv run pytest tests/unit -k visual
+
+# 视频生成适配器契约套件（模拟实现全过；真实实现无凭证跳过）
+uv run pytest tests/contract -k video_gen
+
+# 一致性验收与视觉确定性（重算逐字节一致、注入漂移必拒）
+uv run pytest tests/unit -k "consistency or visual"
+
+# 闭环端到端演示（模拟生成器 + Mock 网关，离线可跑）：
+# 一轮 3 候选片段（含违规/超限样例）→ 对账 → 幂等 → 冻结回放 → 一致性报告
+uv run python ops/demo_visual_loop.py
+```
+
+门禁现状：五评估器全确定性（quantize 6 位小数定点归一，版本号携带实现/
+采样/提示词/锚点哈希）；合规 0 分短路不跑 judge（省 LLM 成本）；judge 调用
+全经网关计费；一致性验收为发布阻塞（一致率 100% + τ 分档门禁）。
+
+真实生成平台接入是凭证配置的运维动作：`VISUAL_GEN_BASE_URL` /
+`VISUAL_GEN_API_KEY`（缺凭证不假装生成，原则六）。
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
@@ -132,6 +156,7 @@ uv run python ops/ingest_metrics.py --round-id <round_id>
 - `specs/001-tree-evaluators/`：发现树与评估器框架（T001–T036 全部完成）
 - `specs/002-replay-sandbox/`：回放模拟器与沙箱化策略执行（T101–T138 全部完成）
 - `specs/003-promo-loop/`：宣发 Agent 全闭环（T201–T228 全部完成）
+- `specs/004-visual-loop/`：视觉 Agent 闭环（T301–T332 全部完成）
 
 每个特性目录含 `spec.md`（用户故事与需求）、`plan.md` / `research.md` /
 `data-model.md`（技术设计）、`contracts/`（接口契约）、`tasks.md`（任务分解）、

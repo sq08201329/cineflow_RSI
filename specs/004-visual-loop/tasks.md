@@ -69,8 +69,8 @@
 
 **独立测试**: 冻结树入池 + 参考策略回放命中真实生成节点
 
-- [ ] T326 [US2] tests/integration/test_visual_replay.py（先写：冻结校验、真值回放、生成调用恒 0、工件哈希引用；PG 优先退 SQLite）
-- [ ] T327 [US2] 实现 loop.py freeze_round_tree（GenJob 全终态校验 + config_snapshot 创建时写全；依赖 T324）
+- [x] T326 [US2] tests/integration/test_visual_replay.py（先写：冻结校验、真值回放、生成调用恒 0、工件哈希引用；PG 优先退 SQLite）
+- [x] T327 [US2] 实现 loop.py freeze_round_tree（GenJob 全终态校验 + config_snapshot 创建时写全；依赖 T324）
 
 **检查点**: 视觉探索数据可回放
 
@@ -82,8 +82,8 @@
 
 **独立测试**: 已知一致/已知漂移用例验证判定
 
-- [ ] T328 [US3] tests/unit/test_visual_consistency.py（先写：全一致 pass、注入乱序采样变体 reject、漂移清单字段、样本不足 reject、τ 对接 002）
-- [ ] T329 [US3] 实现 agents/visual/consistency.py（verify_consistency + ConsistencyReport；依赖 T327、五评估器）
+- [x] T328 [US3] tests/unit/test_visual_consistency.py（先写：全一致 pass、注入乱序采样变体 reject、漂移清单字段、样本不足 reject、τ 对接 002）
+- [x] T329 [US3] 实现 agents/visual/consistency.py（verify_consistency + ConsistencyReport；依赖 T327、五评估器）
 
 **检查点**: 里程碑验收线（回放打分与真实重跑一致性）达成
 
@@ -91,9 +91,9 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T330 [P] 实现端到端演示 ops/demo_visual_loop.py（quickstart 验证 3 全流程；<5 分钟断言入报告；本地真实执行退出码 0）
-- [ ] T331 运行 quickstart.md 全部验证步骤并记录结果
-- [ ] T332 [P] 更新 README.md（视觉闭环用法、凭证配置说明、门禁清单现状）
+- [x] T330 [P] 实现端到端演示 ops/demo_visual_loop.py（quickstart 验证 3 全流程；<5 分钟断言入报告；本地真实执行退出码 0）
+- [x] T331 运行 quickstart.md 全部验证步骤并记录结果
+- [x] T332 [P] 更新 README.md（视觉闭环用法、凭证配置说明、门禁清单现状）
 
 ---
 
