@@ -12,19 +12,19 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T401 创建 dreaming/ 包骨架与 configs/movie.yaml 追加 dreaming 段（candidates_per_round=128、recent_k、lambda=0.5、epsilon_random=0.1、validation_top_ratio=0.2、collapse_window=3、collapse_threshold=0.7、replay_parallelism=1）
-- [ ] T402 [P] conftest 夹具扩展（多棵不同时间树池工厂、冠军策略源码工厂、确定性变异器种子）
+- [x] T401 创建 dreaming/ 包骨架与 configs/movie.yaml 追加 dreaming 段（candidates_per_round=128、recent_k、lambda=0.5、epsilon_random=0.1、validation_top_ratio=0.2、collapse_window=3、collapse_threshold=0.7、replay_parallelism=1）
+- [x] T402 [P] conftest 夹具扩展（多棵不同时间树池工厂、冠军策略源码工厂、确定性变异器种子）
 
 ## 阶段 2：基础（阻塞性前置条件）
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T403 reward 测试 tests/unit/test_reward.py（先写：梯形归一化口径、单点/空曲线边界、并行惩罚、λ 注入）
-- [ ] T404 实现 dreaming/reward.py（pareto_auc + RewardBreakdown；依赖 T403）
-- [ ] T405 [P] digest 测试 tests/unit/test_digest.py（最近 K 轮摘要、哈希可复核、空历史首轮）
-- [ ] T406 [P] 实现 dreaming/digest.py
-- [ ] T407 [P] 谱系元数据测试 tests/unit/test_lineage_meta.py（meta.json schema、幂等落盘、两源冲突报错）
-- [ ] T408 [P] 实现谱系元数据读写（dreaming/lineage.py 的 meta 读写部分）
+- [x] T403 reward 测试 tests/unit/test_reward.py（先写：梯形归一化口径、单点/空曲线边界、并行惩罚、λ 注入）
+- [x] T404 实现 dreaming/reward.py（pareto_auc + RewardBreakdown；依赖 T403）
+- [x] T405 [P] digest 测试 tests/unit/test_digest.py（最近 K 轮摘要、哈希可复核、空历史首轮）
+- [x] T406 [P] 实现 dreaming/digest.py
+- [x] T407 [P] 谱系元数据测试 tests/unit/test_lineage_meta.py（meta.json schema、幂等落盘、两源冲突报错）
+- [x] T408 [P] 实现谱系元数据读写（dreaming/lineage.py 的 meta 读写部分）
 
 **检查点**: reward/digest/meta 三件套单测通过——做梦管线可开始
 
@@ -38,13 +38,13 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T409 [P] [US1] tests/unit/test_candidates.py（Mutator 确定性/逐字节可复现/候选互异；LLMGenerator 网关计费 + 代码块切分 + 网关失败不重试）
-- [ ] T410 [US1] tests/unit/test_dreaming_pipeline.py（M 套流程、违规 0 回放、哈希去重、reward 排名正确、零生成审计断言、failed_all_rejected/failed_all_unknown 状态）
+- [x] T409 [P] [US1] tests/unit/test_candidates.py（Mutator 确定性/逐字节可复现/候选互异；LLMGenerator 网关计费 + 代码块切分 + 网关失败不重试）
+- [x] T410 [US1] tests/unit/test_dreaming_pipeline.py（M 套流程、违规 0 回放、哈希去重、reward 排名正确、零生成审计断言、failed_all_rejected/failed_all_unknown 状态）
 
 ### 用户故事 1 的实现
 
-- [ ] T411 [P] [US1] 实现 dreaming/candidates.py（CandidateGenerator 协议 + MutatorGenerator + LLMGenerator；依赖 T406）
-- [ ] T412 [US1] 实现 dreaming/pipeline.py（生成 → 静态检查 → 沙箱回放 → reward 排名；依赖 T404、T408、T411，复用 002 static_check/run_policy）
+- [x] T411 [P] [US1] 实现 dreaming/candidates.py（CandidateGenerator 协议 + MutatorGenerator + LLMGenerator；依赖 T406）
+- [x] T412 [US1] 实现 dreaming/pipeline.py（生成 → 静态检查 → 沙箱回放 → reward 排名；依赖 T404、T408、T411，复用 002 static_check/run_policy）
 
 **检查点**: 一轮做梦（演示档 M=8）沙箱回放排名产出
 
