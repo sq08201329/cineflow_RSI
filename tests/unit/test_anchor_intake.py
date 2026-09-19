@@ -8,7 +8,7 @@
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
@@ -18,7 +18,7 @@ from core.calibration.db import calibration_anchors
 from core.calibration.selection import build_blind_list
 from core.evaluators.errors import ValidationError
 
-_BASE_TS = datetime(2026, 9, 15, tzinfo=timezone.utc).timestamp()
+_BASE_TS = datetime(2026, 9, 15, tzinfo=UTC).timestamp()
 _BREAKDOWN = {"proxy.aesthetic@1.0.0": {"score": 0.7}}
 
 

@@ -6,7 +6,7 @@
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -17,7 +17,7 @@ from core.evaluators.errors import ValidationError
 # 周期窗口：2026-09-14 ~ 2026-09-20（含尾日）
 PERIOD_START = "2026-09-14"
 PERIOD_END = "2026-09-20"
-_BASE_TS = datetime(2026, 9, 15, tzinfo=timezone.utc).timestamp()
+_BASE_TS = datetime(2026, 9, 15, tzinfo=UTC).timestamp()
 
 _BREAKDOWN = {
     "proxy.aesthetic@1.0.0": {"score": 0.7},
@@ -80,7 +80,7 @@ class TestTopK降序:
         build_calibration_tree(
             _specs([0.99]),
             agent_id="visual",
-            base_created_at=datetime(2025, 9, 15, tzinfo=timezone.utc).timestamp(),
+            base_created_at=datetime(2025, 9, 15, tzinfo=UTC).timestamp(),
         )
         round_ = build_blind_list(
             tree_store,

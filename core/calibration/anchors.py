@@ -9,7 +9,7 @@ insert_anchor 是锚点写入的唯一接口：平台真值适配（agents/promo
 与人评录入共用同一条 INSERT 路径与幂等语义。
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Connection, insert
@@ -45,7 +45,7 @@ def insert_anchor(conn: Connection, anchor: AnchorScore) -> bool:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def intake_anchors(

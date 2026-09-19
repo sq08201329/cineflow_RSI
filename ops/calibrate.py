@@ -11,7 +11,7 @@ CLI 默认面向 PG 库（--dsn 或 CINEFLOW_PG_DSN）；库函数由单测以 S
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,9 +37,9 @@ def _cmd_round(args) -> int:
         return 2
 
     config = CalibrationConfig.from_yaml(args.config)
-    period_end = args.period_end or datetime.now(timezone.utc).date().isoformat()
+    period_end = args.period_end or datetime.now(UTC).date().isoformat()
     period_start = args.period_start or (
-        datetime.now(timezone.utc).date() - timedelta(days=config.period_days)
+        datetime.now(UTC).date() - timedelta(days=config.period_days)
     ).isoformat()
 
     engine = create_engine(dsn)
@@ -121,7 +121,9 @@ def main() -> int:
 
     intake_parser = sub.add_parser("intake", help="人评锚点录入（JSON 条目文件）")
     intake_parser.add_argument("--round", required=True, help="校准轮次 ID")
-    intake_parser.add_argument("--file", required=True, help="条目 JSON：[{node_id, score, reviewer}]")
+    intake_parser.add_argument(
+        "--file", required=True, help="条目 JSON：[{node_id, score, reviewer}]"
+    )
     intake_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
     intake_parser.add_argument("--dsn", default=None, help="PG DSN，默认读 CINEFLOW_PG_DSN")
     intake_parser.set_defaults(func=_cmd_intake)

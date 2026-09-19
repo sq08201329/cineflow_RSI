@@ -6,7 +6,7 @@
 ——与人评录入共用 insert_anchor 写入路径与唯一键幂等语义（同轮重复采集零变更）。
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Connection, Engine, select
 
@@ -23,8 +23,8 @@ def _snapshot_created_at(snapshot: dict) -> str:
     """锚点 created_at 取平台时间戳（真值产生时刻）；缺失则以采集时刻兜底。"""
     ts = float(snapshot.get("platform_timestamp") or 0.0)
     if ts > 0:
-        return datetime.fromtimestamp(ts, timezone.utc).isoformat()
-    return datetime.now(timezone.utc).isoformat()
+        return datetime.fromtimestamp(ts, UTC).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def collect_platform_anchors(

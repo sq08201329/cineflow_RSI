@@ -8,7 +8,7 @@
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from core.calibration.models import CalibrationRound
@@ -26,8 +26,8 @@ _NO_BLIND_AGENTS = frozenset({"promo"})
 def _period_window(period_start: str, period_end: str) -> tuple[float, float]:
     """ISO 日期（YYYY-MM-DD，含首尾）→ created_at 秒级窗口 [start, end)。"""
     try:
-        start = datetime.fromisoformat(period_start).replace(tzinfo=timezone.utc)
-        end = datetime.fromisoformat(period_end).replace(tzinfo=timezone.utc) + timedelta(days=1)
+        start = datetime.fromisoformat(period_start).replace(tzinfo=UTC)
+        end = datetime.fromisoformat(period_end).replace(tzinfo=UTC) + timedelta(days=1)
     except ValueError as exc:
         raise ValidationError(f"周期必须为 ISO 日期（YYYY-MM-DD）：{exc}") from exc
     return start.timestamp(), end.timestamp()
