@@ -36,10 +36,12 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["core", "agents"]
+source = ["core", "agents", "dreaming"]
 
 [tool.ruff]
 target-version = "py311"
+# 版本化策略文件（文件名=内容哈希）与做梦轮次落盘不得被格式化/检查改写
+extend-exclude = ["policies/history", "dreaming/history"]
 line-length = 100
 
 [tool.ruff.lint]

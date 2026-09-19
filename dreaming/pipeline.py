@@ -90,11 +90,18 @@ def in_process_replay(source: str, pool: SimulatorPool) -> ReplayTrajectory:
 
 
 def default_sandbox_replay(source: str, pool: SimulatorPool) -> ReplayTrajectory:
-    """生产路径：002 沙箱容器回放（静态检查已过；物理隔离边界）。"""
+    """生产路径：002 沙箱容器回放（静态检查已过；物理隔离边界）。
+
+    候选版本落盘到轮次临时目录——候选未过审批不得进 policies/history
+    权威谱系（谱系落盘仅由 approve.decide 在 approved 时执行）。
+    """
+    import tempfile
+
     from core.sandbox.backends import select_backend
 
     simulator = pool.build(worker_count=4, budget=Budget(max_probes=8), latency_quantum_ms=0)
-    result = run_policy(source, simulator, RunLimits(), select_backend())
+    with tempfile.TemporaryDirectory(prefix="cineflow-candidates-") as scratch:
+        result = run_policy(source, simulator, RunLimits(), select_backend(), history_root=scratch)
     if result.trajectory is None:
         raise RuntimeError(f"沙箱回放失败：{result.status} {result.stderr_tail[-200:]}")
     return result.trajectory
