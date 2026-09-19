@@ -362,12 +362,15 @@ def build_calibration_tree(tree_store, make_tree, make_node):
 
     nodes_spec 元素：(score, breakdown)；breakdown 形如
     {"proxy.aesthetic@1.0.0": {"score": 0.8}, "judge.cinematic@1.0.0": {"score": 0.7}}。
-    根节点 parent 为 None，其余挂在根下；created_at 按 spec 顺序递增。
+    根节点 parent 为 None，其余挂在根下；created_at = base_created_at + 序号
+    （周期过滤测试用 base_created_at 落入目标窗口）。
     返回 (tree, node_ids 按 spec 顺序)。
     """
     from core.tree.models import CostRecord, NodeStatus, new_id
 
-    def _build(nodes_spec, *, agent_id="agent-calib", policy_version="a1b2c3d4e5f6"):
+    def _build(
+        nodes_spec, *, agent_id="agent-calib", policy_version="a1b2c3d4e5f6", base_created_at=0.0
+    ):
         tree = make_tree(agent_id=agent_id, policy_version=policy_version)
         tree_store.create_tree(tree)
 
@@ -384,7 +387,7 @@ def build_calibration_tree(tree_store, make_tree, make_node):
                 score=score,
                 cost=CostRecord(),
                 status=NodeStatus.EVALUATED,
-                created_at=float(i + 1),
+                created_at=base_created_at + float(i + 1),
             )
             tree_store.append_node(node)
             node_ids.append(node.node_id)
@@ -415,7 +418,9 @@ def make_anchor_entry():
 def make_platform_backfill(campaigns_engine):
     """promo 回流数据工厂（功能 010）：ingested 运营记录 + 指标快照落库。
 
-    metrics 携带 MetricSnapshot 形态的平台真值（asdict 口径），字段可覆盖。
+    metrics 对齐 ops/ingest_metrics.py 的真实落盘结构：
+    {"platform_metrics": MetricSnapshot asdict, "material": {...}}；
+    渠道标识取 material.platform，字段可覆盖。
     """
     from sqlalchemy import insert
 
@@ -435,15 +440,22 @@ def make_platform_backfill(campaigns_engine):
             "data_version": "v1",
         }
         snapshot.update(overrides.pop("snapshot", {}))
+        material = {
+            "platform": "douyin",
+            "artifact_hash": f"{counter['n']:064x}",
+            "kind": "poster",
+            "tags": [],
+        }
+        material.update(overrides.pop("material", {}))
         fields = {
             "campaign_id": f"camp-{counter['n']}",
             "round_id": "round-calib",
             "material_id": f"mat-{counter['n']}",
-            "node_id": f"node-{counter['n']}",
+            "node_id": f"node-{counter['n']:012d}",
             "status": "ingested",
             "spent_usd": 1.0,
             "external_id": f"ext-{counter['n']}",
-            "metrics": {"snapshot": snapshot},
+            "metrics": {"platform_metrics": snapshot, "material": material},
             "created_at": 1000.0,
             "updated_at": 1000.0 + counter["n"],
         }
