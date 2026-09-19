@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from core.evaluators.weights import load_evaluator_weights
 
 from core.evaluators.errors import WeightConfigError
+from core.evaluators.weights import load_evaluator_weights
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MOVIE_YAML = REPO_ROOT / "configs" / "movie.yaml"

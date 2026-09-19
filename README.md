@@ -149,6 +149,36 @@ uv run python ops/demo_visual_loop.py
 真实生成平台接入是凭证配置的运维动作：`VISUAL_GEN_BASE_URL` /
 `VISUAL_GEN_API_KEY`（缺凭证不假装生成，原则六）。
 
+## 做梦层（功能 005）
+
+```bash
+# 单测 + 覆盖率（core + agents + dreaming 口径 ≥ 85%）
+uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov-fail-under=85
+
+# 静态拦截与过拟合判定
+uv run pytest tests/unit -k "static or overfit"
+
+# 5 轮做梦端到端演示（变异生成器 + 真实沙箱回放 + 模拟审批 + 曲线/谱系）
+uv run python ops/demo_dreaming.py
+
+# 做梦沙箱 e2e 与 M=128 全量基准（需 Docker）
+uv run pytest tests/integration -m integration -k dreaming
+```
+
+做梦管线：digest（最近 K 轮落盘报告）→ 候选生成（MutatorGenerator 占位 /
+LLMGenerator 经网关计费）→ 静态检查（违规不回放不记分）→ 沙箱串行回放
+→ reward = pareto_auc（梯形归一化权威口径）− λ·并行惩罚 → 过拟合筛选
+（最近树只做 validation）→ 人工审批闸门（未 approve 不得进部署指针，
+SC-005 机检）→ DreamRound/meta.json 落盘（只增不改，git 承担审计）。
+
+审批操作（生产形态）：
+```bash
+# 审批单生成于 dreaming/tickets/{round_id}.approval.json；人工确认后：
+uv run python -c "from dreaming.approve import decide; decide(
+    'dreaming/tickets/<round>.approval.json', approver='<姓名>',
+    decision='approved', reason='<理由>', config_path='configs/movie.yaml')"
+```
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
@@ -157,6 +187,17 @@ uv run python ops/demo_visual_loop.py
 - `specs/002-replay-sandbox/`：回放模拟器与沙箱化策略执行（T101–T138 全部完成）
 - `specs/003-promo-loop/`：宣发 Agent 全闭环（T201–T228 全部完成）
 - `specs/004-visual-loop/`：视觉 Agent 闭环（T301–T332 全部完成）
+- `specs/005-dreaming/`：做梦层与谱系报表（T401–T425 全部完成）
+
+## 一期里程碑全景
+
+| 周 | 交付物 | 验收 | 状态 |
+| --- | --- | --- | --- |
+| 1~3 | core/tree + core/evaluators + 注册中心 | 覆盖率 ≥ 85% | ✅ 001 |
+| 4~6 | core/replay + sandbox + 对抗测试套件 | 作弊全拦截；τ≥0.95 | ✅ 002 |
+| 7~8 | agents/promo 全闭环（模拟投放，单轮 ≤ 预算 2%） | 首轮进化曲线，成本入账 | ✅ 003 |
+| 9~10 | agents/visual 五评估器 + 闭环 | 回放打分与重算一致性验收 | ✅ 004 |
+| 11~12 | dreaming 层 + 谱系报表 | 连续 5 轮 reward 曲线无塌缩 | ✅ 005 |
 
 每个特性目录含 `spec.md`（用户故事与需求）、`plan.md` / `research.md` /
 `data-model.md`（技术设计）、`contracts/`（接口契约）、`tasks.md`（任务分解）、

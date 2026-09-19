@@ -19,9 +19,9 @@ jobs:
         run: |
           uvx ruff check core ops tests
           uvx ruff format --check core ops tests
-      - name: 单元测试 + 覆盖率门禁（core + agents ≥85%）
+      - name: 单元测试 + 覆盖率门禁（core + agents + dreaming ≥85%）
         run: >-
-          uv run pytest tests/unit --cov=core --cov=agents
+          uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming
           --cov-report=term-missing --cov-fail-under=85
 
   # 适配器契约套件（SC-007）：模拟实现全过，真实实现无凭证按用例跳过

@@ -8,14 +8,14 @@
 import os
 
 import pytest
+
+from agents.visual.frames import probe_clip
 from agents.visual.platform.base import (
     GenJobStatus,
     InvalidParamsError,
     VideoGenError,
 )
 from agents.visual.platform.simulated import SimulatedVideoGen
-
-from agents.visual.frames import probe_clip
 
 GEN_PARAMS = {"style": "史诗", "shots": 2, "seed_tier": 1}
 
