@@ -354,3 +354,111 @@ def multi_tree_pool(tree_store, build_historical_tree):
         return trees, tree_store
 
     return _make
+
+
+@pytest.fixture()
+def build_calibration_tree(tree_store, make_tree, make_node):
+    """多评估器夹具树工厂（功能 010 校准）：节点 eval_breakdown 带多分量。
+
+    nodes_spec 元素：(score, breakdown)；breakdown 形如
+    {"proxy.aesthetic@1.0.0": {"score": 0.8}, "judge.cinematic@1.0.0": {"score": 0.7}}。
+    根节点 parent 为 None，其余挂在根下；created_at 按 spec 顺序递增。
+    返回 (tree, node_ids 按 spec 顺序)。
+    """
+    from core.tree.models import CostRecord, NodeStatus, new_id
+
+    def _build(nodes_spec, *, agent_id="agent-calib", policy_version="a1b2c3d4e5f6"):
+        tree = make_tree(agent_id=agent_id, policy_version=policy_version)
+        tree_store.create_tree(tree)
+
+        node_ids: list[str] = []
+        for i, (score, breakdown) in enumerate(nodes_spec):
+            node = make_node(
+                node_id=tree.root_id if i == 0 else new_id(),
+                tree_id=tree.tree_id,
+                parent_id=None if i == 0 else tree.root_id,
+                depth=0 if i == 0 else 1,
+                agent_id=agent_id,
+                policy_version=policy_version,
+                eval_breakdown=breakdown,
+                score=score,
+                cost=CostRecord(),
+                status=NodeStatus.EVALUATED,
+                created_at=float(i + 1),
+            )
+            tree_store.append_node(node)
+            node_ids.append(node.node_id)
+        return tree, node_ids
+
+    return _build
+
+
+@pytest.fixture()
+def make_anchor_entry():
+    """人评录入条目工厂（功能 010）：{node_id, score, reviewer}，字段可覆盖。"""
+    counter = {"n": 0}
+
+    def _make(**overrides):
+        counter["n"] += 1
+        fields = {
+            "node_id": "node-placeholder",
+            "score": 0.8,
+            "reviewer": f"reviewer-{counter['n']}",
+        }
+        fields.update(overrides)
+        return fields
+
+    return _make
+
+
+@pytest.fixture()
+def make_platform_backfill(campaigns_engine):
+    """promo 回流数据工厂（功能 010）：ingested 运营记录 + 指标快照落库。
+
+    metrics 携带 MetricSnapshot 形态的平台真值（asdict 口径），字段可覆盖。
+    """
+    from sqlalchemy import insert
+
+    from agents.promo.db import promo_campaigns
+
+    counter = {"n": 0}
+
+    def _make(**overrides):
+        counter["n"] += 1
+        snapshot = {
+            "ctr": 0.05,
+            "completion_rate": 0.6,
+            "conversions": 12,
+            "impressions": 1000,
+            "clicks": 50,
+            "platform_timestamp": 1000.0 + counter["n"],
+            "data_version": "v1",
+        }
+        snapshot.update(overrides.pop("snapshot", {}))
+        fields = {
+            "campaign_id": f"camp-{counter['n']}",
+            "round_id": "round-calib",
+            "material_id": f"mat-{counter['n']}",
+            "node_id": f"node-{counter['n']}",
+            "status": "ingested",
+            "spent_usd": 1.0,
+            "external_id": f"ext-{counter['n']}",
+            "metrics": {"snapshot": snapshot},
+            "created_at": 1000.0,
+            "updated_at": 1000.0 + counter["n"],
+        }
+        fields.update(overrides)
+        with campaigns_engine.begin() as conn:
+            conn.execute(insert(promo_campaigns).values(**fields))
+        return fields
+
+    return _make
+
+
+@pytest.fixture()
+def calibration_data_dir(tmp_path):
+    """calibration/ 临时数据目录夹具：rounds/ledger/reports/proposals 四层落盘结构。"""
+    base = tmp_path / "calibration"
+    for sub in ("rounds", "ledger", "reports", "proposals"):
+        (base / sub).mkdir(parents=True)
+    return base
