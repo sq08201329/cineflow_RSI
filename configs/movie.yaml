@@ -72,6 +72,18 @@ visual:
       - "哪一段的叙事张力更好？"
       - "哪一段的画面构图更专业？"
 
+# 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
+# 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）
+calibration:
+  period_days: 7 # 校准周期（天）
+  top_k: 5 # 每轮盲评清单锚点数（稀疏人评预算）
+  min_samples: 3 # 偏差计算最小配对样本量，不足不产偏差值（FR-004）
+  bias_threshold: 0.15 # 均值偏移超阈即生成权重再拟合提案
+  reliability_target: 0.6 # 每周信度目标（Pearson r 达标口径）
+  ridge_lambda: 1.0 # 约束岭回归向现权重收缩的强度
+  self_pairing_exclusions: # 防自循环：平台真值锚点不与自身来源分量配对
+    platform_truth: ["human.platform_metrics"]
+
 # 做梦层（dreaming）形态参数：候选数、摘要窗口、奖励 λ、随机预算、塌缩检测
 dreaming:
   candidates_per_round: 128 # 全量档 M
