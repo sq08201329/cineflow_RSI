@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from core.yaml_edit import upsert_section_entries
 from dreaming.lineage import read_meta, write_meta
 from dreaming.pipeline import DreamRound
 from policies.versioning import record_policy
@@ -151,11 +152,21 @@ def _load_config(config_path: str | Path) -> dict:
 
 
 def _update_pointer(config_path: str | Path, agent_id: str, version: str) -> None:
-    """部署指针更新：configs 的 deployment.{agent_id}.current_policy_version。"""
+    """部署指针更新：configs 的 deployment.{agent_id}.current_policy_version。
+
+    定点改写（core/yaml_edit.upsert_section_entries）：注释/空行/其他段逐字节
+    保留，仅指针行变更；deployment 段或指针键缺失时幂等追加（WS3 遗留收口，
+    不再 yaml.safe_load + safe_dump 全量重写丢注释）。
+    """
     path = Path(config_path)
-    config = _load_config(path)
-    config.setdefault("deployment", {}).setdefault(agent_id, {})["current_policy_version"] = version
-    path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+    path.write_text(
+        upsert_section_entries(
+            path.read_text(encoding="utf-8"),
+            ("deployment", agent_id),
+            {"current_policy_version": version},
+        ),
+        encoding="utf-8",
+    )
 
 
 def current_policy_version(

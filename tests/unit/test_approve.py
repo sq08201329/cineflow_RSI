@@ -1,10 +1,13 @@
 """人工审批闸门单测（US2 / T414，contracts/approval.md）。
 
 审批单字段完整（diff 摘要 + 双池 reward 对比）、approve/reject 落盘、
-部署指针仅 approved 可更新（SC-005 机检）、拒绝后指针不变。
+部署指针仅 approved 可更新（SC-005 机检）、拒绝后指针不变；
+WS3 遗留收口：部署指针定点改写保注释（不全量重写 yaml）。
 """
 
+import difflib
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -232,3 +235,104 @@ class Test部署指针机检:
             current_policy_version(
                 "agent-dream", env["config_path"], history_root=env["history_root"]
             )
+
+
+def _raw_config(config_path, pointer_block=""):
+    """原始 movie.yaml 文本（含全部注释）直接落盘，可选追加部署指针段。"""
+    text = (Path(__file__).resolve().parents[2] / "configs" / "movie.yaml").read_text(
+        encoding="utf-8"
+    )
+    config_path.write_text(text + pointer_block, encoding="utf-8")
+
+
+def _changed_lines(before: str, after: str, sign: str) -> list[str]:
+    """unified diff 中指定方向（+/-）的真实变更行（排除文件头 +++/---）。"""
+    diff = difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
+    return [
+        line
+        for line in diff
+        if line.startswith(sign) and not line.startswith(sign * 3)
+    ]
+
+
+class Test部署指针保注释:
+    """WS3 遗留收口：approve 更新部署指针不得全量重写 yaml。
+
+    一期缺陷：decide 走 yaml.safe_load + safe_dump 全量重写，注释与格式全丢。
+    收口后仅指针相关行变更，注释/空行/其他段逐字节保留。
+    """
+
+    _POINTER_BLOCK = (
+        "\n# 部署指针：仅 approved 版本可成为当期策略（SC-005 机检）\n"
+        "deployment:\n"
+        "  agent-dream:\n"
+        "    current_policy_version: champion-v1  # 当期部署策略版本\n"
+    )
+
+    def test_approve_保注释_仅指针行变更(self, dream_env):
+        env = dream_env
+        _raw_config(env["config_path"], self._POINTER_BLOCK)
+        before = env["config_path"].read_text(encoding="utf-8")
+        ticket = create_approval_ticket(
+            env["round"],
+            env["round"].champion_version,
+            env["factory"].build_pool(env["trees"]),
+            tickets_dir=env["tickets_dir"],
+            replay_fn=_in_process,
+        )
+        decide(
+            ticket.path,
+            approver="张三",
+            decision="approved",
+            reason="泛化良好",
+            history_root=env["history_root"],
+            config_path=env["config_path"],
+        )
+        after = env["config_path"].read_text(encoding="utf-8")
+        # 段头注释/行尾注释/其他段注释原样保留
+        assert "# 部署指针：仅 approved 版本可成为当期策略（SC-005 机检）" in after
+        assert "# 当期部署策略版本" in after
+        assert "# 形态配置：电影（movie）" in after
+        assert "# 回放形态参数" in after
+        # 文件 diff 只触及指针一行
+        removed = _changed_lines(before, after, "-")
+        added = _changed_lines(before, after, "+")
+        assert len(removed) == 1 and len(added) == 1
+        assert "current_policy_version" in removed[0]
+        assert env["round"].winner_version in added[0]
+        # 指针机检可读：新版本有 approved 记录
+        pointer = current_policy_version(
+            "agent-dream", env["config_path"], history_root=env["history_root"]
+        )
+        assert pointer == env["round"].winner_version
+
+    def test_无deployment段_指针追加_原文逐字节保留(self, dream_env):
+        env = dream_env
+        _raw_config(env["config_path"])  # 原始 movie.yaml：无 deployment 段、注释齐全
+        before = env["config_path"].read_text(encoding="utf-8")
+        ticket = create_approval_ticket(
+            env["round"],
+            env["round"].champion_version,
+            env["factory"].build_pool(env["trees"]),
+            tickets_dir=env["tickets_dir"],
+            replay_fn=_in_process,
+        )
+        decide(
+            ticket.path,
+            approver="张三",
+            decision="approved",
+            reason="泛化良好",
+            history_root=env["history_root"],
+            config_path=env["config_path"],
+        )
+        after = env["config_path"].read_text(encoding="utf-8")
+        # 原文逐字节保留（deployment 段仅追加在文件尾）
+        assert after.startswith(before)
+        winner = env["round"].winner_version
+        assert yaml.safe_load(after)["deployment"]["agent-dream"][
+            "current_policy_version"
+        ] == winner
+        pointer = current_policy_version(
+            "agent-dream", env["config_path"], history_root=env["history_root"]
+        )
+        assert pointer == winner
