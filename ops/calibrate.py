@@ -105,8 +105,44 @@ def _cmd_intake(args) -> int:
     return 0 if not rejections else 1
 
 
+def _cmd_close(args) -> int:
+    from sqlalchemy import create_engine
+
+    from core.calibration.config import CalibrationConfig
+    from core.calibration.rounds import close_round
+    from core.tree.store import create_tree_store
+
+    dsn = _resolve_dsn(args)
+    if not dsn:
+        print(json.dumps({"error": "缺少 DSN（--dsn 或 CINEFLOW_PG_DSN）"}, ensure_ascii=False))
+        return 2
+
+    config = CalibrationConfig.from_yaml(args.config)
+    engine = create_engine(dsn)
+    with engine.connect() as conn:
+        summary = close_round(
+            create_tree_store(engine),
+            conn,
+            args.data_dir,
+            round_id=args.round,
+            config=config,
+        )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_report(args) -> int:
+    from core.calibration.config import CalibrationConfig
+    from core.calibration.report import build_report
+
+    config = CalibrationConfig.from_yaml(args.config)
+    report = build_report(args.data_dir, args.period, target=config.reliability_target)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="外环周校准：盲评清单生成与人评录入")
+    parser = argparse.ArgumentParser(description="外环周校准：盲评清单/录入/收口/信度报告")
     sub = parser.add_subparsers(dest="command", required=True)
 
     round_parser = sub.add_parser("round", help="生成 top-k 盲评清单并落盘轮次")
@@ -127,6 +163,19 @@ def main() -> int:
     intake_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
     intake_parser.add_argument("--dsn", default=None, help="PG DSN，默认读 CINEFLOW_PG_DSN")
     intake_parser.set_defaults(func=_cmd_intake)
+
+    close_parser = sub.add_parser("close", help="收口轮次：配对→偏差→台账/快照/报告→closed")
+    close_parser.add_argument("--round", required=True, help="校准轮次 ID")
+    close_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    close_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
+    close_parser.add_argument("--dsn", default=None, help="PG DSN，默认读 CINEFLOW_PG_DSN")
+    close_parser.set_defaults(func=_cmd_close)
+
+    report_parser = sub.add_parser("report", help="按周期重建信度报告（读台账）")
+    report_parser.add_argument("--period", required=True, help="周期标签（如 2026-W38）")
+    report_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    report_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
+    report_parser.set_defaults(func=_cmd_report)
 
     args = parser.parse_args()
     return args.func(args)

@@ -44,6 +44,29 @@ def insert_anchor(conn: Connection, anchor: AnchorScore) -> bool:
     return True
 
 
+def load_anchors(conn: Connection, round_id: str) -> list[AnchorScore]:
+    """读取一轮的全部锚点（DB 行 → AnchorScore 内存形态）。"""
+    from sqlalchemy import select
+
+    rows = conn.execute(
+        select(calibration_anchors).where(calibration_anchors.c.round_id == round_id)
+    ).all()
+    return [
+        AnchorScore(
+            anchor_id=row.anchor_id,
+            node_id=row.node_id,
+            artifact_hash=row.artifact_hash,
+            agent_id=row.agent_id,
+            source=row.source,
+            score=row.score,
+            reviewer=row.reviewer,
+            round_id=row.round_id,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
