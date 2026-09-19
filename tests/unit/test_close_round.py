@@ -5,7 +5,7 @@ close_round：配对 → 偏差 → 台账 → 锚点分布快照 → 信度报�
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,7 +15,7 @@ from core.calibration.rounds import close_round
 from core.calibration.selection import build_blind_list
 from core.evaluators.errors import ValidationError
 
-_BASE_TS = datetime(2026, 9, 15, tzinfo=timezone.utc).timestamp()
+_BASE_TS = datetime(2026, 9, 15, tzinfo=UTC).timestamp()
 _CONFIG = CalibrationConfig.from_dict(
     {
         "calibration": {
@@ -91,7 +91,9 @@ class Test收口管线:
         assert judge_record["mean_shift"] is None  # judge 口径不产 mean_shift
 
         # 快照与报告落盘
-        snapshot = calibration_data_dir / "snapshots" / "visual" / "proxy.aesthetic" / f"{period}.json"
+        snapshot = (
+            calibration_data_dir / "snapshots" / "visual" / "proxy.aesthetic" / f"{period}.json"
+        )
         assert snapshot.is_file()
         report = json.loads(
             (calibration_data_dir / "reports" / f"{period}.json").read_text(encoding="utf-8")

@@ -9,8 +9,6 @@ kendall_tau）+ samples + meets_target（≥ calibration.reliability_target，�
 import json
 from pathlib import Path
 
-from core.calibration.ledger import ledger_path
-
 
 def _correlation_of(record: dict) -> tuple[str, float | None]:
     """取记录的相关口径：连续 → pearson_r；judge → kendall_tau。"""

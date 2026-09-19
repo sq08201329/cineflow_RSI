@@ -112,7 +112,9 @@ class Test多锚点:
         _, node_ids = build_calibration_tree(
             [(0.5, dict(_VISUAL_BREAKDOWN)), (0.6, dict(_VISUAL_BREAKDOWN))], agent_id="visual"
         )
-        anchors = [_anchor(nid, "human_blind", score=0.8 + i * 0.05) for i, nid in enumerate(node_ids)]
+        anchors = [
+            _anchor(nid, "human_blind", score=0.8 + i * 0.05) for i, nid in enumerate(node_ids)
+        ]
         records = pair_anchors(anchors, tree_store, _EXCLUSIONS)
         assert len(records) == 4  # 2 锚点 × 2 分量
         assert {r.anchor_id for r in records} == {a.anchor_id for a in anchors}
