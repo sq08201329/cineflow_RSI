@@ -12,20 +12,20 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T301 创建目录 agents/visual/{evaluators,platform}
-- [ ] T302 [P] 新增依赖 numpy、imageio、imageio-ffmpeg（uv add；版本锁定进 uv.lock）
-- [ ] T303 [P] configs/movie.yaml visual 段补全（片段规格、生成预算、judge 锚点集=固定生成参数集（经确定性模拟生成器产出锚点工件，参数+工件哈希进 judge 版本号）、judge 3 提示词文本、帧采样规则、五评估器权重）
+- [x] T301 创建目录 agents/visual/{evaluators,platform}
+- [x] T302 [P] 新增依赖 numpy、imageio、imageio-ffmpeg（uv add；版本锁定进 uv.lock）
+- [x] T303 [P] configs/movie.yaml visual 段补全（片段规格、生成预算、judge 锚点集=固定生成参数集（经确定性模拟生成器产出锚点工件，参数+工件哈希进 judge 版本号）、judge 3 提示词文本、帧采样规则、五评估器权重）
 
 ## 阶段 2：基础（阻塞性前置条件）
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T304 迁移 0003 visual_gen_jobs（可变运营表；唯一键 (round_id, params_hash)；无 immutable 触发器）
-- [ ] T305 [P] 定点归一测试 tests/unit/test_quantize.py（先写：6 位小数、边界、幂等）
-- [ ] T306 [P] 实现 core/evaluators/quantize.py（quantize_score 纯函数，业务无关）
-- [ ] T307 帧采样测试 tests/unit/test_frames.py（先写：ffprobe 解析、采样逐字节确定性、损坏文件报错不崩溃）
-- [ ] T308 实现 agents/visual/frames.py（ffprobe 探测 + 等间隔 N=8 采样 + 采样规格元信息）
-- [ ] T309 [P] conftest 夹具扩展（SimulatedVideoGen 工厂、程序化小片段工厂、visual 运营表引擎）
+- [x] T304 迁移 0003 visual_gen_jobs（可变运营表；唯一键 (round_id, params_hash)；无 immutable 触发器）
+- [x] T305 [P] 定点归一测试 tests/unit/test_quantize.py（先写：6 位小数、边界、幂等）
+- [x] T306 [P] 实现 core/evaluators/quantize.py（quantize_score 纯函数，业务无关）
+- [x] T307 帧采样测试 tests/unit/test_frames.py（先写：ffprobe 解析、采样逐字节确定性、损坏文件报错不崩溃）
+- [x] T308 实现 agents/visual/frames.py（ffprobe 探测 + 等间隔 N=8 采样 + 采样规格元信息）
+- [x] T309 [P] conftest 夹具扩展（SimulatedVideoGen 工厂、程序化小片段工厂、visual 运营表引擎）
 
 **检查点**: 迁移可执行、帧采样确定性证明、quantize 可用
 
@@ -39,25 +39,25 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T310 [P] [US1] tests/unit/test_visual_format_compliance.py（规格合规/违规、ffmpeg 不可用报错）
-- [ ] T311 [P] [US1] tests/unit/test_visual_aesthetic.py（统计代理映射 [0,1]、退化输入、重算一致）
-- [ ] T312 [P] [US1] tests/unit/test_visual_identity.py（跨镜头余弦、单镜头满分注明、重算一致）
-- [ ] T313 [P] [US1] tests/unit/test_visual_flicker.py（抖动/伪影检测、稳定片段高分、重算一致）
-- [ ] T314 [P] [US1] tests/unit/test_visual_cinematic.py（3 提示词投票、锚点集胜率映射、提示词变更 → 注册键变更 SC-007、网关调用全入账）
-- [ ] T315 [US1] tests/unit/test_visual_loop.py（预算门禁含边界、幂等零重复、单评估器崩溃隔离、对账三方一致、合规 0 分短路不跑 judge）
-- [ ] T316 [US1] tests/contract/test_video_gen_adapter.py（预估/实际花费、幂等键、状态机、工件可解码、错误映射；双实现同跑）
+- [x] T310 [P] [US1] tests/unit/test_visual_format_compliance.py（规格合规/违规、ffmpeg 不可用报错）
+- [x] T311 [P] [US1] tests/unit/test_visual_aesthetic.py（统计代理映射 [0,1]、退化输入、重算一致）
+- [x] T312 [P] [US1] tests/unit/test_visual_identity.py（跨镜头余弦、单镜头满分注明、重算一致）
+- [x] T313 [P] [US1] tests/unit/test_visual_flicker.py（抖动/伪影检测、稳定片段高分、重算一致）
+- [x] T314 [P] [US1] tests/unit/test_visual_cinematic.py（3 提示词投票、锚点集胜率映射、提示词变更 → 注册键变更 SC-007、网关调用全入账）
+- [x] T315 [US1] tests/unit/test_visual_loop.py（预算门禁含边界、幂等零重复、单评估器崩溃隔离、对账三方一致、合规 0 分短路不跑 judge）
+- [x] T316 [US1] tests/contract/test_video_gen_adapter.py（预估/实际花费、幂等键、状态机、工件可解码、错误映射；双实现同跑）
 
 ### 用户故事 1 的实现
 
-- [ ] T317 [P] [US1] 实现 agents/visual/evaluators/format_compliance.py
-- [ ] T318 [P] [US1] 实现 agents/visual/evaluators/aesthetic.py
-- [ ] T319 [P] [US1] 实现 agents/visual/evaluators/identity.py
-- [ ] T320 [P] [US1] 实现 agents/visual/evaluators/flicker.py
-- [ ] T321 [P] [US1] 实现 agents/visual/evaluators/cinematic.py（judge 委员会经网关）
-- [ ] T322 [P] [US1] 实现 agents/visual/platform/base.py + simulated.py（确定性程序化生成 + 账本）
-- [ ] T323 [US1] 实现 agents/visual/clip.py（生成编排 → 工件内容寻址落库 + probe_meta；依赖 T308、T322）
-- [ ] T324 [US1] 实现 agents/visual/loop.py（执行器；依赖 T317-T323、T304、T306）
-- [ ] T325 [P] [US1] 实现 agents/visual/platform/http_real.py（契约同构骨架，凭证注入）
+- [x] T317 [P] [US1] 实现 agents/visual/evaluators/format_compliance.py
+- [x] T318 [P] [US1] 实现 agents/visual/evaluators/aesthetic.py
+- [x] T319 [P] [US1] 实现 agents/visual/evaluators/identity.py
+- [x] T320 [P] [US1] 实现 agents/visual/evaluators/flicker.py
+- [x] T321 [P] [US1] 实现 agents/visual/evaluators/cinematic.py（judge 委员会经网关）
+- [x] T322 [P] [US1] 实现 agents/visual/platform/base.py + simulated.py（确定性程序化生成 + 账本）
+- [x] T323 [US1] 实现 agents/visual/clip.py（生成编排 → 工件内容寻址落库 + probe_meta；依赖 T308、T322）
+- [x] T324 [US1] 实现 agents/visual/loop.py（执行器；依赖 T317-T323、T304、T306）
+- [x] T325 [P] [US1] 实现 agents/visual/platform/http_real.py（契约同构骨架，凭证注入）
 
 **检查点**: 模拟生成器一轮闭环跑通，崩溃隔离与对账成立
 
