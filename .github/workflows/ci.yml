@@ -45,7 +45,10 @@ jobs:
           version: "0.11.17"
       - run: uv sync
       - name: 起开发依赖（PostgreSQL 16 + MinIO）
-        run: docker compose -f ops/dev.compose.yml up -d --wait
+        run: |
+          # 只对长驻服务用 --wait；minio-init 是一次性服务，退出会让 --wait 判失败
+          docker compose -f ops/dev.compose.yml up -d --wait postgres minio
+          docker compose -f ops/dev.compose.yml up minio-init
       - name: 执行 Alembic 迁移（含 immutable 触发器与应用账号 REVOKE）
         run: uv run alembic -c ops/alembic.ini upgrade head
         env:

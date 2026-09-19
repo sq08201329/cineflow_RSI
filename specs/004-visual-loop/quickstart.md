@@ -6,7 +6,7 @@
 
 ```bash
 uv sync    # 新增 numpy/imageio/imageio-ffmpeg
-docker compose -f ops/dev.compose.yml up -d postgres   # 集成测试需要
+docker compose -f ops/dev.compose.yml up -d --wait postgres   # 集成测试需要
 ```
 
 ## 验证 1：单元测试 + 覆盖率门禁（SC-005）

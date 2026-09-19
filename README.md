@@ -49,7 +49,8 @@ uv run pytest tests/unit
 uv run pytest tests/unit --cov=core --cov-report=term-missing --cov-fail-under=85
 
 # 集成测试（需 Docker；不可达时自动跳过）
-docker compose -f ops/dev.compose.yml up -d
+docker compose -f ops/dev.compose.yml up -d --wait postgres minio
+docker compose -f ops/dev.compose.yml up minio-init          # 建工件 bucket（一次性）
 uv run alembic -c ops/alembic.ini upgrade head
 uv run pytest tests/integration -m integration
 ```

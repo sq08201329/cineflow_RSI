@@ -1,5 +1,8 @@
 # 本地开发依赖：PostgreSQL 16（谱系元数据）+ MinIO（S3 兼容工件存储）
-# 用法：docker compose -f ops/dev.compose.yml up -d
+# 用法（--wait 只用于长驻服务；minio-init 是一次性服务，退出会让 --wait 判失败）：
+#   docker compose -f ops/dev.compose.yml up -d --wait postgres minio
+#   docker compose -f ops/dev.compose.yml up minio-init      # 建工件 bucket
+# 全量启动（不等就绪）：docker compose -f ops/dev.compose.yml up -d
 services:
   postgres:
     image: postgres:16

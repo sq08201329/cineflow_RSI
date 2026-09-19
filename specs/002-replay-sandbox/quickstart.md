@@ -6,7 +6,7 @@
 
 - Python 3.11+、uv；`uv sync`
 - Docker（沙箱/对抗测试需要；本地 WSL 已启用 Docker Desktop 集成）
-- PostgreSQL 开发库（构建历史树数据用）：`docker compose -f ops/dev.compose.yml up -d postgres`
+- PostgreSQL 开发库（构建历史树数据用）：`docker compose -f ops/dev.compose.yml up -d --wait postgres`
 
 ## 验证 1：回放语义单元测试（对应 US1 验收场景）
 

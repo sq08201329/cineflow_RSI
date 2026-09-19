@@ -24,7 +24,8 @@ uv run pytest tests/unit --cov=core --cov-report=term-missing
 ## 验证 2：集成测试（Docker PG + MinIO，对应 SC-003/SC-004/SC-006）
 
 ```bash
-docker compose -f ops/dev.compose.yml up -d   # 本地开发依赖（PostgreSQL 16 + MinIO）
+docker compose -f ops/dev.compose.yml up -d --wait postgres minio   # 长驻依赖（PostgreSQL + MinIO）
+docker compose -f ops/dev.compose.yml up minio-init                 # 建工件 bucket（一次性）
 uv run pytest tests/integration -m integration
 ```
 
