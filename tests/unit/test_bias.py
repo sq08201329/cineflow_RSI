@@ -31,7 +31,7 @@ def _pairs(pairs: list[tuple[float, float]], key: str = _KEY) -> list[PairingRec
 
 class Test连续口径:
     def test_注入已知偏移(self):
-        autos = [0.1, 0.3, 0.5, 0.7, 0.9]
+        autos = [0.05, 0.2, 0.4, 0.6, 0.75]
         anchors = [a + 0.2 for a in autos]
         record = compute_bias(
             _pairs(list(zip(anchors, autos, strict=True))),
