@@ -58,13 +58,13 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T413 [P] [US2] tests/unit/test_overfit.py（最近树永远只 validation、前 20% 判定、首轮跳过注明、过拟合 100% 丢弃、泛化不误判）
-- [ ] T414 [P] [US2] tests/unit/test_approve.py（审批单字段、approve/reject 落盘、部署指针仅 approved 可更新（SC-005 机检）、拒绝后指针不变）
+- [x] T413 [P] [US2] tests/unit/test_overfit.py（最近树永远只 validation、前 20% 判定、首轮跳过注明、过拟合 100% 丢弃、泛化不误判）
+- [x] T414 [P] [US2] tests/unit/test_approve.py（审批单字段、approve/reject 落盘、部署指针仅 approved 可更新（SC-005 机检）、拒绝后指针不变）
 
 ### 用户故事 2 的实现
 
-- [ ] T415 [US2] 实现 dreaming/overfit.py（分树 + 判定纯函数）
-- [ ] T416 [US2] 实现 dreaming/approve.py（审批单生成 + decide + 部署指针；依赖 T408、T415）
+- [x] T415 [US2] 实现 dreaming/overfit.py（分树 + 判定纯函数）
+- [x] T416 [US2] 实现 dreaming/approve.py（审批单生成 + decide + 部署指针；依赖 T408、T415）
 
 **检查点**: 筛选与审批门禁成立
 
@@ -78,12 +78,12 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T417 [P] [US3] tests/unit/test_lineage.py（两源汇聚、父/树/子字段完整、冲突报错、epsilon_random 标记）
-- [ ] T418 [P] [US3] tests/unit/test_collapse.py（正常序列不误报、注入塌缩 100% 告警并指明起始轮、轮数 <window 不塌缩）
+- [x] T417 [P] [US3] tests/unit/test_lineage.py（两源汇聚、父/树/子字段完整、冲突报错、epsilon_random 标记）
+- [x] T418 [P] [US3] tests/unit/test_collapse.py（正常序列不误报、注入塌缩 100% 告警并指明起始轮、轮数 <window 不塌缩）
 
 ### 用户故事 3 的实现
 
-- [ ] T419 [US3] 实现 dreaming/lineage.py 完整版（build_lineage + build_curve + detect_collapse；依赖 T408）
+- [x] T419 [US3] 实现 dreaming/lineage.py 完整版（build_lineage + build_curve + detect_collapse；依赖 T408）
 
 **检查点**: 谱系报表与曲线可产出
 
