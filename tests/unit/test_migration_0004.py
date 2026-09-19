@@ -47,7 +47,7 @@ def anchors_engine():
 
 class Test表结构:
     def test_字段集与可空性与数据模型一致(self, anchors_engine):
-        columns = {c.name: c for c in inspect(anchors_engine).get_columns("calibration_anchors")}
+        columns = {c["name"]: c for c in inspect(anchors_engine).get_columns("calibration_anchors")}
         assert set(columns) == {
             "anchor_id",
             "node_id",
@@ -60,7 +60,7 @@ class Test表结构:
             "created_at",
         }
         for name, column in columns.items():
-            assert not column.nullable, f"{name} 必须 NOT NULL"
+            assert not column["nullable"], f"{name} 必须 NOT NULL"
 
     def test_主键为_anchor_id(self):
         assert [c.name for c in calibration_anchors.primary_key.columns] == ["anchor_id"]
