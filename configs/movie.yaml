@@ -45,3 +45,29 @@ promo:
     base_impressions: 1000
     ctr_beta: [2.0, 40.0]
     completion_beta: [3.0, 7.0]
+
+# 视觉（visual）形态参数：片段规格、生成预算、帧采样规则、judge 锚点集与提示词
+visual:
+  exploration_per_round_usd: 500 # 单轮生成预算上限（FR-003，预算门禁）
+  clips_per_round: 3
+  clip_spec: # 片段规格（rule.format_compliance 对照）
+    width: 320
+    height: 240
+    fps: 8
+    duration_seconds: 2.0
+    codec: h264
+  frame_sampling: # 帧采样规则（进评估器版本元信息，决策 3）
+    count: 8
+    size: 64
+  simulated_gen: # 确定性模拟生成器参数（决策 2）
+    frames: 16
+    estimated_cost_usd: 0.6 # 预估花费（实际扣费 ≤ 预估）
+    cost_per_clip_usd: 0.5 # 实际扣费
+  judge: # judge.cinematic 委员会（决策 5）：锚点=固定生成参数集经模拟生成器产出
+    anchor_gen_params:
+      - {style: "史诗", shots: 2, seed_tier: 1}
+      - {style: "纪实", shots: 1, seed_tier: 2}
+    prompts:
+      - "哪一段镜头的电影感更强？"
+      - "哪一段的叙事张力更好？"
+      - "哪一段的画面构图更专业？"

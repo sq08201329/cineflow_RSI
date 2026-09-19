@@ -214,3 +214,61 @@ def simulated_platform(promo_config):
     from agents.promo.platform.simulated import SimulatedPlatform
 
     return SimulatedPlatform(promo_config.simulated_platform)
+
+
+@pytest.fixture()
+def visual_config():
+    """视觉形态配置夹具：直接读 configs/movie.yaml 的 visual 段。"""
+    from pathlib import Path
+
+    from agents.visual.config import VisualConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return VisualConfig.from_yaml(path)
+
+
+@pytest.fixture()
+def gen_jobs_engine():
+    """视觉运营表夹具：SQLite 内存库建 visual_gen_jobs（可变表）。"""
+    from sqlalchemy import create_engine
+
+    from agents.visual.db import create_gen_jobs_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_gen_jobs_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def make_clip_file():
+    """程序化小片段工厂：320x240@8fps 共 16 帧（渐变 + 移动色块），写 mp4。
+
+    测试基础设施自包含实现（不依赖 SimulatedVideoGen）；seed 控制图案参数。
+    """
+    import imageio.v3 as iio
+    import numpy as np
+
+    def _make(path, seed: int = 7):
+        rng = np.random.default_rng(seed)
+        brightness = 60 + int(seed % 100)
+        speed = 2 + seed % 5
+        frames = np.zeros((16, 240, 320, 3), dtype=np.uint8)
+        ys, xs = np.mgrid[0:240, 0:320]
+        for t in range(16):
+            frame = np.clip(brightness + (xs * 0.2 + t * 3) % 120, 0, 255)
+            block = (
+                (xs >= (t * speed) % 280) & (xs < (t * speed) % 280 + 40) & (ys >= 100) & (ys < 140)
+            )
+            frame = np.where(block, 220, frame)
+            noise = rng.integers(0, 3, size=frame.shape) if seed % 2 else 0
+            frames[t] = np.stack([np.clip(frame + noise, 0, 255)] * 3, axis=-1).astype(np.uint8)
+        iio.imwrite(path, frames, fps=8, codec="libx264")
+        return path
+
+    return _make
+
+
+@pytest.fixture()
+def clip_file(tmp_path, make_clip_file):
+    """单个程序化片段文件（默认 seed=7）。"""
+    return make_clip_file(tmp_path / "clip.mp4")
