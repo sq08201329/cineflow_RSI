@@ -47,13 +47,15 @@ class IdentityConsistencyEvaluator(Evaluator):
         if shots <= 1:
             return EvalResult(
                 score=1.0,
-                diagnostics={"note": "single_shot：单镜头一致性恒满分（规格边界）",
-                             "mean_distance": 0.0},
+                diagnostics={
+                    "note": "single_shot：单镜头一致性恒满分（规格边界）",
+                    "mean_distance": 0.0,
+                },
             )
         hashes = np.stack([_dhash64(f) for f in frames])
         distances = [
             float(np.count_nonzero(a != b)) / 64.0
-            for a, b in zip(hashes, hashes[1:])
+            for a, b in zip(hashes, hashes[1:], strict=False)  # 相邻帧对
         ]
         mean_distance = float(np.mean(distances)) if distances else 0.0
         return EvalResult(

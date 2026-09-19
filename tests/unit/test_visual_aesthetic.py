@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from agents.visual.evaluators.aesthetic import AestheticEvaluator
-from core.evaluators.base import ArtifactRef, EvaluatorKind
 from agents.visual.frames import sample_frames
+from core.evaluators.base import ArtifactRef, EvaluatorKind
 
 
 @pytest.fixture()
@@ -39,18 +39,20 @@ def _flat_samples(value: int, visual_config):
 
 class Test评分映射:
     def test_得分在合法区间(self, evaluator, samples):
-        result = evaluator.evaluate(ArtifactRef(artifact_hash="ab" * 32),
-                                    {"samples": samples, "gen_params": {}})
+        result = evaluator.evaluate(
+            ArtifactRef(artifact_hash="ab" * 32), {"samples": samples, "gen_params": {}}
+        )
         assert 0.0 <= result.score <= 1.0
-        assert set(result.diagnostics) >= {"brightness", "contrast", "colorfulness",
-                                           "sharpness"}
+        assert set(result.diagnostics) >= {"brightness", "contrast", "colorfulness", "sharpness"}
 
     def test_程序化片段得分高于全黑(self, evaluator, samples, visual_config):
-        good = evaluator.evaluate(ArtifactRef(artifact_hash="ab" * 32),
-                                  {"samples": samples, "gen_params": {}})
-        black = evaluator.evaluate(ArtifactRef(artifact_hash="cd" * 32),
-                                   {"samples": _flat_samples(0, visual_config),
-                                    "gen_params": {}})
+        good = evaluator.evaluate(
+            ArtifactRef(artifact_hash="ab" * 32), {"samples": samples, "gen_params": {}}
+        )
+        black = evaluator.evaluate(
+            ArtifactRef(artifact_hash="cd" * 32),
+            {"samples": _flat_samples(0, visual_config), "gen_params": {}},
+        )
         assert good.score > black.score
 
     def test_退化输入合法值不产生NaN(self, evaluator, visual_config):

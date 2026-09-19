@@ -62,7 +62,8 @@ class Test版本冻结:
     def test_提示词变更_注册键变更(self, gateway, visual_config, evaluator):
         """SC-007：提示词文本变更 → 版本号变更（可机检）。"""
         other = CinematicJudgeEvaluator(
-            gateway, model="mock-copy-v1",
+            gateway,
+            model="mock-copy-v1",
             prompts=["换一个提示词"] + PROMPTS[1:],
             anchor_hashes=ANCHOR_HASHES,
             sampling_spec=visual_config.frame_sampling,
@@ -71,7 +72,9 @@ class Test版本冻结:
 
     def test_锚点集变更_注册键变更(self, gateway, visual_config, evaluator):
         other = CinematicJudgeEvaluator(
-            gateway, model="mock-copy-v1", prompts=PROMPTS,
+            gateway,
+            model="mock-copy-v1",
+            prompts=PROMPTS,
             anchor_hashes=ANCHOR_HASHES + ["cc" * 32],
             sampling_spec=visual_config.frame_sampling,
         )

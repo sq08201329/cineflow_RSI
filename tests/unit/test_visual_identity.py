@@ -30,8 +30,9 @@ def _samples(frames: np.ndarray, visual_config):
 class Test跨镜头一致性:
     def test_稳定片段高分(self, evaluator, clip_file, visual_config):
         samples = sample_frames(clip_file, visual_config.frame_sampling)
-        result = evaluator.evaluate(ArtifactRef(artifact_hash="ab" * 32),
-                                    {"samples": samples, "gen_params": {"shots": 2}})
+        result = evaluator.evaluate(
+            ArtifactRef(artifact_hash="ab" * 32), {"samples": samples, "gen_params": {"shots": 2}}
+        )
         assert 0.0 <= result.score <= 1.0
 
     def test_完全一致帧序列满分(self, evaluator, visual_config):

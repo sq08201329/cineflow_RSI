@@ -9,7 +9,7 @@ import pytest
 
 from agents.visual.evaluators.flicker import FlickerEvaluator
 from agents.visual.frames import FrameSamples, sample_frames
-from core.evaluators.base import ArtifactRef, EvaluatorKind
+from core.evaluators.base import ArtifactRef
 
 
 @pytest.fixture()
@@ -48,8 +48,9 @@ class Test闪烁检测:
 
     def test_程序化片段得分居中(self, evaluator, clip_file, visual_config):
         samples = sample_frames(clip_file, visual_config.frame_sampling)
-        result = evaluator.evaluate(ArtifactRef(artifact_hash="ab" * 32),
-                                    {"samples": samples, "gen_params": {}})
+        result = evaluator.evaluate(
+            ArtifactRef(artifact_hash="ab" * 32), {"samples": samples, "gen_params": {}}
+        )
         assert 0.0 <= result.score <= 1.0
 
     def test_退化输入合法不NaN(self, evaluator, visual_config):

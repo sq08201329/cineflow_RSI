@@ -16,8 +16,7 @@ def evaluator(visual_config):
 
 
 def _meta(**overrides):
-    meta = {"width": 320, "height": 240, "fps": 8.0, "duration_seconds": 2.0,
-            "codec": "h264"}
+    meta = {"width": 320, "height": 240, "fps": 8.0, "duration_seconds": 2.0, "codec": "h264"}
     meta.update(overrides)
     return meta
 
@@ -31,8 +30,7 @@ class Test注册元数据:
 
 class Test合规判定:
     def test_合规片段满分(self, evaluator):
-        result = evaluator.evaluate(ArtifactRef(artifact_hash="ab" * 32),
-                                    {"probe_meta": _meta()})
+        result = evaluator.evaluate(ArtifactRef(artifact_hash="ab" * 32), {"probe_meta": _meta()})
         assert result.score == 1.0
         assert result.diagnostics["violations"] == []
 

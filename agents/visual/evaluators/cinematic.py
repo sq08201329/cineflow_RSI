@@ -50,12 +50,8 @@ class CinematicJudgeEvaluator(Evaluator):
         self._prompts = list(prompts)
         self._anchor_hashes = list(anchor_hashes)
         # 版本号携带：实现文件 + 采样规格 + 提示词文本 + 锚点集哈希
-        anchors_blob = blake3.blake3(
-            json.dumps(sorted(anchor_hashes)).encode()
-        ).hexdigest()
-        prompts_blob = blake3.blake3(
-            json.dumps(prompts, ensure_ascii=False).encode()
-        ).hexdigest()
+        anchors_blob = blake3.blake3(json.dumps(sorted(anchor_hashes)).encode()).hexdigest()
+        prompts_blob = blake3.blake3(json.dumps(prompts, ensure_ascii=False).encode()).hexdigest()
         self.spec = EvaluatorSpec(
             evaluator_id=EVALUATOR_ID,
             version=implementation_version(

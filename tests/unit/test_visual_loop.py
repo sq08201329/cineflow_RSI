@@ -46,19 +46,28 @@ def loop_env(tree_store, gen_jobs_engine, tmp_path, visual_config, mock_gateway)
 
 def _run(round_id, clips, env):
     return run_round(
-        round_id, StubVisualPolicy(clips), env["store"], env["artifacts"],
-        env["adapter"], env["gateway"], env["engine"], env["config"],
+        round_id,
+        StubVisualPolicy(clips),
+        env["store"],
+        env["artifacts"],
+        env["adapter"],
+        env["gateway"],
+        env["engine"],
+        env["config"],
     )
 
 
 class Test预算门禁:
     def test_恰好等于上限允许(self, loop_env):
-        """≤ 语义：申请合计恰为 exploration_per_round_usd 放行。"""
-        config = loop_env["config"]
-        n = int(config.exploration_per_round_usd
-                // config.simulated_gen["estimated_cost_usd"])
-        result = _run("v-exact", [_clip(seed_tier=i + 1) for i in range(n)], loop_env)
-        assert result.budget_cap_usd == pytest.approx(config.exploration_per_round_usd)
+        """≤ 语义：上限恰为 2×预估（1.2 = 2×0.6）→ 前两片放行、第三片拒投。"""
+        from dataclasses import replace
+
+        config = replace(loop_env["config"], exploration_per_round_usd=1.2)
+        env = dict(loop_env, config=config)
+        result = _run("v-exact", [_clip(1), _clip(2), _clip(3)], env)
+        assert result.budget_cap_usd == pytest.approx(1.2)
+        statuses = [c["status"] for c in result.clips]
+        assert statuses == ["ingested", "ingested", "rejected"]
         assert result.spent_usd <= result.budget_cap_usd + 1e-9
 
     def test_超限拒绝并记录原因(self, loop_env):
@@ -132,12 +141,20 @@ class Test门禁短路与对账:
         """FR 门禁语义：合规 0 → 合成 0 且 judge 未被调用（省 LLM 成本）。"""
         # 构造不合规片段：让模拟生成器产出后 probe_meta 不符规格——
         # 通过让策略申请与 clip_spec 不同的分辨率实现
-        clips = [{"gen_params": {"style": "史诗", "shots": 2, "seed_tier": 1,
-                                 "width": 640, "height": 480}}]
+        clips = [
+            {
+                "gen_params": {
+                    "style": "史诗",
+                    "shots": 2,
+                    "seed_tier": 1,
+                    "width": 640,
+                    "height": 480,
+                }
+            }
+        ]
         gateway_calls_before = loop_env["gateway"].call_count
         result = _run("v-gate", clips, loop_env)
-        node = [n for n in loop_env["store"].nodes_of(result.tree_id)
-                if n.parent_id is not None][0]
+        node = [n for n in loop_env["store"].nodes_of(result.tree_id) if n.parent_id is not None][0]
         assert node.score == 0.0
         assert node.eval_breakdown["rule.format_compliance@1.0.0"]["score"] == 0.0
         assert not any(k.startswith("judge.cinematic") for k in node.eval_breakdown)
@@ -178,6 +195,9 @@ class Test适配器失败:
             @property
             def total_spent(self):
                 return self._inner.total_spent
+
+            def job_actual_cost(self, external_id):
+                return self._inner.job_actual_cost(external_id)
 
             def submit(self, gen_params, *, idempotency_key):
                 self._calls += 1
