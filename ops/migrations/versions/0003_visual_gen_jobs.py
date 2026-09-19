@@ -45,7 +45,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.Float(), nullable=False),
         sa.UniqueConstraint("round_id", "params_hash", name="uq_visual_round_params"),
     )
-    op.create_index("ix_visual_gen_jobs_round", "visual_gen_jobs", ["round_id"])
+    # 不额外建 round_id 单列索引：唯一约束 (round_id, params_hash) 的索引已能服务
+    # round_id 前缀查询（与 agents/visual/db.py 的 Table 定义保持一致，防 schema 漂移）
     # 应用账号对运营表有完整读写权限（与 immutable 树表刻意区分）
     op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON visual_gen_jobs TO cineflow_app")
 
