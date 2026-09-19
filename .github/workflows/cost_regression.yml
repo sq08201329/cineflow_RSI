@@ -1,0 +1,22 @@
+# 成本回归每日告警（宪章门禁：相同回放任务成本突增 >20% → 每日定时，失败即告警）
+# 形态对齐一期 immutable 每日审计落点 ops/audit_immutable.py：脚本非零退出即 CI 失败=告警。
+# 注意：仓库内 dreaming/history 为空时脚本放行（ok=true, agents=[]）；
+# 生产落盘数据就绪后本任务自动开始实质判定，本地亦可手动执行同一脚本。
+name: cost-regression
+
+on:
+  schedule:
+    - cron: "23 2 * * *" # 每日 UTC 02:17 后错峰（避开整 0 分），约北京时间 10:23
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  cost-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+      - run: uv sync
+      - name: 成本回归每日检查（任一回放任务成本突增 >20% 即非零退出告警）
+        run: uv run python ops/cost_regression.py --config configs/movie.yaml

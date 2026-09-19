@@ -95,3 +95,8 @@ dreaming:
   collapse_window: 3 # 塌缩检测窗口（连续 N 轮）
   collapse_threshold: 0.7 # 塌缩阈值（首轮基线 × 0.7）
   replay_parallelism: 1 # 一期串行回放（预留并行配置项）
+
+# 成本回归每日告警（宪章门禁：相同回放任务成本突增 >20% → 每日定时告警，ops/cost_regression.py）
+cost_regression:
+  threshold: 0.2 # 成本增幅告警阈值（同一回放任务最近一轮 vs 前一轮，严格大于才告警）
+  history_root: dreaming/history # 做梦轮次落盘根目录（回放任务成本序列来源）
