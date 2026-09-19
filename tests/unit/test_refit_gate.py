@@ -7,8 +7,6 @@ shelve 零变更机检；过期 based_version 拒绝；生效中途失败回滚�
 """
 
 import hashlib
-import json
-from pathlib import Path
 
 import pytest
 
@@ -75,14 +73,15 @@ def _bias_record(mean_shift=0.2, samples=5, pearson=0.7, key="proxy.aesthetic@1.
 
 def _pairs(n: int = 5) -> list[PairingRecord]:
     pairs = []
+    components = (("proxy.aesthetic@1.0.0", None), ("judge.cinematic@1.0.0", 0.6))
     for i in range(n):
-        for key, auto in (("proxy.aesthetic@1.0.0", 0.4 + i * 0.05), ("judge.cinematic@1.0.0", 0.6)):
+        for key, auto in components:
             pairs.append(
                 PairingRecord(
                     anchor_id=f"a{i}",
                     evaluator_key=key,
                     anchor_score=0.6 + i * 0.05,
-                    auto_score=auto,
+                    auto_score=0.4 + i * 0.05 if auto is None else auto,
                 )
             )
     return pairs
