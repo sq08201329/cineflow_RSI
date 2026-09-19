@@ -474,3 +474,15 @@ def calibration_data_dir(tmp_path):
     for sub in ("rounds", "ledger", "reports", "proposals"):
         (base / sub).mkdir(parents=True)
     return base
+
+
+@pytest.fixture()
+def anchors_engine():
+    """锚点表夹具：SQLite 内存库建 calibration_anchors + INSERT-only 触发器。"""
+    from sqlalchemy import create_engine
+
+    from core.calibration.db import create_anchor_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_anchor_schema(engine)
+    return engine
