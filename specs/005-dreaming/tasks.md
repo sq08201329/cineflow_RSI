@@ -91,12 +91,12 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T420 [US1-US3] 做梦端到端集成测试 tests/integration/test_dreaming_e2e.py（真实沙箱回放候选一轮做梦全流程；Docker 可用时真实执行）
-- [ ] T421 [P] 实现端到端演示 ops/demo_dreaming.py（5 轮做梦演示档 M=8 → 审批 → 进化曲线 + 谱系报表；断言 collapse=false、零生成、LLM 入账；本地真实执行退出码 0）
-- [ ] T424 [US1] M=128 全量档计时基准 tests/integration/test_dreaming_benchmark.py（SC-001：一轮做梦 M=128 全池沙箱回放全程 < 30 分钟断言；本地 Docker 真实执行一次并记录实测耗时）
-- [ ] T425 对齐 003 进化报告口径（F1）：agents/promo/report.py 的 pareto_auc 复用 dreaming/reward.py 的梯形归一化实现 + 口径回归测试
-- [ ] T422 运行 quickstart.md 全部验证步骤并记录结果
-- [ ] T423 [P] 更新 README.md（做梦层用法、审批操作说明、一期里程碑全景）；同步 pyproject.toml 的 coverage source 加 "dreaming"（本地与 CI 口径一致）
+- [x] T420 [US1-US3] 做梦端到端集成测试 tests/integration/test_dreaming_e2e.py（真实沙箱回放候选一轮做梦全流程；Docker 可用时真实执行）
+- [x] T421 [P] 实现端到端演示 ops/demo_dreaming.py（5 轮做梦演示档 M=8 → 审批 → 进化曲线 + 谱系报表；断言 collapse=false、零生成、LLM 入账；本地真实执行退出码 0）
+- [x] T424 [US1] M=128 全量档计时基准 tests/integration/test_dreaming_benchmark.py（SC-001：一轮做梦 M=128 全池沙箱回放全程 < 30 分钟断言；本地 Docker 真实执行一次并记录实测耗时）
+- [x] T425 对齐 003 进化报告口径（F1）：agents/promo/report.py 的 pareto_auc 复用 dreaming/reward.py 的梯形归一化实现 + 口径回归测试
+- [x] T422 运行 quickstart.md 全部验证步骤并记录结果
+- [x] T423 [P] 更新 README.md（做梦层用法、审批操作说明、一期里程碑全景）；同步 pyproject.toml 的 coverage source 加 "dreaming"（本地与 CI 口径一致）
 
 ---
 
