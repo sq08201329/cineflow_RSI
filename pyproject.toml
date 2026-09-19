@@ -24,6 +24,7 @@ package = false
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "ruff>=0.16,<0.17",
 ]
 
 [tool.pytest.ini_options]
@@ -41,7 +42,8 @@ source = ["core", "agents", "dreaming"]
 [tool.ruff]
 target-version = "py311"
 # 版本化策略文件（文件名=内容哈希）与做梦轮次落盘不得被格式化/检查改写
-extend-exclude = ["policies/history", "dreaming/history"]
+# 文档与规格目录不参与 lint/format（规格是设计记录，且新版 ruff 会重排 md 代码块）
+extend-exclude = ["policies/history", "dreaming/history", "docs", "specs", ".specify", ".kimi-code"]
 line-length = 100
 
 [tool.ruff.lint]
