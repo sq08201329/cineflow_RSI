@@ -48,7 +48,9 @@ def upgrade() -> None:
         sa.Column("round_id", sa.Text(), nullable=False),
         sa.Column("created_at", sa.Text(), nullable=False),
         # 同键重复录入在 DB 层拒绝（FR-003 幂等）
-        sa.UniqueConstraint("node_id", "reviewer", "round_id", name="uq_anchor_node_reviewer_round"),
+        sa.UniqueConstraint(
+            "node_id", "reviewer", "round_id", name="uq_anchor_node_reviewer_round"
+        ),
     )
 
     # 存储层冻结：触发器拒绝一切 UPDATE/DELETE（对任何连接路径生效）

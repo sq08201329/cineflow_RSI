@@ -7,11 +7,11 @@
 
 from sqlalchemy import (
     CheckConstraint,
+    Column,
     Connection,
     Float,
     MetaData,
     Table,
-    Column,
     Text,
     UniqueConstraint,
     text,
