@@ -54,9 +54,12 @@ def migrated_engine():
     # 清场：整 schema 重置——迁移创建的对象不止树表（0002/0003 还有运营表），
     # 只 drop 树表 + alembic_version 会在"先 alembic upgrade head 再跑测试"的场景下
     # 撞 DuplicateTable（CI 正是先迁移后跑），故一律从空 schema 开始。
+    # 注意：重建的 schema 不带 initdb 的默认授权，须显式补 USAGE，
+    # 否则应用账号 cineflow_app 连表都看不见（报 relation does not exist）。
     with engine.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO PUBLIC"))
 
     command.upgrade(cfg, "head")
     yield engine

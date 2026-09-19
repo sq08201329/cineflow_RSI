@@ -109,6 +109,9 @@ def upgrade() -> None:
     )
     op.execute("GRANT SELECT, INSERT ON tree_nodes, discovery_trees TO cineflow_app")
     op.execute("REVOKE UPDATE, DELETE ON tree_nodes, discovery_trees FROM cineflow_app")
+    # 应用账号需要 schema 级 USAGE 才能访问表——不能依赖 initdb 给 PUBLIC 的默认授权
+    # （schema 被重建时默认授权会消失，届时会退化成"表不存在"这类误导性报错）
+    op.execute("GRANT USAGE ON SCHEMA public TO cineflow_app")
 
 
 def downgrade() -> None:
