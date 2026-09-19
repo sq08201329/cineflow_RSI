@@ -1,0 +1,10 @@
+# 全仓库统一 LF 行尾：本项目以内容哈希作为版本号与文件名
+# （policies/history/{version}.py 的文件名 = 文件内容 BLAKE3 前 12 位），
+# 任何行尾转换都会破坏该不变量，故强制 eol=lf，避免 Windows 侧 CRLF 转换污染。
+* text=auto eol=lf
+
+# 二进制工件不参与行尾与文本处理
+*.mp4 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
