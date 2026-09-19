@@ -92,9 +92,11 @@
 ## 阶段 6：打磨与横切关注点
 
 - [ ] T420 [US1-US3] 做梦端到端集成测试 tests/integration/test_dreaming_e2e.py（真实沙箱回放候选一轮做梦全流程；Docker 可用时真实执行）
-- [ ] T421 [P] 实现端到端演示 ops/demo_dreaming.py（5 轮做梦 → 审批 → 进化曲线 + 谱系报表；断言 collapse=false、零生成、LLM 入账；本地真实执行退出码 0）
+- [ ] T421 [P] 实现端到端演示 ops/demo_dreaming.py（5 轮做梦演示档 M=8 → 审批 → 进化曲线 + 谱系报表；断言 collapse=false、零生成、LLM 入账；本地真实执行退出码 0）
+- [ ] T424 [US1] M=128 全量档计时基准 tests/integration/test_dreaming_benchmark.py（SC-001：一轮做梦 M=128 全池沙箱回放全程 < 30 分钟断言；本地 Docker 真实执行一次并记录实测耗时）
+- [ ] T425 对齐 003 进化报告口径（F1）：agents/promo/report.py 的 pareto_auc 复用 dreaming/reward.py 的梯形归一化实现 + 口径回归测试
 - [ ] T422 运行 quickstart.md 全部验证步骤并记录结果
-- [ ] T423 [P] 更新 README.md（做梦层用法、审批操作说明、一期里程碑全景）
+- [ ] T423 [P] 更新 README.md（做梦层用法、审批操作说明、一期里程碑全景）；同步 pyproject.toml 的 coverage source 加 "dreaming"（本地与 CI 口径一致）
 
 ---
 
@@ -105,7 +107,7 @@
 - **搭建（阶段 1）**: 无依赖
 - **基础（阶段 2）**: 依赖搭建（T403/T404 与 T405/T406 与 T407/T408 三链可并行）——阻塞所有用户故事
 - **用户故事（阶段 3+）**: US1 依赖基础；US2 依赖 US1 的 DreamRound 产出；US3 依赖 US2 的谱系落盘
-- **打磨（阶段 6）**: T420-T422 依赖全部故事；T423 可在基础完成后开始
+- **打磨（阶段 6）**: T420–T422、T424 依赖全部故事完成；T425 依赖 T404（reward.py 权威口径）；T423 可在基础完成后开始
 
 ### 并行机会
 
@@ -135,6 +137,7 @@
 
 ## 备注
 
-- 宪章约束落点：静态检查前置（T410/T412）、零生成回放（T410）、人工 approve 闸门（T414/T416）、谱系全链路（T417/T419）、配置化参数（T401）
-- 谱系元数据文件化（meta.json）不建 DB 表（research 决策 3）
+- 宪章约束落点：静态检查前置（T410/T412）、零生成回放（T410）、人工 approve 闸门（T414/T416）、谱系全链路（T417/T419）、配置化参数（T401）、口径一致性（T425）、全量计时（T424）
+- 谱系元数据与做梦轮次均文件化（meta.json / dreaming/history/*.json），不建 DB 表（research 决策 3）
+- ε=0.1 随机预算一期仅配置校验 + 谱系标记，执行器接线不在本期（spec FR-011 注）
 - 每个任务或逻辑组完成后提交（git）；检查点必须独立验证通过

@@ -72,9 +72,17 @@
   "agent_id": "promo",
   "rounds": [{"round": 1, "winner_version": "...", "reward": 0.41}, ...],
   "baseline_reward": 0.41,
-  "collapse": {"collapsed": false, "start_round": null, "threshold": 0.7, "window": 3}
+  "collapse": {"collapsed": false, "start_round": null, "threshold": 0.7, "window": 3},
+  "plateau_note": "连续两轮胜出同一版本时的观察备注（无平台期则为 null）"
 }
 ```
+
+## 1.5 做梦轮次落盘（digest 的数据源）
+
+每轮做梦结束后，DreamRound（含候选明细与轨迹摘要）落盘为
+`dreaming/history/{agent_id}/{round_id}.json`——只增不改（git 历史承担审计）。
+`digest.py` 组装输入摘要时从此目录读取最近 K 轮（K 来自 configs `dreaming.recent_k`）；
+首轮做梦目录为空 → digest 注明"无历史"。
 
 ## 2. 谱系数据的两个来源（汇聚规则）
 

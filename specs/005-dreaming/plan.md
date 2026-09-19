@@ -21,6 +21,7 @@ CandidateGenerator 接口：LLM 实现走网关（真实凭证属运维配置）
 
 **存储**: 无新 DB 表——谱系元数据以 JSON 文件存于 `policies/history/{agent_id}/`
 （`{version}.py` 旁的 `{version}.meta.json`：parent_version、审批记录、reward 摘要），
+做梦轮次记录以 JSON 落盘 `dreaming/history/{agent_id}/{round_id}.json`（digest 数据源）；
 文件体系与策略代码同 lifecycle、随 git 版本化；树侧谱系字段（policy_version）已在 001 落库
 
 **测试**: pytest；确定性变异生成器 + promo/visual 池夹具；沙箱回放复用 002 后端

@@ -14,7 +14,7 @@ def run_dream_round(agent_id: str, champion_source: str,
 
 | 规则 | 行为 |
 | --- | --- |
-| 输入摘要 | digest = 最近 K 轮回放报告 + 评估器诊断摘要（K 来自 configs `dreaming.recent_k`）；digest 哈希入 DreamRound 可复核 |
+| 输入摘要 | digest = 最近 K 轮回放报告 + 评估器诊断摘要（K 来自 configs `dreaming.recent_k`）；**最近 K 轮报告读取自做梦轮次落盘** `dreaming/history/{agent_id}/{round_id}.json`（data-model §1.5）；digest 哈希入 DreamRound 可复核 |
 | 候选数 | M 来自 configs `dreaming.candidates_per_round`（默认 128）；哈希去重后不足 M 如实记录 |
 | 静态检查 | 复用 002 `policies/static_check.py` + 接口签名校验；rejected 候选**不得回放、不得记分**（FR-003/SC-002） |
 | 回放 | 合格候选逐一经 002 沙箱对全池回放；超时/崩溃 → reward 记 0 且 diagnostics 注明（决策 6） |
