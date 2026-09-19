@@ -272,3 +272,85 @@ def make_clip_file():
 def clip_file(tmp_path, make_clip_file):
     """单个程序化片段文件（默认 seed=7）。"""
     return make_clip_file(tmp_path / "clip.mp4")
+
+
+@pytest.fixture()
+def dream_config():
+    """做梦形态配置夹具：直接读 configs/movie.yaml 的 dreaming 段。"""
+    from dreaming.config import DreamConfig
+
+    return DreamConfig.from_yaml(
+        __import__("pathlib").Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    )
+
+
+@pytest.fixture()
+def champion_source():
+    """冠军策略源码工厂（静态检查必过的合法策略）。"""
+
+    def _make(grid=((0.3,), (0.7,)), max_rounds=6):
+        grid_literal = ", ".join(f'{{"temperature": {t}}}' for (t,) in grid)
+        return f'''
+class Policy:
+    """冠军策略（做梦轮次的父版本）。"""
+
+    def solve(self, env, budget):
+        grid = [{grid_literal}]
+        best_id = None
+        probes = 0
+        for round_no in range({max_rounds}):
+            observations = env.observed()
+            scored = sorted(
+                ((o.score, o.node_id) for o in observations.values() if o.score is not None),
+                key=lambda item: (-item[0], item[1]),
+            )
+            if scored:
+                best_id = scored[0][1]
+            if best_id is None or probes >= budget.max_probes:
+                break
+            env.probe(best_id, grid[round_no % len(grid)])
+            probes += 1
+        return best_id or ""
+'''
+
+    return _make
+
+
+@pytest.fixture()
+def multi_tree_pool(tree_store, build_historical_tree):
+    """多时间树池工厂：N 棵结构不同分的树（uuid7 tree_id 时间有序，后者更晚）。
+
+    返回 (trees, store)；每棵树 root + 两个 gen_params 档子节点（得分逐树递增，
+    便于断言回放曲线差异与 validation 分树）。
+    """
+    from core.tree.models import CostRecord, NodeStatus
+
+    def _make(n: int = 3):
+        trees = []
+        for t in range(n):
+            tree, _ = build_historical_tree(
+                [
+                    (None, {}, 0.3 + t * 0.05, NodeStatus.EVALUATED, CostRecord()),
+                    (
+                        0,
+                        {"temperature": 0.3},
+                        0.5 + t * 0.05,
+                        NodeStatus.EVALUATED,
+                        CostRecord(llm_calls=1),
+                    ),
+                    (
+                        0,
+                        {"temperature": 0.7},
+                        0.6 + t * 0.05,
+                        NodeStatus.EVALUATED,
+                        CostRecord(llm_calls=1),
+                    ),
+                ],
+                project_id="dream-pool",
+                agent_id="agent-dream",
+                policy_version="a1b2c3d4e5f6",
+            )
+            trees.append(tree)
+        return trees, tree_store
+
+    return _make
