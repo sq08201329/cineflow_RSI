@@ -14,9 +14,9 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import event, select, text
+from sqlalchemy import event, text
 
-from core.calibration.anchors import intake_anchors, load_anchors
+from core.calibration.anchors import intake_anchors
 from core.calibration.bias import compute_bias
 from core.calibration.config import CalibrationConfig
 from core.calibration.ledger import append_ledger, read_latest
@@ -197,9 +197,9 @@ class TestC3平台真值锚点:
             )
         assert len(first) == 12 and second == []
         with anchors_engine.connect() as conn:
-            rows = conn.execute(select(text("*")) if False else text(
-                "SELECT source, reviewer FROM calibration_anchors"
-            )).all()
+            rows = conn.execute(
+                text("SELECT source, reviewer FROM calibration_anchors")
+            ).all()
         assert len(rows) == 12
         assert all(row[0] == "platform_truth" for row in rows)
 
@@ -227,13 +227,20 @@ class TestC4配对:
                 round_id="r", created_at="2026-09-19T00:00:00+00:00",
             )
 
-        promo_records = pair_anchors([_anchor(promo_nodes[0], "platform_truth")], tree_store, exclusions)
+        promo_records = pair_anchors(
+            [_anchor(promo_nodes[0], "platform_truth")], tree_store, exclusions
+        )
         excluded = [r for r in promo_records if r.excluded]
         assert len(excluded) == 1
         assert excluded[0].excluded_components == ("human.platform_metrics",)
-        assert any(r.evaluator_key == "proxy.ctr_history@1.0.0" and not r.excluded for r in promo_records)
+        assert any(
+            r.evaluator_key == "proxy.ctr_history@1.0.0" and not r.excluded
+            for r in promo_records
+        )
 
-        visual_records = pair_anchors([_anchor(visual_nodes[0], "human_blind")], tree_store, exclusions)
+        visual_records = pair_anchors(
+            [_anchor(visual_nodes[0], "human_blind")], tree_store, exclusions
+        )
         assert len(visual_records) == 2 and all(not r.excluded for r in visual_records)
 
 
@@ -288,15 +295,19 @@ class TestC6台账与报告:
     def test_版本不变断言(self, calibration_data_dir):
         """台账追加前后，注册中心全部 spec 的 (key, calibration) 集合不变。"""
         registry = Registry()
-        snapshot = lambda: sorted((s.key, json.dumps(s.calibration, sort_keys=True))
-                                  for s in registry.list_all())  # noqa: E731
-        before = snapshot()
+
+        def _snapshot():
+            return sorted(
+                (s.key, json.dumps(s.calibration, sort_keys=True)) for s in registry.list_all()
+            )
+
+        before = _snapshot()
         append_ledger(
             calibration_data_dir, "visual",
             [BiasRecord(evaluator_key="proxy.a@1.0.0", period="2026-W39", samples=5,
                         mean_shift=0.1, pearson_r=0.6)],
         )
-        assert snapshot() == before
+        assert _snapshot() == before
 
 
 class TestC7提案生成:
