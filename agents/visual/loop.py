@@ -120,19 +120,10 @@ def run_round(
     cap = config.exploration_per_round_usd
 
     # 评估器装配（版本组合随树快照冻结）
-    compliance = FormatComplianceEvaluator(config.clip_spec)
-    proxies = [
-        AestheticEvaluator(config.frame_sampling),
-        IdentityConsistencyEvaluator(config.frame_sampling),
-        FlickerEvaluator(config.frame_sampling),
-    ]
-    judge = CinematicJudgeEvaluator(
-        gateway,
-        model=_judge_model(config),
-        prompts=list(config.judge["prompts"]),
-        anchor_hashes=_judge_anchor_hashes(config, artifacts),
-        sampling_spec=config.frame_sampling,
-    )
+    evaluators = build_evaluators(config, gateway, artifacts)
+    compliance = evaluators["compliance"]
+    proxies = evaluators["proxies"]
+    judge = evaluators["judge"]
 
     # ---- 幂等：树锚点已存在 → 直接重建首轮结果返回 ----
     tree = DiscoveryTree(
@@ -189,6 +180,58 @@ def run_round(
             gateway_delta=gateway.total_cost_usd - gateway_before,
         ),
     )
+
+
+def build_evaluators(config: VisualConfig, gateway: LLMGateway, artifacts: ArtifactStore) -> dict:
+    """五评估器装配（run_round / consistency / demo 共用的唯一装配点）。
+
+    返回 {"compliance", "proxies": [...], "judge", "all": [...]}。
+    """
+    compliance = FormatComplianceEvaluator(config.clip_spec)
+    proxies = [
+        AestheticEvaluator(config.frame_sampling),
+        IdentityConsistencyEvaluator(config.frame_sampling),
+        FlickerEvaluator(config.frame_sampling),
+    ]
+    judge = CinematicJudgeEvaluator(
+        gateway,
+        model=_judge_model(config),
+        prompts=list(config.judge["prompts"]),
+        anchor_hashes=_judge_anchor_hashes(config, artifacts),
+        sampling_spec=config.frame_sampling,
+    )
+    return {
+        "compliance": compliance,
+        "proxies": proxies,
+        "judge": judge,
+        "all": [compliance, *proxies, judge],
+    }
+
+
+def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> DiscoveryTree:
+    """轮次树显式冻结入口（契约：GenJob 全终态才允许冻结入池）。
+
+    config_snapshot 在树创建时已写全（五评估器版本组合 + 权重 + 观测
+    白名单）——树 immutable 不允许后补，此函数只做终态校验 + 返回树对象。
+    """
+    tree_id = round_tree_id(round_id)
+    store.get_node(_round_root_id(round_id))  # 不存在 → NotFoundError
+    with engine.connect() as conn:
+        pending = conn.execute(
+            select(func.count())
+            .select_from(visual_gen_jobs)
+            .where(
+                visual_gen_jobs.c.round_id == round_id,
+                visual_gen_jobs.c.status.in_(["submitted", "generating", "completed"]),
+            )
+        ).scalar()
+    if pending:
+        raise VisualLoopError(f"轮次 {round_id} 尚有 {pending} 个生成任务未到终态，不得冻结入池")
+    trees = store.trees_by(project_id="visual", agent_id="visual")
+    matches = [t for t in trees if t.tree_id == tree_id]
+    if not matches:
+        raise VisualLoopError(f"轮次树不存在：{tree_id}")
+    return matches[0]
 
 
 def _judge_model(config: VisualConfig) -> str:
