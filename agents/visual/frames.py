@@ -29,11 +29,20 @@ class FrameSamples:
 
 
 def probe_clip(path: str | Path) -> dict:
-    """ffprobe 元数据探测：编码/分辨率/帧率/时长。"""
-    try:
-        meta = next(imageio_ffmpeg.read_frames(str(path), pix_fmt="rgb24"))
-    except Exception as exc:  # noqa: BLE001 - 解码/探测失败统一受控
-        raise FrameDecodeError(f"片段无法探测：{path}（{exc}）") from exc
+    """ffprobe 元数据探测：编码/分辨率/帧率/时长。
+
+    imageio-ffmpeg 的元数据捕获在高负载下偶发超时（ffmpeg 进程调度竞争，
+    与文件内容无关）——重试一次后再受控报错。
+    """
+    last: Exception | None = None
+    for _ in range(2):
+        try:
+            meta = next(imageio_ffmpeg.read_frames(str(path), pix_fmt="rgb24"))
+            break
+        except Exception as exc:  # noqa: BLE001 - 解码/探测失败统一受控
+            last = exc
+    else:
+        raise FrameDecodeError(f"片段无法探测：{path}（{last}）") from last
     return {
         "width": int(meta["size"][0]),
         "height": int(meta["size"][1]),
