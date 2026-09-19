@@ -31,6 +31,28 @@ def iso_week_label(date_str: str) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 
+def compute_bias_records(
+    pairs: list, period: str, config: CalibrationConfig
+) -> list:
+    """按评估器分组产偏差记录（judge 走 τ，连续走 mean_shift + Pearson r）。
+
+    收口管线与 CLI propose 共用同一口径（propose 依此重建本轮偏差证据）。
+    """
+    by_evaluator: dict[str, list] = {}
+    for pair in pairs:
+        by_evaluator.setdefault(pair.evaluator_key, []).append(pair)
+    return [
+        compute_bias(
+            evaluator_pairs,
+            evaluator_key=key,
+            period=period,
+            min_samples=config.min_samples,
+            judge=key.split("@")[0].startswith(_JUDGE_PREFIX),
+        )
+        for key, evaluator_pairs in sorted(by_evaluator.items())
+    ]
+
+
 def close_round(
     store: TreeStore,
     anchors_conn: Connection,
@@ -48,20 +70,7 @@ def close_round(
     pairs = pair_anchors(anchors, store, config.self_pairing_exclusions)
     period = iso_week_label(round_.period_end)
 
-    # 按评估器分组产偏差记录（judge 走 τ，连续走 mean_shift + Pearson r）
-    by_evaluator: dict[str, list] = {}
-    for pair in pairs:
-        by_evaluator.setdefault(pair.evaluator_key, []).append(pair)
-    records = [
-        compute_bias(
-            evaluator_pairs,
-            evaluator_key=key,
-            period=period,
-            min_samples=config.min_samples,
-            judge=key.split("@")[0].startswith(_JUDGE_PREFIX),
-        )
-        for key, evaluator_pairs in sorted(by_evaluator.items())
-    ]
+    records = compute_bias_records(pairs, period, config)
 
     # 派生产物同轮次落盘：台账（append-only）+ 锚点分布快照 + 信度报告
     append_ledger(data_dir, round_.agent_id, records)

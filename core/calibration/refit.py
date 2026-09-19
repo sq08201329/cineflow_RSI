@@ -265,8 +265,8 @@ def maybe_propose(
 # ---------- 确认 / 搁置（C8；人工仅两键，无编辑路径） ----------
 
 
-def _gate_keys_of(config_path) -> set[str]:
-    """从 yaml 原文识别 gate 键（值为字符串 'gate' 的行不入定点改写）。"""
+def gate_keys_of(config_path) -> set[str]:
+    """从 yaml 原文识别 gate 键（值为字符串 'gate' 的行不入定点改写/拟合）。"""
     import yaml
 
     data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
@@ -327,7 +327,7 @@ def confirm_proposal(
                 )
             )
         # ② configs 定点改写（gate 行不动，注释与其他段原样保留）
-        gate_keys = _gate_keys_of(config_path)
+        gate_keys = gate_keys_of(config_path)
         updates = {
             key: value
             for key, value in proposal.candidate_weights.items()

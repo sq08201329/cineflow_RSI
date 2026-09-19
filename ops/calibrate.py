@@ -141,6 +141,110 @@ def _cmd_report(args) -> int:
     return 0
 
 
+def _has_ledger_history(data_dir, agent_id: str, current_period: str) -> bool:
+    """首轮判定：台账中是否存在本周期以外的记录（无 → 记基线不判超阈）。"""
+    ledger_root = Path(data_dir) / "ledger" / agent_id
+    if not ledger_root.is_dir():
+        return False
+    for ledger_file in ledger_root.glob("*.jsonl"):
+        for line in ledger_file.read_text(encoding="utf-8").splitlines():
+            if line.strip() and json.loads(line).get("period") != current_period:
+                return True
+    return False
+
+
+def _cmd_propose(args) -> int:
+    from sqlalchemy import create_engine
+
+    from core.calibration.anchors import load_anchors
+    from core.calibration.config import CalibrationConfig
+    from core.calibration.pairing import pair_anchors
+    from core.calibration.refit import gate_keys_of, maybe_propose
+    from core.calibration.rounds import compute_bias_records, iso_week_label
+    from core.calibration.selection import load_round
+    from core.evaluators.weights import load_evaluator_weights
+    from core.tree.store import create_tree_store
+
+    dsn = _resolve_dsn(args)
+    if not dsn:
+        print(json.dumps({"error": "缺少 DSN（--dsn 或 CINEFLOW_PG_DSN）"}, ensure_ascii=False))
+        return 2
+
+    config = CalibrationConfig.from_yaml(args.config)
+    round_, _ = load_round(args.data_dir, args.round)
+    engine = create_engine(dsn)
+    with engine.connect() as conn:
+        anchors = load_anchors(conn, args.round)
+    pairs = pair_anchors(anchors, create_tree_store(engine), config.self_pairing_exclusions)
+    period = iso_week_label(round_.period_end)
+    bias_records = compute_bias_records(pairs, period, config)
+    proposal = maybe_propose(
+        agent_id=round_.agent_id,
+        bias_records=bias_records,
+        pairs=pairs,
+        current_weights=load_evaluator_weights(args.config, round_.agent_id),
+        cfg=config,
+        has_history=_has_ledger_history(args.data_dir, round_.agent_id, period),
+        data_dir=args.data_dir,
+        fixed_keys=frozenset(gate_keys_of(args.config)),
+    )
+    if proposal is None:
+        print(json.dumps({"round_id": args.round, "proposal": None}, ensure_ascii=False))
+        return 0
+    print(
+        json.dumps(
+            {
+                "proposal_id": proposal.proposal_id,
+                "agent_id": proposal.agent_id,
+                "based_version": proposal.based_version,
+                "candidate_weights": proposal.candidate_weights,
+                "status": proposal.status.value,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _cmd_confirm(args) -> int:
+    from core.calibration.refit import confirm_proposal
+    from core.evaluators.registry import Registry
+
+    try:
+        new_version = confirm_proposal(
+            args.data_dir,
+            args.config,
+            proposal_id=args.proposal,
+            by=args.by,
+            registry=Registry(),
+        )
+    except Exception as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        return 1
+    print(
+        json.dumps(
+            {"proposal_id": args.proposal, "status": "confirmed", "new_version": new_version},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _cmd_shelve(args) -> int:
+    from core.calibration.refit import shelve_proposal
+
+    shelved = shelve_proposal(args.data_dir, args.proposal, by=args.by)
+    print(
+        json.dumps(
+            {"proposal_id": shelved.proposal_id, "status": shelved.status.value, "by": args.by},
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="外环周校准：盲评清单/录入/收口/信度报告")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -176,6 +280,26 @@ def main() -> int:
     report_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
     report_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
     report_parser.set_defaults(func=_cmd_report)
+
+    propose_parser = sub.add_parser("propose", help="依本轮偏差生成权重再拟合提案（超阈才产）")
+    propose_parser.add_argument("--round", required=True, help="校准轮次 ID（须已 closed）")
+    propose_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    propose_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
+    propose_parser.add_argument("--dsn", default=None, help="PG DSN，默认读 CINEFLOW_PG_DSN")
+    propose_parser.set_defaults(func=_cmd_propose)
+
+    confirm_parser = sub.add_parser("confirm", help="确认提案生效（人工两键之一，无编辑路径）")
+    confirm_parser.add_argument("--proposal", required=True, help="提案 ID")
+    confirm_parser.add_argument("--by", required=True, help="确认人")
+    confirm_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    confirm_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
+    confirm_parser.set_defaults(func=_cmd_confirm)
+
+    shelve_parser = sub.add_parser("shelve", help="搁置提案（零变更）")
+    shelve_parser.add_argument("--proposal", required=True, help="提案 ID")
+    shelve_parser.add_argument("--by", required=True, help="操作人")
+    shelve_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
+    shelve_parser.set_defaults(func=_cmd_shelve)
 
     args = parser.parse_args()
     return args.func(args)
