@@ -180,6 +180,46 @@ uv run python -c "from dreaming.approve import decide; decide(
     decision='approved', reason='<理由>', config_path='configs/movie.yaml')"
 ```
 
+## 外环周校准（功能 010）
+
+人评/平台真值锚点 → 偏差检测 → append-only 台账与信度报告 → 权重再拟合提案
+（约束岭回归自动拟合候选，人工仅 confirm/shelve 两键，无编辑路径）。
+锚点落 `calibration_anchors` 表（迁移 0004，INSERT-only 触发器双侧强制冻结）；
+派生产物文件化于 `calibration/rounds|ledger|reports|proposals|snapshots/`（随 git 版本化）。
+
+```bash
+# 单测 / 契约（零泄露、提案门禁、版本不变机检）/ PG 集成（触发器双侧证明）
+uv run pytest tests/unit -k calibration
+uv run pytest tests/contract -k calibration
+uv run pytest tests/integration -m integration -k calibration   # 需 Docker PG
+
+# 端到端演示（确定性夹具 + SQLite + 配置临时副本，离线可跑）
+uv run python ops/demo_calibration.py
+```
+
+周校准操作（生产形态，`ops/calibrate.py`，DSN 经 --dsn 或 CINEFLOW_PG_DSN）：
+```bash
+# 1. 生成 top-k 盲评清单并落盘轮次（周期默认上一 calibration.period_days 周）
+uv run python ops/calibrate.py round --agent visual --period-start 2026-09-14 --period-end 2026-09-20
+
+# 2. 人评录入（JSON 条目文件 [{node_id, score, reviewer}]；非法/重复条目拒绝并计数）
+uv run python ops/calibrate.py intake --round <round_id> --file anchors.json
+
+# 3. 收口轮次：配对 → 偏差 → 台账/快照/信度报告落盘 → 轮次 closed
+uv run python ops/calibrate.py close --round <round_id>
+
+# 4. 按周期重建信度报告（读台账）
+uv run python ops/calibrate.py report --period 2026-W38
+
+# 5. 超阈偏差生成权重再拟合提案（首轮记基线不判超阈；负相关禁止提案）
+uv run python ops/calibrate.py propose --round <round_id>
+
+# 6. 人工两键门禁：confirm 生效（新版本 1.0.0+w{哈希} 注册 + configs 定点改写保注释）
+#    或 shelve 搁置（零变更）；--by 为确认人，强制必填
+uv run python ops/calibrate.py confirm --proposal <proposal_id> --by <姓名>
+uv run python ops/calibrate.py shelve  --proposal <proposal_id> --by <姓名>
+```
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
