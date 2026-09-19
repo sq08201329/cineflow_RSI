@@ -90,6 +90,6 @@ class Test收缩保守性:
         samples = _samples(30)
         candidate = _to_vec(fit_weights(samples, _CURRENT, 0.0), keys)
         unconstrained = _unconstrained_lstsq(samples, keys)
-        # 无约束解若可行（非负），λ=0 应与其几乎重合
+        # 无约束解若可行（非负），λ=0 应贴近它（差距仅来自 Σ=1 约束的投影）
         if np.all(unconstrained >= 0):
-            assert np.linalg.norm(candidate - unconstrained) < 1e-3
+            assert np.linalg.norm(candidate - unconstrained) < 0.02
