@@ -4,7 +4,8 @@
 - produce：按人工策略跑一轮分阶段产出（outline → scenes → script）——策略源码过
   002 静态检查后执行、版本 = 源码 BLAKE3 前 12 位（节点可回溯到产出它的策略版本）；
   逐阶段经 LLM 网关生成、成本入账、节点一次性落发现树；工件内容寻址入
-  `<data-dir>/artifacts`；结果 JSON 打到 stdout。
+  `<data-dir>/artifacts`；结果 JSON 打到 stdout。评估器 = 真实七评估器装配
+  （四 gate + 两代理 + judge 仅大纲阶段，`build_screenplay_evaluators` 唯一装配点）。
 
 CLI 默认面向 PG 库（--dsn 或 CINEFLOW_PG_DSN，schema 由 Alembic 迁移管理，CLI 不隐式
 改 PG schema）；SQLite DSN（测试/本地）自动建表。人工策略版本核验：`--policy <version>`
@@ -107,11 +108,8 @@ def _cmd_produce(args) -> int:
 
     from agents.screenplay.config import ScreenplayConfig, ScreenplayConfigError
     from agents.screenplay.db import create_jobs_schema
-    from agents.screenplay.loop import (
-        ScreenplayLoopError,
-        build_default_evaluators,
-        run_screenplay_round,
-    )
+    from agents.screenplay.evaluators import build_screenplay_evaluators
+    from agents.screenplay.loop import ScreenplayLoopError, run_screenplay_round
     from core.llm_gateway.gateway import GatewayError, LLMGateway
 
     dsn = _resolve_dsn(args)
@@ -122,7 +120,8 @@ def _cmd_produce(args) -> int:
     if policy is None:
         return _fail(error, 2)
 
-    data_dir = Path(args.data_dir)
+    data_dir = Path(args.data_dir).expanduser()
+    data_dir.mkdir(parents=True, exist_ok=True)  # 数据目录（工件目录 + 常为 SQLite DSN 落点）
     if not Path(args.config).is_file():
         return _fail(f"形态配置不存在：{args.config}", 2)
     try:
@@ -159,9 +158,11 @@ def _cmd_produce(args) -> int:
     gateway = LLMGateway(backend, price_book=config.model_prices)
 
     try:
-        evaluators = build_default_evaluators(config, gateway)
+        evaluators = build_screenplay_evaluators(config, gateway)
     except ScreenplayLoopError as exc:
         return _fail(str(exc), 1)
+    except ScreenplayConfigError as exc:
+        return _fail(f"评估器装配失败：{exc}", 2)
 
     try:
         result = run_screenplay_round(

@@ -754,8 +754,7 @@ class Test输入预检:
                 inputs={**INPUTS, "target_duration_min": 0},
             )
 
-    @pytest.mark.parametrize("evaluators", [None, []], ids=["未注入", "空列表"])
-    def test_未注入评估器拒绝(
+    def test_空评估器列表拒绝(
         self,
         policy,
         tree_store,
@@ -763,9 +762,12 @@ class Test输入预检:
         screenplay_jobs_engine,
         gateway,
         config,
-        evaluators,
     ):
-        """US1 面向评估器协议：未注入即拒绝（真实七评估器在 T923 接线）。"""
+        """显式空列表 = 调用方缺陷：拒绝且 0 副作用（不静默无打分）。
+
+        `evaluators=None` 自 T923 起语义为"默认装配真实七评估器"（见
+        tests/unit/test_screenplay_composite.py::Test执行器接线）。
+        """
         with pytest.raises(ScreenplayLoopError, match="评估器"):
             _run(
                 "r10c",
@@ -775,7 +777,7 @@ class Test输入预检:
                 screenplay_jobs_engine,
                 gateway,
                 config,
-                evaluators=evaluators,
+                evaluators=[],
             )
         assert gateway.call_count == 0
         assert tree_store.trees_by(agent_id="screenplay") == []

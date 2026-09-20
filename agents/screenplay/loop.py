@@ -17,6 +17,10 @@ ScreenplayRoundResult（0 重复生成、0 重复扣费、0 重复节点/行）�
 
 **配置即形态**（原则五）：节拍表/别名表/比例区间/目标时长/模型与价目/judge 段全部来自
 ScreenplayConfig，冻结进轮次树 config_snapshot（历史节点不受此后配置变更影响）。
+
+**评估器装配**（T923）：`evaluators=None` → 默认装配真实七评估器（
+`build_screenplay_evaluators`，需网关；gate 短路不跑 judge）；dict → 真实七评估器编排
+（`evaluate_screenplay`）；list → 评估器协议注入路径（US3 回放/无偏性重算复用）。
 """
 
 import json
@@ -32,6 +36,12 @@ from sqlalchemy.engine import Engine
 from agents.screenplay.artifact import STAGES, ScriptArtifact
 from agents.screenplay.config import ScreenplayConfig
 from agents.screenplay.db import screenplay_jobs
+from agents.screenplay.evaluators import build_screenplay_evaluators
+from agents.screenplay.evaluators.composite import (
+    COMPOSITE_POLICY,
+    composite_screenplay,
+    evaluate_screenplay,
+)
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import GatewayError, LLMGateway
@@ -49,14 +59,6 @@ PLACEHOLDER_HASH = "00" * 32
 # 执行前校验用占位正文（仅试构造工件，不落库、不调网关）
 PLACEHOLDER_TEXT = "（待生成：仅供执行前校验）"
 _MARKER_KEYS = ("beats", "scenes", "characters", "lines")
-_GATE_PREFIX = "rule."
-
-# 合成口径（进 config_snapshot 版本元信息）：US1 临时口径，T923 提升为
-# evaluators/composite.py（语义与 004/006/007/008 一致：gate 短路 + 不适用跳过 + 归一）
-COMPOSITE_POLICY = (
-    "US1 临时口径：gate 短路（任一 rule.* 判 0 总分 0）+ 不适用分量跳过 "
-    "+ 适用权重归一 + quantize 6 位定点（T923 提升为 evaluators/composite.py）"
-)
 
 _STAGE_INSTRUCTIONS = {
     "outline": "写出三幕结构与关键节拍的大纲正文：开场画面、激励事件、第一幕转折、"
@@ -129,22 +131,6 @@ def stage_cache_key(model: str, prompt: str, temperature: float, max_tokens: int
 def _canonical(value) -> str:
     """规范化 JSON（键排序）：参数哈希与计划摘要的确定性底座。"""
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
-
-
-def build_default_evaluators(config: ScreenplayConfig, gateway: LLMGateway) -> list[Evaluator]:
-    """默认七评估器装配点（T923 接线：agents/screenplay/evaluators）。
-
-    本批（US1）尚未落地评估器包，故显式报错而非静默降级为"无评估产出"——
-    静默跳过评估等于伪造得分（原则一/六）。
-    """
-    try:
-        from agents.screenplay.evaluators import build_screenplay_evaluators
-    except ImportError as exc:  # pragma: no cover - T923 落地后自然消失
-        raise ScreenplayLoopError(
-            "七评估器装配未就绪：agents.screenplay.evaluators 尚未落地（T923 接线点）；"
-            "当前请显式注入评估器（面向评估器协议）"
-        ) from exc
-    return build_screenplay_evaluators(config, gateway)
 
 
 def _string_list(value, field_name: str) -> list[str]:
@@ -270,46 +256,16 @@ def _estimate_cost(prompt: str, price: dict, max_tokens: int) -> float:
     )
 
 
-def _composite_screenplay(breakdown: dict[str, dict], weights: dict) -> float:
-    """US1 临时合成口径：gate 短路 + 不适用分量跳过 + 适用权重归一（T923 提升）。
-
-    breakdown：{evaluator_id@version: {"score":…, "diagnostics":{…}}}；
-    任一 rule.* 判 0 → 总分 0（不可行解）；gate 分量不计入加权和；diagnostics
-    applicable=False（"不适用"，如非大纲阶段的 judge）跳过且分母不含其权重——
-    不伪造 0 分拖底；无适用分量 → 0.0（确定性退化口径）。
-    """
-    for key, fragment in breakdown.items():
-        if _base_key(key).startswith(_GATE_PREFIX) and fragment["score"] == 0.0:
-            return 0.0
-    total_weight = 0.0
-    accrued = 0.0
-    for key, fragment in breakdown.items():
-        base = _base_key(key)
-        if base.startswith(_GATE_PREFIX):
-            continue  # gate 权重恒 0，不参与归一
-        if not fragment.get("diagnostics", {}).get("applicable", True):
-            continue  # 不适用分量：跳过（键仍在 eval_breakdown 落盘）
-        weight = weights.get(base)
-        if weight is None or str(weight).lower() == "gate":
-            continue
-        weight = float(weight)
-        total_weight += weight
-        accrued += weight * fragment["score"]
-    return accrued / total_weight if total_weight > 0 else 0.0
-
-
-def _base_key(key: str) -> str:
-    return key.rsplit("@", 1)[0] if "@" in key else key
-
-
 def _score(
-    evaluators: list[Evaluator], artifact_ref: ArtifactRef, context: dict, weights: dict
+    evaluators, artifact_ref: ArtifactRef, context: dict, weights: dict
 ) -> tuple[dict, float, dict]:
-    """评估器协议注入打分：逐评估器明细 + 适用权重归一 + quantize 定点。
+    """打分：dict = 真实七评估器编排（C11）；list = 评估器协议注入路径（US3 回放复用）。
 
-    返回 (breakdown, score, 评估器计费用量)；judge 类评估器把 last_usage 暴露为
-    llm_calls/llm_tokens/cost_usd（真实 judge 在 T922 落地），由调用方入节点成本。
+    返回 (breakdown, score, 评估器计费用量)；协议注入路径逐评估器汇总 `last_usage`
+    （judge 类评估器暴露 llm_calls/llm_tokens/cost_usd），由调用方入节点成本。
     """
+    if isinstance(evaluators, dict):
+        return evaluate_screenplay(evaluators, artifact_ref, context, weights)
     usage = {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
     breakdown: dict[str, dict] = {}
     for evaluator in evaluators:
@@ -323,14 +279,17 @@ def _score(
             usage["llm_calls"] += int(last_usage.get("llm_calls", 0))
             usage["llm_tokens"] += int(last_usage.get("llm_tokens", 0))
             usage["cost_usd"] += float(last_usage.get("cost_usd", 0.0))
-    return breakdown, quantize_score(_composite_screenplay(breakdown, weights)), usage
+    return breakdown, quantize_score(composite_screenplay(breakdown, weights)), usage
 
 
-def _config_snapshot(config: ScreenplayConfig, evaluators: list[Evaluator]) -> dict:
+def _config_snapshot(config: ScreenplayConfig, evaluators) -> dict:
     """配置快照随树冻结（原则五）：此后配置变更不影响历史节点与得分。"""
+    all_evaluators = evaluators["all"] if isinstance(evaluators, dict) else evaluators
     return {
         "evaluator_weights": config.evaluator_weights,
-        "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in evaluators},
+        "evaluator_versions": {
+            evaluator.spec.evaluator_id: evaluator.spec.version for evaluator in all_evaluators
+        },
         # 回放投影白名单（002）：只暴露策略侧可消费的观测槽——网关核对键
         # （cache_key/response_hash）留运营表与节点观测，不进沙箱投影（原则四）
         "observation_fields": ["gen_params", "stage", "job_id"],
@@ -508,14 +467,16 @@ def run_screenplay_round(
 ) -> ScreenplayRoundResult:
     """执行一轮剧本分阶段产出（全流程幂等）。
 
-    evaluators：注入评估器列表（面向评估器协议，US1 用桩/US3 回放重算）；None →
-    默认七评估器装配（T923 接线点，本批显式报错）。
+    evaluators：None → 默认装配真实七评估器（需 gateway）；dict → 真实七评估器编排；
+    list → 评估器协议注入路径（桩/回放重算）。
     阶段失败隔离：网关失败/工件构造失败/评估器崩溃都只影响该阶段（成本照计），
     后续阶段继续并按实际产出记录输入脉络。
     """
     normalized_inputs = _validate_inputs(inputs, config)  # 预检先于一切副作用
     if evaluators is None:
-        evaluators = build_default_evaluators(config, gateway)
+        if gateway is None:  # 装配真实七评估器必须提供网关（judge 计费路径）
+            raise ScreenplayLoopError("装配真实七评估器必须提供 LLM 网关（judge 计费路径）")
+        evaluators = build_screenplay_evaluators(config, gateway)
     elif not evaluators:
         raise ScreenplayLoopError("evaluators 不能为空列表（评估器协议注入需要至少一个评估器）")
 

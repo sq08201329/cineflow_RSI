@@ -5,29 +5,25 @@ CLI 纪律（风格对齐 ops/calibrate.py）：默认面向 PG（--dsn 或 CINE
 （--policy <version> 读历史目录并核验版本与内容一致；--policy-file 按源码哈希派生版本）；
 策略源码过 002 静态检查后才允许执行（未过检查不入产出）。
 产出成功路径：三阶段落树 + 工件内容寻址入 <data-dir>/artifacts + 轮次结果 JSON（退出码 0）。
-评估器装配为 T923 接线点：本批经 `agents.screenplay.loop.build_default_evaluators` 注入桩
-验证 CLI 全链路（装配失败 → 退出码 1，不产生半轮次落盘）。
+评估器 = 真实七评估器装配（T923 接线完成，CLI 与 loop 共用 `build_screenplay_evaluators`
+唯一装配点）；装配失败 → 退出码 1（配置级装配错误退出码 2），不产生半轮次落盘。
+产出用例用**缩放页数窗口的配置副本**（默认夹具 9 行对真实 90 分钟配置必然越界）。
 """
 
+import copy
 import importlib.util
 import json
 from pathlib import Path
 
 import blake3
 import pytest
+import yaml
 
 from agents.screenplay.loop import ScreenplayLoopError
-from tests.stubs import StubJudgeEvaluator, StubProxyEvaluator, StubRuleEvaluator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "ops" / "screenplay.py"
-
-_GATE_IDS = (
-    "rule.beat_structure",
-    "rule.page_minutes",
-    "rule.scene_character",
-    "rule.dialogue_action_ratio",
-)
+_REAL_CONFIG = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
 
 
 @pytest.fixture()
@@ -53,18 +49,22 @@ def dsn(tmp_path):
     return f"sqlite+pysqlite:///{tmp_path / 'cli.db'}"
 
 
+@pytest.fixture()
+def scaled_config(tmp_path):
+    """页数窗口按夹具策略产出缩放的真实配置副本。
+
+    夹具策略每阶段行数 6/6/9（outline/scenes/script）→ lines_per_page=3 得 2/2/3 页，
+    故窗口取目标 2 页 ± 1（真实 90 分钟配置下这些短形态工件必然越界）。
+    """
+    raw = copy.deepcopy(_REAL_CONFIG)
+    raw["screenplay"].update({"target_duration_min": 2, "page_tolerance": 1, "lines_per_page": 3})
+    path = tmp_path / "movie_scaled.yaml"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def _version_of(path: Path) -> str:
     return blake3.blake3(path.read_bytes()).hexdigest()[:12]
-
-
-def _stub_evaluators(config, gateway):
-    """CLI 产出用的评估器桩装配（T923 前替代默认七评估器）。"""
-    return [
-        *(StubRuleEvaluator(gate_id) for gate_id in _GATE_IDS),
-        StubProxyEvaluator("proxy.entity_consistency", score=0.8),
-        StubProxyEvaluator("proxy.timeline_conflict", score=0.6),
-        StubJudgeEvaluator("judge.dramatic_tension", score=0.7),
-    ]
 
 
 def _invoke(cli, capsys, *argv) -> tuple[int, dict]:
@@ -72,7 +72,15 @@ def _invoke(cli, capsys, *argv) -> tuple[int, dict]:
     return code, json.loads(capsys.readouterr().out)
 
 
-def _produce_args(round_id: str, policy_path: Path, dsn: str, data_dir: Path, *, extra=()):
+def _produce_args(
+    round_id: str,
+    policy_path: Path,
+    dsn: str,
+    data_dir: Path,
+    *,
+    config_path: Path | None = None,
+    extra=(),
+):
     return (
         "produce",
         "--round",
@@ -89,7 +97,7 @@ def _produce_args(round_id: str, policy_path: Path, dsn: str, data_dir: Path, *,
         "--policy-file",
         str(policy_path),
         "--config",
-        str(REPO_ROOT / "configs" / "movie.yaml"),
+        str(config_path or REPO_ROOT / "configs" / "movie.yaml"),
         "--data-dir",
         str(data_dir),
         "--dsn",
@@ -245,13 +253,15 @@ class Test依赖与策略错误:
 
 class Test产出:
     def test_produce_三阶段落树并输出轮次结果(
-        self, cli, capsys, monkeypatch, policy_file, tmp_path, dsn
+        self, cli, capsys, policy_file, scaled_config, tmp_path, dsn
     ):
-        from agents.screenplay import loop
-
-        monkeypatch.setattr(loop, "build_default_evaluators", _stub_evaluators)
+        """真实七评估器全链路：三阶段落树 + 工件内容寻址 + 轮次结果 JSON（退出码 0）。"""
         data_dir = tmp_path / "screenplay"
-        code, payload = _invoke(cli, capsys, *_produce_args("cli-1", policy_file, dsn, data_dir))
+        code, payload = _invoke(
+            cli,
+            capsys,
+            *_produce_args("cli-1", policy_file, dsn, data_dir, config_path=scaled_config),
+        )
         assert code == 0
         assert payload["round_id"] == "cli-1"
         assert payload["tree_id"] == "screenplay-round-cli-1"
@@ -260,6 +270,7 @@ class Test产出:
         assert [job["status"] for job in payload["jobs"]] == ["inserted"] * 3
         assert payload["spent_usd"] > 0
         assert payload["cost_reconciliation"]["consistent"] is True
+        assert payload["cost_reconciliation"]["evaluator_cost_usd"] > 0  # judge 仅大纲阶段计费
         assert payload["data_dir"] == str(data_dir)
         # 工件内容寻址落 <data-dir>/artifacts（三阶段三份工件）
         artifacts = sorted((data_dir / "artifacts").iterdir())
@@ -268,38 +279,64 @@ class Test产出:
             job["artifact_hash"] for job in payload["jobs"]
         }
 
-    def test_同轮次二次触发幂等(self, cli, capsys, monkeypatch, policy_file, tmp_path, dsn):
-        from agents.screenplay import loop
-
-        monkeypatch.setattr(loop, "build_default_evaluators", _stub_evaluators)
+    def test_同轮次二次触发幂等(self, cli, capsys, policy_file, scaled_config, tmp_path, dsn):
         data_dir = tmp_path / "screenplay"
-        first = _invoke(cli, capsys, *_produce_args("cli-2", policy_file, dsn, data_dir))
-        second = _invoke(cli, capsys, *_produce_args("cli-2", policy_file, dsn, data_dir))
+        args = _produce_args("cli-2", policy_file, dsn, data_dir, config_path=scaled_config)
+        first = _invoke(cli, capsys, *args)
+        second = _invoke(cli, capsys, *args)
         assert first[0] == second[0] == 0
         assert second[1]["jobs"] == first[1]["jobs"]
         assert second[1]["spent_usd"] == pytest.approx(first[1]["spent_usd"])
         assert len(list((data_dir / "artifacts").iterdir())) == 3  # 0 重复工件
 
-    def test_评估器装配失败退出码_1(self, cli, capsys, monkeypatch, policy_file, tmp_path, dsn):
-        """装配失败（T923 前默认路径）→ 退出码 1 且不产生半轮次落盘。"""
-        from agents.screenplay import loop
+    def test_评估器装配失败退出码_1(
+        self, cli, capsys, monkeypatch, policy_file, scaled_config, tmp_path, dsn
+    ):
+        """装配失败 → 退出码 1 且不产生半轮次落盘（0 工件）。"""
+        from agents.screenplay import evaluators as evaluators_package
 
         def _unavailable(config, gateway):
-            raise ScreenplayLoopError("七评估器装配未就绪（测试注入）")
+            raise ScreenplayLoopError("七评估器装配失败（测试注入）")
 
-        monkeypatch.setattr(loop, "build_default_evaluators", _unavailable)
+        monkeypatch.setattr(evaluators_package, "build_screenplay_evaluators", _unavailable)
         data_dir = tmp_path / "screenplay"
-        code, payload = _invoke(cli, capsys, *_produce_args("cli-3", policy_file, dsn, data_dir))
+        code, payload = _invoke(
+            cli,
+            capsys,
+            *_produce_args("cli-3", policy_file, dsn, data_dir, config_path=scaled_config),
+        )
         assert code == 1
-        assert "未就绪" in payload["error"]
+        assert "装配失败" in payload["error"]
         assert list((data_dir / "artifacts").iterdir()) == []  # 0 工件（无半轮次落盘）
 
-    def test_缺_topic_的输入由闭环拒绝(self, cli, capsys, monkeypatch, policy_file, tmp_path, dsn):
-        """输入预检在闭环内：CLI 把闭环拒绝如实映射为退出码 1（不吞错）。"""
-        from agents.screenplay import loop
+    def test_装配与权重节不一致退出码_2(self, cli, capsys, policy_file, tmp_path, dsn):
+        """权重节与装配的评估器不一致（配置漂移）→ 配置级拒绝，退出码 2。"""
+        raw = copy.deepcopy(_REAL_CONFIG)
+        raw["screenplay"].update(
+            {"target_duration_min": 2, "page_tolerance": 1, "lines_per_page": 3}
+        )
+        del raw["evaluator_weights"]["screenplay"]["proxy.timeline_conflict"]
+        config_path = tmp_path / "movie_drifted.yaml"
+        config_path.write_text(
+            yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        code, payload = _invoke(
+            cli,
+            capsys,
+            *_produce_args("cli-3b", policy_file, dsn, tmp_path / "data", config_path=config_path),
+        )
+        assert code == 2
+        assert "评估器装配失败" in payload["error"]
 
-        monkeypatch.setattr(loop, "build_default_evaluators", _stub_evaluators)
-        args = list(_produce_args("cli-4", policy_file, dsn, tmp_path / "screenplay"))
+    def test_缺_topic_的输入由闭环拒绝(
+        self, cli, capsys, policy_file, scaled_config, tmp_path, dsn
+    ):
+        """输入预检在闭环内：CLI 把闭环拒绝如实映射为退出码 1（不吞错）。"""
+        args = list(
+            _produce_args(
+                "cli-4", policy_file, dsn, tmp_path / "screenplay", config_path=scaled_config
+            )
+        )
         args[args.index("--topic") + 1] = ""
         code, payload = _invoke(cli, capsys, *args)
         assert code == 1
