@@ -282,6 +282,16 @@ class Test确定性:
         assert "-threads" in params
         assert params[params.index("-threads") + 1] == "1"
 
+    def test_同素材帧两次编码逐字节一致(self, make_storyboard_frames, render_cfg, tmp_path):
+        """编码层确定性独立成立：同素材帧两次编码字节一致且可探测。"""
+        frames = make_storyboard_frames(count=8, width=render_cfg["width"])
+        first = board_render.encode_mp4_deterministic(frames, render_cfg["fps"])
+        second = board_render.encode_mp4_deterministic(frames, render_cfg["fps"])
+        assert first == second
+        path = tmp_path / "frames.mp4"
+        path.write_bytes(first)
+        assert probe_clip(path)["width"] == render_cfg["width"]
+
 
 class Test同一帧函数服务评估器:
     """C11：分镜卡帧口径即 C7 的评估输入（同一函数产出，禁止两套帧）。"""
