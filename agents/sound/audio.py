@@ -62,3 +62,11 @@ def synthesize_wav(gen_params: dict, distribution: dict, sample_rate: int) -> tu
         "emotion_vector": list(gen_params.get("emotion_vector", [])),
     }
     return buffer.getvalue(), metadata
+
+
+def decode_wav_samples(wav_bytes: bytes) -> np.ndarray:
+    """PCM16 wav 字节 → float64 采样序列（[-1,1] 标度，评估器确定性输入）。"""
+    buffer = io.BytesIO(wav_bytes)
+    with wave.open(buffer, "rb") as wf:
+        frames = wf.readframes(wf.getnframes())
+    return np.frombuffer(frames, dtype=np.int16).astype(np.float64) / 32768.0
