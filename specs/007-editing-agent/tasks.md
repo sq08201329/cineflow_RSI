@@ -20,7 +20,7 @@
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
 - [x] T703 迁移测试 tests/unit/test_migration_0006.py（先写：edit_render_jobs schema、唯一键 (round_id, edl_hash)、actual ≤ estimated CHECK、GRANT 纪律源码断言）
-- [ ] T704 实现迁移 ops/migrations/versions/0006_edit_render_jobs.py + agents/editing/db.py 表定义（0005 同模式；依赖 T703 失败确认）
+- [x] T704 实现迁移 ops/migrations/versions/0006_edit_render_jobs.py + agents/editing/db.py 表定义（0005 同模式；依赖 T703 失败确认）
 - [ ] T705 [P] 镜头库/分区测试 tests/unit/test_editing_shots.py（ShotEntry 校验、SceneStructure 分区无重复/引用存在/有序）
 - [ ] T706 [P] 实现 agents/editing/shots.py
 - [ ] T707 [P] EDL 测试 tests/unit/test_edl.py（规范化 JSON 键序稳定、四层校验：引用/越界/分区归属与顺序/转场规则库——五类非法各拒绝）

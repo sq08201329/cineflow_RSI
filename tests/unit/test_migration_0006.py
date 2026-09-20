@@ -108,7 +108,9 @@ class Test状态机与成本约束:
     def test_状态机全序列可入库(self, jobs_engine, status):
         with jobs_engine.begin() as conn:
             conn.execute(
-                insert(edit_render_jobs).values(**{**_JOB, "status": status, "job_id": f"j-{status}"})
+                insert(edit_render_jobs).values(
+                    **{**_JOB, "status": status, "job_id": f"j-{status}"}
+                )
             )
 
     def test_非法状态被_CHECK_拒绝(self, jobs_engine):
@@ -119,7 +121,9 @@ class Test状态机与成本约束:
     def test_预估成本为负被_CHECK_拒绝(self, jobs_engine):
         with pytest.raises(IntegrityError):
             with jobs_engine.begin() as conn:
-                conn.execute(insert(edit_render_jobs).values(**{**_JOB, "estimated_cost_usd": -0.1}))
+                conn.execute(
+                    insert(edit_render_jobs).values(**{**_JOB, "estimated_cost_usd": -0.1})
+                )
 
     def test_实际成本超预估被_CHECK_拒绝(self, jobs_engine):
         """实际扣费 ≤ 预估（research 决策 7/003 同款纪律）落进 schema。"""
