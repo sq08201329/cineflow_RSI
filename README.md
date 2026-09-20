@@ -184,6 +184,42 @@ ASR/情绪匹配，实现哈希入版本号，quantize 6 位定点归一；类�
 真实声音平台接入是凭证配置的运维动作：`SOUND_TTS_*` / `SOUND_SFX_*` /
 `SOUND_MUSIC_*` 环境变量（缺凭证不假装生成，原则六）。
 
+## 剪辑闭环（功能 007）
+
+```bash
+# 单元测试（镜头库/场景分区/EDL 四层校验/确定性渲染/配置/五评估器/合成/执行器/回放/做梦接入）
+uv run pytest tests/unit -k editing
+
+# 渲染适配器契约套件（双实现同构；真实骨架无凭证跳过）
+uv run pytest tests/contract -k editing
+
+# PG 集成（0006 迁移真实执行 + 唯一键 (round_id, edl_hash) 幂等 + 两段式全链路 + 对账，需 Docker PG）
+uv run pytest tests/integration -k editing -m integration
+
+# 无偏性验收（发布阻塞：回放 vs 真实重跑 τ ≥ 0.95；注入偏差 100% 拒绝）
+uv run pytest tests/unbiasedness -k editing
+
+# 闭环端到端演示（确定性模拟渲染器 + Mock 网关，离线可跑）：
+# 一轮 3 组 EDL 落树对账 → 非法 EDL 0 渲染 0 成本 → 预算门禁与幂等 →
+# 五评估器 + gate 短路 + 定点重算 → 无偏性 τ → 做梦首轮基线
+uv run python ops/demo_editing_loop.py
+
+# 剪辑策略做梦接入（agent_id="editing" 演示档 M=8，dreaming 零改动）
+uv run pytest tests/unit/test_editing_dreaming.py
+```
+
+门禁现状：五评估器全确定性（三 gate 时长/镜头分布/转场规则库——与执行前
+校验同一配置库 + proxy.pacing_curve 分段基准距离 + judge.narrative_flow
+EDL 摘要成对比较，版本号 = 提示词+锚点集+摘要函数三段哈希；gate 短路不跑
+judge，quantize 6 位定点归一）；渲染编码固定单线程确定性档（同 EDL 逐字节
+复现，004 x264 flake 根因同源消除并已回移 004）；EDL 非法执行前拒绝
+（0 渲染 0 成本）；无偏性 τ≥0.95 为发布阻塞（实测 τ=1.0）；做梦层
+agent_id 泛化零改动接入（champion 策略 `policies/history/editing/` +
+meta.json 谱系）。
+
+真实渲染服务接入是凭证配置的运维动作：`EDIT_RENDER_BASE_URL` /
+`EDIT_RENDER_API_KEY` 环境变量（缺凭证不假装渲染，原则六）。
+
 ## 做梦层（功能 005）
 
 ```bash
