@@ -42,12 +42,12 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T913 [P] [US1] tests/unit/test_screenplay_loop.py（C1 场景 1~4：三阶段 3 节点 stage 齐备 + policy_version = 人工版本、同 round_id 幂等重建 0 重复、网关失败 FAILED + 成本照计、节点可回溯策略版本；网关缓存键与响应哈希落盘断言；评估器桩注入）
+- [X] T913 [P] [US1] tests/unit/test_screenplay_loop.py（C1 场景 1~4：三阶段 3 节点 stage 齐备 + policy_version = 人工版本、同 round_id 幂等重建 0 重复、网关失败 FAILED + 成本照计、节点可回溯策略版本；网关缓存键与响应哈希落盘断言；评估器桩注入）
 
 ### 用户故事 1 的实现
 
-- [ ] T914 [US1] 实现 agents/screenplay/loop.py（run_screenplay_round：分阶段 → 网关生成（缓存键/响应哈希）→ 评估器协议注入 → quantize → 一次性 INSERT → ScreenplayRoundResult；依赖 T904、T906、T908）
-- [ ] T915 [US1] ops/screenplay.py CLI 的 produce 子命令（风格对齐 ops/calibrate.py）
+- [X] T914 [US1] 实现 agents/screenplay/loop.py（run_screenplay_round：分阶段 → 网关生成（缓存键/响应哈希）→ 评估器协议注入 → quantize → 一次性 INSERT → ScreenplayRoundResult；依赖 T904、T906、T908）
+- [X] T915 [US1] ops/screenplay.py CLI 的 produce 子命令（风格对齐 ops/calibrate.py）
 
 **检查点**: 一轮三阶段产出落树 + 幂等 + 版本回溯成立——MVP 成立
 
