@@ -71,6 +71,22 @@ class ShotEntry:
             _require_nonempty_str(line_id, "covers[] 行 id")
         object.__setattr__(self, "covers", tuple(self.covers))
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "ShotEntry":
+        if not isinstance(data, dict):
+            raise ValidationError(f"shot 必须为 dict，实际为 {data!r}")
+        return cls(
+            shot_id=data.get("shot_id"),
+            scene_id=data.get("scene_id"),
+            covers=data.get("covers", ()),
+            shot_size=data.get("shot_size"),
+            camera=data.get("camera"),
+            side=data.get("side"),
+            movement=data.get("movement"),
+            est_duration_ms=data.get("est_duration_ms"),
+            alternatives=data.get("alternatives"),
+        )
+
     def to_dict(self) -> dict:
         return {
             "shot_id": self.shot_id,
@@ -88,19 +104,7 @@ class ShotEntry:
 def _normalize_shot(item: ShotEntry | dict) -> ShotEntry:
     if isinstance(item, ShotEntry):
         return item
-    if isinstance(item, dict):
-        return ShotEntry(
-            shot_id=item.get("shot_id"),
-            scene_id=item.get("scene_id"),
-            covers=item.get("covers", ()),
-            shot_size=item.get("shot_size"),
-            camera=item.get("camera"),
-            side=item.get("side"),
-            movement=item.get("movement"),
-            est_duration_ms=item.get("est_duration_ms"),
-            alternatives=item.get("alternatives"),
-        )
-    raise ValidationError(f"shot 必须为 dict 或 ShotEntry，实际为 {item!r}")
+    return ShotEntry.from_dict(item)
 
 
 @dataclass(frozen=True)
