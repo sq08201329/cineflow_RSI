@@ -27,3 +27,21 @@ uv run pytest tests/unit/test_sound_dreaming.py   # 声音策略一轮做梦（a
 ## 里程碑验收（立项书周 3~5 / SC-001）
 
 无偏性 τ ≥ 0.95 通过 + 首轮进化曲线产出；覆盖率 ≥85% 不降。
+
+## 验证记录（2026-09-20，T628）
+
+| 命令 | 结果 |
+| --- | --- |
+| `uv run alembic -c ops/alembic.ini upgrade head`（真实 PG） | 0001~0005 全量执行，`0005_sound_gen_jobs (head)` |
+| `uv run pytest tests/unit -k sound` | 107 passed |
+| `uv run pytest tests/contract -k sound` | 22 passed, 18 skipped（真实骨架无凭证按用例 skip） |
+| `uv run pytest tests/integration -k sound -m integration`（真实 PG） | 5 passed |
+| `uv run pytest tests/unbiasedness -k sound` | 3 passed（τ=1.0 ≥ 0.95；四种注入偏差 100% 拒绝） |
+| `uv run python ops/demo_sound_loop.py` | 退出码 0（六步全通：分账/预算 2 过 2 拒/幂等 0 重复/gate 短路 0 分/τ=1.0/做梦 M=8 基线零生成） |
+| `uv run pytest tests/unit tests/contract` | 935 passed, 43 skipped |
+| 覆盖率 `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov-fail-under=85` | TOTAL 92%（≥85% 达标，退出码 0）；agents/sound 各模块 92%~100%（http_real.py 0%——真实骨架无凭证不假装生成，契约 skip 语义同 004 惯例） |
+| `uv run ruff check agents tests policies dreaming ops` | All checks passed |
+
+注：做梦接入为 dreaming 零改动（005 泛化已成立，静态证明见
+tests/unit/test_sound_dreaming.py::test_dreaming_零改动证明）；
+首轮进化基线形态 = `history_root/sound/dream-sound-1.json`（演示档 M=8，落盘只增不改）。
