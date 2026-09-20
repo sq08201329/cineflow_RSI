@@ -61,15 +61,15 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T616 [P] [US2] tests/unit/test_sound_rules.py（C4/C5：响度分档合规/违规、静音不适用注明、同步 80ms 过/200ms gate 判 0、纯音乐不适用注明）
-- [ ] T617 [P] [US2] tests/unit/test_sound_proxies.py（C6/C7：CER 映射误差 <1e-6、同工件重评估逐位一致、非 TTS 跳过注明、情绪匹配 vs 背离分差、低置信标注）
-- [ ] T618 [P] [US2] tests/unit/test_sound_composite.py（C8：gate 违规总分 0 短路、适用分量归一合成、quantize 6 位定点、版本元信息含实现哈希；宪章测试纪律：四评估器注册元数据断言——cost_per_call ≥ 0 显式存在、deterministic=True、kind 正确；与既有评估器（004 视觉系）的对比样本夹具——同工件经新旧评估器各评一次，得分域与 diagnostics 键结构一致）
+- [x] T616 [P] [US2] tests/unit/test_sound_rules.py（C4/C5：响度分档合规/违规、静音不适用注明、同步 80ms 过/200ms gate 判 0、纯音乐不适用注明）
+- [x] T617 [P] [US2] tests/unit/test_sound_proxies.py（C6/C7：CER 映射误差 <1e-6、同工件重评估逐位一致、非 TTS 跳过注明、情绪匹配 vs 背离分差、低置信标注）
+- [x] T618 [P] [US2] tests/unit/test_sound_composite.py（C8：gate 违规总分 0 短路、适用分量归一合成、quantize 6 位定点、版本元信息含实现哈希；宪章测试纪律：四评估器注册元数据断言——cost_per_call ≥ 0 显式存在、deterministic=True、kind 正确；与既有评估器（004 视觉系）的对比样本夹具——同工件经新旧评估器各评一次，得分域与 diagnostics 键结构一致）
 
 ### 用户故事 2 的实现
 
-- [ ] T619 [US2] 实现 agents/sound/evaluators/loudness.py + av_sync.py（简化 BS.1770 纯 numpy；依赖 T608 元数据）
-- [ ] T620 [US2] 实现 agents/sound/evaluators/asr.py + emotion.py（确定性代理；实现哈希入版本号，004 _versioning 同款）
-- [ ] T621 [US2] 执行器接线真实评估器（loop.py 以 evaluator_weights.sound + composite_score_versioned + quantize 替换桩；依赖 T615、T619、T620）
+- [x] T619 [US2] 实现 agents/sound/evaluators/loudness.py + av_sync.py（简化 BS.1770 纯 numpy；依赖 T608 元数据）
+- [x] T620 [US2] 实现 agents/sound/evaluators/asr.py + emotion.py（确定性代理；实现哈希入版本号，004 _versioning 同款）
+- [x] T621 [US2] 执行器接线真实评估器（loop.py 以 evaluator_weights.sound + composite_score_versioned + quantize 替换桩；依赖 T615、T619、T620）
 
 **检查点**: 四评估器全绿；执行器产出节点 eval_breakdown 四分量齐全
 
