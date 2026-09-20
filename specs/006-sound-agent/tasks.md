@@ -83,13 +83,13 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T622 [P] [US3] 无偏性测试 tests/unbiasedness/test_sound_unbiased.py（C14：声音夹具池回放 vs 真实重跑 τ ≥ 0.95；注入偏差 100% 拒绝——复用 core/replay/unbiasedness.py 口径）
-- [ ] T623 [P] [US3] 回放与周校准接入测试 tests/unit/test_sound_replay.py（C13/C16：observed/probe 规范化精确匹配、UNKNOWN 语义、回放全程 generate 调用计数 0 审计、010 build_blind_list(agent_id="sound") 正常产出不触发 promo 特判；FR-011 分树断言：声音池按时间分 train/validation、最近树永远只做 validation——复用 005 分树口径）
+- [x] T622 [P] [US3] 无偏性测试 tests/unbiasedness/test_sound_unbiased.py（C14：声音夹具池回放 vs 真实重跑 τ ≥ 0.95；注入偏差 100% 拒绝——复用 core/replay/unbiasedness.py 口径）
+- [x] T623 [P] [US3] 回放与周校准接入测试 tests/unit/test_sound_replay.py（C13/C16：observed/probe 规范化精确匹配、UNKNOWN 语义、回放全程 generate 调用计数 0 审计、010 build_blind_list(agent_id="sound") 正常产出不触发 promo 特判；FR-011 分树断言：声音池按时间分 train/validation、最近树永远只做 validation——复用 005 分树口径）
 
 ### 用户故事 3 的实现
 
-- [ ] T624 [US3] champion 策略 policies/history/sound/（手工策略首版 + meta.json 父子谱系，005 文件化惯例）+ 声音模拟器池接线（依赖 T621）
-- [ ] T625 [US3] 做梦一轮接入验证（agent_id="sound" 演示档 M=8：候选静态检查 → 沙箱回放 → reward 排名 → 首轮基线落盘；零改动验证，若 dreaming 泛化有缺口则补最小泛化并注明；验证后回填 quickstart.md 的做梦命令为实际形态）
+- [x] T624 [US3] champion 策略 policies/history/sound/（手工策略首版 + meta.json 父子谱系，005 文件化惯例）+ 声音模拟器池接线（依赖 T621）
+- [x] T625 [US3] 做梦一轮接入验证（agent_id="sound" 演示档 M=8：候选静态检查 → 沙箱回放 → reward 排名 → 首轮基线落盘；零改动验证，若 dreaming 泛化有缺口则补最小泛化并注明；验证后回填 quickstart.md 的做梦命令为实际形态）
 
 **检查点**: τ ≥ 0.95 通过 + 首轮进化基线落盘——里程碑验收线成立
 
