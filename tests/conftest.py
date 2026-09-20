@@ -486,3 +486,81 @@ def anchors_engine():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_anchor_schema(engine)
     return engine
+
+
+@pytest.fixture()
+def make_timing_sheet():
+    """TimingSheet 工厂（功能 006）：variant 取 valid（默认）/overlap/out_of_bounds。
+
+    - valid：两条不重叠台词 + 两个音效事件；
+    - overlap：第二条台词与第一条时间区间重叠（执行前必须拒绝）；
+    - out_of_bounds：负时间戳（执行前必须拒绝）。
+    字段可被调用方整体覆盖（utterances/effects）。
+    """
+    from agents.sound.timing import TimingSheet
+
+    def _make(variant: str = "valid", **overrides):
+        utterances = [
+            {"text": "你终于来了。", "start_ms": 0, "end_ms": 1000},
+            {"text": "我等了很久。", "start_ms": 1200, "end_ms": 2000},
+        ]
+        effects = [
+            {"kind": "door_slam", "at_ms": 1100},
+            {"kind": "footsteps", "at_ms": 2100},
+        ]
+        if variant == "overlap":
+            utterances[1]["start_ms"] = 800  # 与第一条 [0,1000) 重叠
+        elif variant == "out_of_bounds":
+            effects[0]["at_ms"] = -50  # 负时间戳越界
+        fields = {"utterances": utterances, "effects": effects}
+        fields.update(overrides)
+        return TimingSheet(**fields)
+
+    return _make
+
+
+@pytest.fixture()
+def make_sound_gen_params():
+    """声学属性可控的模拟生成参数工厂（功能 006）。
+
+    loudness_gain_db / event_times_ms / cer_injected / emotion_vector 全部显式可控
+    （评估器夹具注入用）；seed 决定波形细节（确定性）；gen_type ∈ {tts, sfx, music}。
+    """
+    counter = {"n": 0}
+
+    def _make(**overrides):
+        counter["n"] += 1
+        fields = {
+            "gen_type": "tts",
+            "seed": 7 + counter["n"],
+            "duration_s": 2.0,
+            "loudness_gain_db": 0.0,  # 注入响度增益（rule.loudness_compliance 夹具）
+            "event_times_ms": [0.0, 1000.0],  # 注入语音/音效事件时间（rule.av_sync 夹具）
+            "cer_injected": 0.0,  # 注入错字率 ∈ [0,1]（proxy.asr_transcript 夹具）
+            "emotion_vector": [0.5, 0.5],  # 注入情绪向量（proxy.emotion_music_match 夹具）
+        }
+        fields.update(overrides)
+        return fields
+
+    return _make
+
+
+@pytest.fixture()
+def sound_jobs_engine():
+    """声音运营表夹具：SQLite 内存库建 sound_gen_jobs（可变表，无 immutable 触发器）。"""
+    from sqlalchemy import create_engine
+
+    from agents.sound.db import create_gen_jobs_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_gen_jobs_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def sound_data_dir(tmp_path):
+    """声音临时数据目录夹具：artifacts（wav 工件）/rounds（轮次收口落盘）两层结构。"""
+    base = tmp_path / "sound"
+    for sub in ("artifacts", "rounds"):
+        (base / sub).mkdir(parents=True)
+    return base
