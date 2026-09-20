@@ -15,6 +15,12 @@ evaluator_weights:
     rule.material_compliance: gate
     proxy.ctr_history: 0.4
     human.platform_metrics: 0.6
+  sound:
+    # gate 表示硬规则门禁：score 为 0 时总分直接为 0
+    rule.loudness_compliance: gate # 响度合规分档（sound.loudness 对照）
+    rule.av_sync: gate # 事件时间偏差 ≤ sound.av_sync_threshold_ms
+    proxy.asr_transcript: 0.5 # 仅 TTS 工件适用；CER → score
+    proxy.emotion_music_match: 0.5 # 仅 music 工件适用；情绪向量距离 → score
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
@@ -71,6 +77,28 @@ visual:
       - "哪一段镜头的电影感更强？"
       - "哪一段的叙事张力更好？"
       - "哪一段的画面构图更专业？"
+
+# 声音（sound）形态参数：生成预算、响度分档、同步阈值、采样率、
+# 三类型价目表（成本分账粒度）、确定性模拟生成参数（声学属性注入）
+sound:
+  exploration_per_round_usd: 300 # 单轮生成预算上限（预算门禁，按 gen_type 分账）
+  clips_per_round: 4 # 单轮参数组数（典型配比 2 TTS + 1 SFX + 1 music）
+  loudness: # 响度合规分档（rule.loudness_compliance 对照，单位 LUFS）
+    dialogue: {target_lufs: -27.0, tolerance: 2.0}
+    sfx: {target_lufs: -30.0, tolerance: 3.0}
+    music: {target_lufs: -25.0, tolerance: 3.0}
+  av_sync_threshold_ms: 120 # 事件时间偏差 gate 阈值（rule.av_sync，澄清 Q1：仅时序元数据）
+  sample_rate: 16000 # 模拟生成与评估的统一采样率（单声道 PCM16）
+  prices: # 三类型价目表；缺价目即报错，不允许静默零成本（003 同款纪律）
+    tts: {per_second_usd: 0.02}
+    sfx: {per_event_usd: 0.05}
+    music: {per_second_usd: 0.03}
+  simulated_gen: # 确定性模拟生成器参数（决策 2：声学属性注入响度/事件时间/错字率/情绪向量）
+    base_freq_hz: 220.0 # 正弦叠加基频（种子派生微调）
+    harmonics: 4 # 谐波数（音色维度）
+    duration_seconds: 2.0 # 默认时长（gen_params 可覆盖）
+    estimated_cost_usd: 0.5 # 预估花费（实际扣费 ≤ 预估）
+    cost_per_clip_usd: 0.4 # 实际扣费
 
 # 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）
