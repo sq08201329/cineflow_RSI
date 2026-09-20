@@ -257,15 +257,27 @@ class Test分阶段输入脉络:
             "r2", policy, tree_store, artifact_store, screenplay_jobs_engine, gateway, config
         )
         nodes = _node_by_stage(tree_store, result.tree_id)
-        outline_params = nodes["outline"].observation_context["gen_params"]
-        assert outline_params["stage"] == "outline"
-        assert outline_params["previous_artifact_hash"] is None
-        assert nodes["scenes"].observation_context["gen_params"]["previous_artifact_hash"] == (
+        outline_context = nodes["outline"].observation_context
+        # 回放匹配槽 = 策略可复现结构键（不含生成产物摘要：回放无需生成即可匹配）
+        assert outline_context["gen_params"]["stage"] == "outline"
+        assert set(outline_context["gen_params"]) == {
+            "stage",
+            "policy_version",
+            "model",
+            "temperature",
+            "max_tokens",
+            "target_duration_min",
+            "plan_digest",
+        }
+        # 生成产物摘要另存观测（输入脉络审计）：outline 无上游、scenes/script 逐级承接
+        assert outline_context["previous_artifact_hash"] is None
+        assert nodes["scenes"].observation_context["previous_artifact_hash"] == (
             nodes["outline"].artifact_hash
         )
-        assert nodes["script"].observation_context["gen_params"]["previous_artifact_hash"] == (
+        assert nodes["script"].observation_context["previous_artifact_hash"] == (
             nodes["scenes"].artifact_hash
         )
+        assert nodes["outline"].observation_context["prompt_digest"]
         assert nodes["outline"].prompt != nodes["script"].prompt
         # 三阶段工件互异（stage 与正文都不同）
         hashes = {node.artifact_hash for node in nodes.values()}
@@ -358,7 +370,7 @@ class Test网关失败:
         assert failed.score is None
         assert failed.cost.generation_api_cost_usd > 0  # 失败照计
         # 后续阶段如实记录上游未产出（不伪造前一阶段工件）
-        assert nodes["script"].observation_context["gen_params"]["previous_artifact_hash"] is None
+        assert nodes["script"].observation_context["previous_artifact_hash"] is None
         rows = {row.stage: row for row in _rows(screenplay_jobs_engine)}
         assert rows["scenes"].status == "failed"
         assert rows["scenes"].error

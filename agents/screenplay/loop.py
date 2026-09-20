@@ -128,6 +128,32 @@ def stage_cache_key(model: str, prompt: str, temperature: float, max_tokens: int
     return blake3.blake3(f"{model}|{prompt}|{temperature}|{max_tokens}".encode()).hexdigest()
 
 
+def stage_match_key(
+    stage: str,
+    *,
+    policy_version: str,
+    inputs: dict,
+    config: ScreenplayConfig,
+    markers,
+) -> dict:
+    """回放匹配键（002 规范化精确匹配槽）：**策略可复现的结构键**。
+
+    只含"给定策略源码 + 输入 + 配置即可重算"的部分（stage / 策略版本 / 模型与采样档 /
+    目标时长 / 结构计划摘要）——**不含生成产物摘要**（prompt 摘要与上游工件哈希依赖
+    生成结果，回放不得触发生成，故不入匹配键；它们另存观测与运营表供审计，007 教训）。
+    同结构同策略 → 同键（键序无关，002 `normalize_params` 口径）；未命中即 UNKNOWN。
+    """
+    return {
+        "stage": stage,
+        "policy_version": policy_version,
+        "model": config.model,
+        "temperature": TEMPERATURE,
+        "max_tokens": MAX_TOKENS,
+        "target_duration_min": inputs["target_duration_min"],
+        "plan_digest": blake3.blake3(_canonical(markers).encode()).hexdigest(),
+    }
+
+
 def _canonical(value) -> str:
     """规范化 JSON（键排序）：参数哈希与计划摘要的确定性底座。"""
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
@@ -228,16 +254,17 @@ def _stage_params(
     markers: dict,
     previous: ScriptArtifact | None,
 ) -> dict:
-    """规范化阶段参数：唯一键分量 + 回放匹配槽（002 读 observation_context["gen_params"]）。"""
+    """阶段运营参数（唯一键分量）：回放结构键 + 生成产物摘要（审计与缓存核对）。"""
+    key = stage_match_key(
+        stage,
+        policy_version=policy_version,
+        inputs=inputs,
+        config=config,
+        markers=markers,
+    )
     return {
-        "stage": stage,
-        "policy_version": policy_version,
-        "model": config.model,
-        "temperature": TEMPERATURE,
-        "max_tokens": MAX_TOKENS,
-        "target_duration_min": inputs["target_duration_min"],
+        **key,
         "prompt_digest": blake3.blake3(prompt.encode()).hexdigest(),
-        "plan_digest": blake3.blake3(_canonical(markers).encode()).hexdigest(),
         # 分阶段输入脉络：上游工件哈希（未产出即 null，不伪造）
         "previous_artifact_hash": None if previous is None else previous.artifact_hash(),
     }
@@ -621,7 +648,21 @@ def _run_stage(
     params_hash = blake3.blake3(_canonical(params).encode()).hexdigest()
     cache_key = stage_cache_key(config.model, prompt, TEMPERATURE, MAX_TOKENS)
     estimated = _estimate_cost(prompt, config.price_of(config.model), MAX_TOKENS)
-    observation = {"gen_params": params, "params_hash": params_hash, "cache_key": cache_key}
+    match_key = stage_match_key(
+        stage,
+        policy_version=policy_version,
+        inputs=inputs,
+        config=config,
+        markers=markers,
+    )
+    observation = {
+        # 回放匹配槽（002 固定读键）：仅策略可复现的结构键
+        "gen_params": match_key,
+        "params_hash": params_hash,
+        "cache_key": cache_key,
+        "prompt_digest": params["prompt_digest"],
+        "previous_artifact_hash": params["previous_artifact_hash"],
+    }
 
     # 1) 生成经网关（唯一昂贵动作，原则三）：失败 → 节点 FAILED + 预估成本照计
     try:
