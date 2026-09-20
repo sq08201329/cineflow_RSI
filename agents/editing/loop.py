@@ -140,9 +140,11 @@ def run_editing_round(
     evaluators：None → 默认装配真实五评估器（build_editing_evaluators，需 gateway）；
     dict（{"gates","pacing","judge","all"}）→ 真实编排（gate 短路不跑 judge）；
     list → 评估器桩注入路径（测试/无偏性回放，面向评估器协议编程）。
+    对账三方：树内成本 == 运营表扣减 + 网关增量（judge 计费，004 同口径）。
     """
     # 0) 输入与素材预检先于一切副作用（适配器 0 调用、0 成本、0 落库）
     library, structure = _validate_inputs(inputs)
+    gateway_before = float(gateway.total_cost_usd) if gateway is not None else 0.0
     # 评估器装配：缺省按 evaluator_weights.editing 装配真实五评估器（T727 接线）；
     # 显式注入用于测试桩/无偏性回放（US1 取舍：面向评估器协议编程）
     if evaluators is None:
@@ -212,7 +214,13 @@ def run_editing_round(
             spent_usd=0.0,
             budget_cap_usd=cap,
             precheck=precheck_reason,
-            cost_reconciliation=_reconcile(store, engine, tree_id, round_id),
+            cost_reconciliation=_reconcile(
+                store,
+                engine,
+                tree_id,
+                round_id,
+                gateway_delta=_gateway_delta(gateway, gateway_before),
+            ),
         )
 
     jobs: list[dict] = []
@@ -245,8 +253,15 @@ def run_editing_round(
         jobs=jobs,
         spent_usd=_round_spent(engine, round_id),
         budget_cap_usd=cap,
-        cost_reconciliation=_reconcile(store, engine, tree_id, round_id),
+        cost_reconciliation=_reconcile(
+            store, engine, tree_id, round_id, gateway_delta=_gateway_delta(gateway, gateway_before)
+        ),
     )
+
+
+def _gateway_delta(gateway: LLMGateway | None, before: float) -> float:
+    """本轮网关计费增量（judge 成本侧；无网关/桩路径恒 0）。"""
+    return float(gateway.total_cost_usd) - before if gateway is not None else 0.0
 
 
 def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> DiscoveryTree:
@@ -694,14 +709,15 @@ def _mark_inserted(engine, job_id: str, node_id: str) -> None:
         )
 
 
-def _reconcile(store, engine, tree_id: str, round_id: str) -> dict:
-    """两方对账：树内成本合计 == 运营表扣减合计（SC-003 口径，无网关侧）。"""
+def _reconcile(store, engine, tree_id: str, round_id: str, *, gateway_delta: float = 0.0) -> dict:
+    """三方对账：树内成本合计 == 运营表扣减合计 + 网关增量（judge 计费侧，004 同口径）。"""
     tree_total = sum(node.cost.generation_api_cost_usd for node in store.nodes_of(tree_id))
     ledger_total = _round_spent(engine, round_id)
     return {
         "tree_total_usd": tree_total,
         "ledger_total_usd": ledger_total,
-        "consistent": abs(tree_total - ledger_total) < 1e-9,
+        "gateway_delta_usd": gateway_delta,
+        "consistent": abs(tree_total - (ledger_total + gateway_delta)) < 1e-9,
     }
 
 
