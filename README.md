@@ -220,6 +220,44 @@ meta.json 谱系）。
 真实渲染服务接入是凭证配置的运维动作：`EDIT_RENDER_BASE_URL` /
 `EDIT_RENDER_API_KEY` 环境变量（缺凭证不假装渲染，原则六）。
 
+## 分镜闭环（功能 008）
+
+```bash
+# 单元测试（剧本/ShotList 三层校验/分镜卡渲染/配置/摘要/五评估器/合成/执行器/回放/schema 快照）
+uv run pytest tests/unit -k "storyboard or shotlist"
+
+# 预演渲染适配器契约套件（双实现同构；真实骨架无凭证跳过）
+uv run pytest tests/contract -k storyboard
+
+# PG 集成（0007 迁移真实执行 + 唯一键 (round_id, shotlist_hash) 幂等 + 两段式全链路 + 对账，需 Docker PG）
+uv run pytest tests/integration -k storyboard -m integration
+
+# 无偏性验收（发布阻塞：回放 vs 真实重跑 τ ≥ 0.95；注入偏差 100% 拒绝）
+uv run pytest tests/unbiasedness -k storyboard
+
+# 闭环端到端演示（确定性模拟渲染器 + Mock 网关，离线可跑）：
+# 一轮 3 组 ShotList 落树对账 → 四类非法 0 渲染 0 成本 → 预算门禁与幂等 →
+# 五评估器 + gate 短路 + 定点重算 → 无偏性 τ → 做梦首轮基线
+uv run python ops/demo_storyboard_loop.py
+
+# 分镜策略做梦接入（agent_id="storyboard" 演示档 M=8，dreaming 零改动）
+uv run pytest tests/unit -k "storyboard_dreaming"
+```
+
+门禁现状：五评估器全确定性（三 gate 景别语法/覆盖率/轴规则——与执行前校验同一配置
+规则库 + proxy.emotion_alignment 读预演画面帧像素（`board_render.storyboard_cards`
+同一帧产出函数，帧哈希与渲染元数据校验一致，禁止两套帧）+ judge.script_fit
+ShotList 摘要成对比较，版本号 = 提示词+锚点集+摘要函数三段哈希；gate 短路不跑
+judge，quantize 6 位定点归一）；ShotList 三层执行前校验（引用行存在/场景承接含关键
+行/档位枚举）违规 0 渲染 0 成本；预演渲染编码固定单线程确定性档（同 ShotList 逐字节
+复现）；无偏性 τ≥0.95 为发布阻塞（实测 τ=1.0）；做梦层 agent_id 泛化零改动接入
+（champion 策略 `policies/history/storyboard/` + meta.json 谱系）。
+
+真实预演渲染服务接入是凭证配置的运维动作：`STORYBOARD_RENDER_BASE_URL` /
+`STORYBOARD_RENDER_API_KEY` 环境变量（缺凭证不假装渲染，原则六）。ShotList schema
+（`schema_version=1.0.0`：字段名/枚举值文档化）为视觉线（004）与剪辑线（007）的
+下游接入契约，快照稳定性由 `tests/unit/test_storyboard_replay.py` 断言。
+
 ## 做梦层（功能 005）
 
 ```bash

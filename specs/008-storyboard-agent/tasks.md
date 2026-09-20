@@ -103,10 +103,10 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T832 集成测试 tests/integration/test_storyboard_pg.py（真实 PG：0007 迁移执行、唯一键幂等重建、两段式全链路、成本对账）
-- [ ] T833 [P] 实现端到端演示 ops/demo_storyboard_loop.py（quickstart 六步；断言退出码 0、逐字节一致、gate 短路、τ 达标）
-- [ ] T834 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；**命令与 ci.yml 逐字一致**）
-- [ ] T835 [P] 更新 README.md（分镜闭环用法）与 docs/二期立项书.md 里程碑表（F3 已交付注明）
+- [X] T832 集成测试 tests/integration/test_storyboard_pg.py（真实 PG：0007 迁移执行、唯一键幂等重建、两段式全链路、成本对账）
+- [X] T833 [P] 实现端到端演示 ops/demo_storyboard_loop.py（quickstart 六步；断言退出码 0、逐字节一致、gate 短路、τ 达标）
+- [X] T834 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；**命令与 ci.yml 逐字一致**）
+- [X] T835 [P] 更新 README.md（分镜闭环用法）与 docs/二期立项书.md 里程碑表（F3 已交付注明）
 
 ---
 
