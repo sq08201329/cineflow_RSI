@@ -150,6 +150,40 @@ uv run python ops/demo_visual_loop.py
 真实生成平台接入是凭证配置的运维动作：`VISUAL_GEN_BASE_URL` /
 `VISUAL_GEN_API_KEY`（缺凭证不假装生成，原则六）。
 
+## 声音闭环（功能 006）
+
+```bash
+# 单元测试（执行器/TimingSheet/音频合成/配置/四评估器/合成/回放/做梦接入）
+uv run pytest tests/unit -k sound
+
+# 生成适配器契约套件（三类型 × 双实现同构；真实骨架无凭证跳过）
+uv run pytest tests/contract -k sound
+
+# PG 集成（0005 迁移真实执行 + 两段式落盘全链路 + 分账对账，需 Docker PG）
+uv run pytest tests/integration -k sound -m integration
+
+# 无偏性验收（发布阻塞：回放 vs 真实重跑 τ ≥ 0.95；注入偏差 100% 拒绝）
+uv run pytest tests/unbiasedness -k sound
+
+# 闭环端到端演示（模拟生成器，离线可跑）：
+# 一轮 4 组参数（2 TTS+1 SFX+1 music）落树分账 → 预算门禁 → 幂等 →
+# 四评估器 + gate 短路 + 定点重算 → 无偏性 τ → 做梦首轮基线
+uv run python ops/demo_sound_loop.py
+
+# 声音策略做梦接入（agent_id="sound" 演示档 M=8，dreaming 零改动）
+uv run pytest tests/unit/test_sound_dreaming.py
+```
+
+门禁现状：四评估器全确定性（双 gate 响度分档/音画同步 + 双 proxy
+ASR/情绪匹配，实现哈希入版本号，quantize 6 位定点归一；类型不适用分量
+跳过并按适用权重归一，口径进 config_snapshot.composite_policy）；预算门禁
+按 gen_type 三类型分账（缺价目即报错）；无偏性 τ≥0.95 为发布阻塞；
+做梦层 agent_id 泛化零改动接入（champion 策略
+`policies/history/sound/` + meta.json 谱系）。
+
+真实声音平台接入是凭证配置的运维动作：`SOUND_TTS_*` / `SOUND_SFX_*` /
+`SOUND_MUSIC_*` 环境变量（缺凭证不假装生成，原则六）。
+
 ## 做梦层（功能 005）
 
 ```bash

@@ -97,10 +97,10 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T626 集成测试 tests/integration/test_sound_pg.py（真实 PG：0005 迁移执行、唯一键冲突幂等重建、两段式落盘全链路、分账合计对账）
-- [ ] T627 [P] 实现端到端演示 ops/demo_sound_loop.py（quickstart 六步；断言退出码 0、分账齐全、重算一致）
-- [ ] T628 运行 quickstart.md 全部验证步骤并记录结果（含覆盖率 ≥85% 复核：core+agents+dreaming 口径）
-- [ ] T629 [P] 更新 README.md（声音闭环用法）与 docs/二期立项书.md 里程碑表（F1 已交付注明）
+- [x] T626 集成测试 tests/integration/test_sound_pg.py（真实 PG：0005 迁移执行、唯一键冲突幂等重建、两段式落盘全链路、分账合计对账）
+- [x] T627 [P] 实现端到端演示 ops/demo_sound_loop.py（quickstart 六步；断言退出码 0、分账齐全、重算一致）
+- [x] T628 运行 quickstart.md 全部验证步骤并记录结果（含覆盖率 ≥85% 复核：core+agents+dreaming 口径）
+- [x] T629 [P] 更新 README.md（声音闭环用法）与 docs/二期立项书.md 里程碑表（F1 已交付注明）
 
 ---
 
