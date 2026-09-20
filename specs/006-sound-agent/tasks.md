@@ -12,21 +12,21 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T601 创建 agents/sound/ 包骨架与 configs/movie.yaml 追加 sound 段（exploration_per_round_usd=300、clips_per_round=4、loudness 分档 {dialogue: -27±2, sfx: -30±3, music: -25±3}、av_sync_threshold_ms=120、sample_rate=16000、prices 按类型、simulated_gen 参数）+ evaluator_weights.sound（双 gate + asr 0.5 + emotion 0.5）
-- [ ] T602 [P] conftest 夹具扩展：TimingSheet 工厂（合法/重叠/越界）、声学属性可控的参数工厂（loudness_gain/event_times/cer_injected/情绪向量）、sound 临时库与数据目录夹具
+- [x] T601 创建 agents/sound/ 包骨架与 configs/movie.yaml 追加 sound 段（exploration_per_round_usd=300、clips_per_round=4、loudness 分档 {dialogue: -27±2, sfx: -30±3, music: -25±3}、av_sync_threshold_ms=120、sample_rate=16000、prices 按类型、simulated_gen 参数）+ evaluator_weights.sound（双 gate + asr 0.5 + emotion 0.5）
+- [x] T602 [P] conftest 夹具扩展：TimingSheet 工厂（合法/重叠/越界）、声学属性可控的参数工厂（loudness_gain/event_times/cer_injected/情绪向量）、sound 临时库与数据目录夹具
 
 ## 阶段 2：基础（阻塞性前置条件）
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T603 迁移测试 tests/unit/test_migration_0005.py（先写：sound_gen_jobs schema、唯一键 (round_id, params_hash)、gen_type 枚举约束、GRANT 纪律源码断言）
-- [ ] T604 实现迁移 ops/migrations/versions/0005_sound_gen_jobs.py（0004 同模式自包含 DDL + GRANT；依赖 T603 失败确认）
-- [ ] T605 [P] TimingSheet 测试 tests/unit/test_sound_timing.py（合法构造、重叠拒绝、越界拒绝、start≥end 拒绝）
-- [ ] T606 [P] 实现 agents/sound/timing.py
-- [ ] T607 [P] 音频合成测试 tests/unit/test_sound_audio.py（同参数 wav 逐字节一致、采样率/声道符合配置、属性注入标记随元数据落盘、响度增益可测）
-- [ ] T608 [P] 实现 agents/sound/audio.py（numpy 正弦叠加 + 标准库 wave PCM16）
-- [ ] T609 [P] 配置测试 tests/unit/test_sound_config.py（sound 段解析、价目缺失即报错、响度分档、权重节引用）
-- [ ] T610 [P] 实现 agents/sound/config.py
+- [x] T603 迁移测试 tests/unit/test_migration_0005.py（先写：sound_gen_jobs schema、唯一键 (round_id, params_hash)、gen_type 枚举约束、GRANT 纪律源码断言）
+- [x] T604 实现迁移 ops/migrations/versions/0005_sound_gen_jobs.py（0004 同模式自包含 DDL + GRANT；依赖 T603 失败确认）
+- [x] T605 [P] TimingSheet 测试 tests/unit/test_sound_timing.py（合法构造、重叠拒绝、越界拒绝、start≥end 拒绝）
+- [x] T606 [P] 实现 agents/sound/timing.py
+- [x] T607 [P] 音频合成测试 tests/unit/test_sound_audio.py（同参数 wav 逐字节一致、采样率/声道符合配置、属性注入标记随元数据落盘、响度增益可测）
+- [x] T608 [P] 实现 agents/sound/audio.py（numpy 正弦叠加 + 标准库 wave PCM16）
+- [x] T609 [P] 配置测试 tests/unit/test_sound_config.py（sound 段解析、价目缺失即报错、响度分档、权重节引用）
+- [x] T610 [P] 实现 agents/sound/config.py
 
 **检查点**: 迁移/TimingSheet/音频合成/配置四件套单测通过——用户故事可开始
 
