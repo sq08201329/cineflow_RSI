@@ -66,7 +66,8 @@ class Test镜头分布门禁:
     def test_合法分布通过(self):
         evaluator = ShotDistributionEvaluator(_SHOT_LIMITS)
         result = evaluator.evaluate(
-            _artifact(shot_durations_ms=[500, 3000, 20000]), {}  # 端点含边界
+            _artifact(shot_durations_ms=[500, 3000, 20000]),
+            {},  # 端点含边界
         )
         assert result.score == 1.0
 
@@ -92,18 +93,24 @@ class Test转场门禁:
     def test_非法转场判0(self, ctx, make_edl):
         """C6 场景 3：非法转场组合（wipe 不在规则库）→ gate 判 0。"""
         evaluator = TransitionRulesEvaluator(_RULES)
-        result = evaluator.evaluate(
-            _artifact(), {**ctx, "edl": make_edl("illegal_transition")}
-        )
+        result = evaluator.evaluate(_artifact(), {**ctx, "edl": make_edl("illegal_transition")})
         assert result.score == 0.0
         assert result.diagnostics["violations"]
 
     def test_同区跳切判0(self, ctx, make_edl):
         clips = [
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-            {"shot_id": "shot-2", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
+            {
+                "shot_id": "shot-1",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
+            {
+                "shot_id": "shot-2",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
         ]
         evaluator = TransitionRulesEvaluator(_RULES)
         result = evaluator.evaluate(_artifact(), {**ctx, "edl": make_edl(clips=clips)})
