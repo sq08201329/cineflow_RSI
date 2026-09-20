@@ -30,7 +30,7 @@
 - [x] T711 [P] 配置测试 tests/unit/test_editing_config.py（editing 段解析、基准曲线缺失即报错、价目缺失即报错、judge 锚点集解析）
 - [x] T712 [P] 实现 agents/editing/config.py
 - [x] T713 [P] 摘要函数测试 tests/unit/test_editing_summary.py（EDL → 结构化文本确定性、同 EDL 重算逐字节一致、摘要函数哈希稳定）
-- [ ] T714 [P] 实现 agents/editing/summary.py
+- [x] T714 [P] 实现 agents/editing/summary.py
 
 **检查点**: 迁移/分区/EDL/渲染/配置/摘要六件套单测通过——用户故事可开始
 
