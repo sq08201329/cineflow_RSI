@@ -14,7 +14,6 @@ import pytest
 
 from agents.sound.loop import freeze_round_tree, run_sound_round
 from agents.sound.platform.simulated import SimulatedTTSGen
-from agents.sound.timing import TimingSheet
 from core.calibration.selection import build_blind_list
 from core.evaluators.errors import ValidationError
 from core.replay.pool import SimulatorPool
@@ -85,9 +84,7 @@ def _sound_tree(tree_store, make_tree, make_node, *, score=0.6, children_params=
 def _simulator(tree_store, tree, max_probes=8):
     pool = SimulatorPool(tree_store)
     pool.add_tree(tree)
-    return pool.build(
-        worker_count=1, budget=Budget(max_probes=max_probes), latency_quantum_ms=0
-    )
+    return pool.build(worker_count=1, budget=Budget(max_probes=max_probes), latency_quantum_ms=0)
 
 
 class Test规范化精确匹配:
@@ -150,11 +147,9 @@ class Test零生成审计:
 
 
 class Test周校准纳入:
-    def test_sound_盲评清单正常产出(
-        self, tree_store, make_tree, make_node, calibration_data_dir
-    ):
+    def test_sound_盲评清单正常产出(self, tree_store, make_tree, make_node, calibration_data_dir):
         """C16 场景 4：sound 不触发 promo 特判拒绝，盲评清单正常落盘。"""
-        tree = _sound_tree(tree_store, make_tree, make_node)
+        _sound_tree(tree_store, make_tree, make_node)
         round_ = build_blind_list(
             tree_store,
             agent_id="sound",
@@ -166,9 +161,7 @@ class Test周校准纳入:
         assert round_.agent_id == "sound"
         assert len(round_.node_ids) >= 1
         # 落盘形态：rounds/{agent_id}/{round_id}.json（selection.round_path 口径）
-        blind_file = (
-            Path(calibration_data_dir) / "rounds" / "sound" / f"{round_.round_id}.json"
-        )
+        blind_file = Path(calibration_data_dir) / "rounds" / "sound" / f"{round_.round_id}.json"
         assert blind_file.exists()
 
     def test_promo_特判拒绝回归(self, tree_store, calibration_data_dir):
@@ -216,8 +209,13 @@ class Test冻结入池接线:
     """声音模拟器池接线：轮次树全终态才允许冻结入池（004 freeze_round_tree 同构）。"""
 
     def test_全终态后冻结并入池(
-        self, make_sound_gen_params, make_timing_sheet, tree_store, artifact_store,
-        sound_jobs_engine, sound_config,
+        self,
+        make_sound_gen_params,
+        make_timing_sheet,
+        tree_store,
+        artifact_store,
+        sound_jobs_engine,
+        sound_config,
     ):
         adapters = {"tts": SimulatedTTSGen(sound_config.simulated_gen, sound_config.sample_rate)}
         params = make_sound_gen_params(gen_type="tts", seed=1)
@@ -239,8 +237,13 @@ class Test冻结入池接线:
         assert len(pool.trees) == 1
 
     def test_未到终态拒绝冻结(
-        self, make_sound_gen_params, make_timing_sheet, tree_store, artifact_store,
-        sound_jobs_engine, sound_config,
+        self,
+        make_sound_gen_params,
+        make_timing_sheet,
+        tree_store,
+        artifact_store,
+        sound_jobs_engine,
+        sound_config,
     ):
         from sqlalchemy import insert
 

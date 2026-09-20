@@ -11,8 +11,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-import pytest
-
 from core.replay.pool import SimulatorPool
 from core.tree.models import CostRecord, NodeStatus, new_id
 from dreaming.candidates import MutatorGenerator
