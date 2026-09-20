@@ -64,9 +64,22 @@ def render_frames(gen_params: dict, distribution: dict) -> np.ndarray:
 
 
 def encode_mp4(frames: np.ndarray, fps: int) -> bytes:
-    """imageio-ffmpeg 编码 mp4（参数固定：逐字节可复现）。"""
+    """imageio-ffmpeg 编码 mp4（参数固定：逐字节可复现）。
+
+    编码固定单线程档（threads=1）：x264 多线程编码在负载下的非确定性是
+    一期 test_visual_consistency 偶发 flake 的根因（010/006 运维记录）——
+    007 决策 2 在剪辑渲染器先行消除，此处为安全回移：工件/锚点哈希均为
+    运行时重算（无持久化钉死值），字节变化不影响任何冻结断言。
+    """
     buffer = io.BytesIO()
-    iio.imwrite(buffer, frames, fps=fps, codec="libx264", extension=".mp4")
+    iio.imwrite(
+        buffer,
+        frames,
+        fps=fps,
+        codec="libx264",
+        extension=".mp4",
+        ffmpeg_params=["-threads", "1"],
+    )
     return buffer.getvalue()
 
 
