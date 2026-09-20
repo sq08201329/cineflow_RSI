@@ -174,8 +174,13 @@ class Test执行器接线真实评估器:
     """T621：loop 不注入评估器 → 按 evaluator_weights.sound 装配真实四评估器。"""
 
     def test_真实评估器落树四分量齐全(
-        self, make_sound_gen_params, make_timing_sheet, tree_store, artifact_store,
-        sound_jobs_engine, sound_config,
+        self,
+        make_sound_gen_params,
+        make_timing_sheet,
+        tree_store,
+        artifact_store,
+        sound_jobs_engine,
+        sound_config,
     ):
         adapters = {
             "tts": SimulatedTTSGen(sound_config.simulated_gen, _SR),
@@ -219,9 +224,7 @@ class Test执行器接线真实评估器:
 
         by_type = {n.observation_context["gen_type"]: n for n in children}
         # 类型不适用语义：TTS 节点 emotion 跳过注明；music 节点 asr 跳过注明
-        tts_emotion = next(
-            f for k, f in by_type["tts"].eval_breakdown.items() if "emotion" in k
-        )
+        tts_emotion = next(f for k, f in by_type["tts"].eval_breakdown.items() if "emotion" in k)
         assert tts_emotion["diagnostics"]["applicable"] is False
         music_asr = next(f for k, f in by_type["music"].eval_breakdown.items() if "asr" in k)
         assert music_asr["diagnostics"]["applicable"] is False
@@ -229,8 +232,13 @@ class Test执行器接线真实评估器:
         assert by_type["tts"].score == pytest.approx(1.0)
 
     def test_重评估逐位一致(
-        self, make_sound_gen_params, make_timing_sheet, tree_store, artifact_store,
-        sound_jobs_engine, sound_config,
+        self,
+        make_sound_gen_params,
+        make_timing_sheet,
+        tree_store,
+        artifact_store,
+        sound_jobs_engine,
+        sound_config,
     ):
         """SC-004：同参数二次生成同一工件，真实评估器重评分逐位一致。"""
         evaluators = build_sound_evaluators(sound_config)

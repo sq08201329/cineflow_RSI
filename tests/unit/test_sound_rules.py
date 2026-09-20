@@ -7,8 +7,6 @@ C5 音画同步（gate）：event_times vs TimingSheet，max |偏差| ≤ av_syn
 80ms 过、200ms 判 0；纯音乐无事件"不适用"注明。
 """
 
-import io
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -124,9 +122,7 @@ class Test响度合规:
         second = loudness_evaluator.evaluate(_ARTIFACT, ctx)
         assert first.score == second.score
         assert first.diagnostics == second.diagnostics  # SC-004 重评估逐位一致
-        assert first.diagnostics["measured_lufs"] == round(
-            first.diagnostics["measured_lufs"], 6
-        )
+        assert first.diagnostics["measured_lufs"] == round(first.diagnostics["measured_lufs"], 6)
 
 
 class Test音画同步:
@@ -153,9 +149,7 @@ class Test音画同步:
         assert result.diagnostics["violations"]
 
     def test_多事件取最大偏差(self, av_sync_evaluator, make_timing_sheet):
-        result = av_sync_evaluator.evaluate(
-            _ARTIFACT, self._ctx([0.0, 100.0], make_timing_sheet)
-        )
+        result = av_sync_evaluator.evaluate(_ARTIFACT, self._ctx([0.0, 100.0], make_timing_sheet))
         assert result.score == 1.0
         assert result.diagnostics["max_deviation_ms"] == pytest.approx(100.0)
 

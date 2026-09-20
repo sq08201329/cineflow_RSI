@@ -59,7 +59,10 @@ class LoudnessComplianceEvaluator(Evaluator):
         if lufs is None:
             return EvalResult(
                 score=1.0,  # 不适用不伪造违规：gate 放行并注明（规格边界情况）
-                diagnostics={"applicable": False, "note": "静音/极短音频，响度不适用（不伪造得分）"},
+                diagnostics={
+                    "applicable": False,
+                    "note": "静音/极短音频，响度不适用（不伪造得分）",
+                },
             )
         gen_type = context.get("gen_type", "tts")
         tier = _TIER_BY_GEN_TYPE.get(gen_type, "dialogue")
