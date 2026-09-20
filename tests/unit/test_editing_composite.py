@@ -49,8 +49,11 @@ def _config_dict() -> dict:
 
 
 @pytest.fixture()
-def evaluators(editing_config, mock_gateway):
-    return build_editing_evaluators(editing_config, mock_gateway)
+def evaluators(mock_gateway):
+    """编排测试用评估器：时长窗口放宽覆盖夹具成片（11.5s~16.75s）。"""
+    from agents.editing.config import EditingConfig
+
+    return build_editing_evaluators(EditingConfig.from_dict(_config_dict()), mock_gateway)
 
 
 @pytest.fixture()
@@ -109,9 +112,7 @@ class Test合成函数:
 class Test合成编排:
     def test_全过则五分量齐全且_judge_计费(self, evaluators, mock_gateway, ctx):
         before = mock_gateway.call_count
-        breakdown, score, judge_usage = evaluate_editing(
-            evaluators, _artifact(), ctx, _WEIGHTS
-        )
+        breakdown, score, judge_usage = evaluate_editing(evaluators, _artifact(), ctx, _WEIGHTS)
         assert len(breakdown) == 5  # 三 gate + pacing + judge
         assert mock_gateway.call_count - before == 6  # 3 提示词 × 2 锚点
         assert judge_usage["llm_calls"] == 6
@@ -146,9 +147,7 @@ class Test注册元数据:
         for spec in specs:
             assert spec.deterministic is True
             assert spec.cost_per_call >= 0.0  # 显式声明（judge > 0）
-        assert (
-            next(s for s in specs if s.evaluator_id == "judge.narrative_flow").cost_per_call > 0
-        )
+        assert next(s for s in specs if s.evaluator_id == "judge.narrative_flow").cost_per_call > 0
 
     def test_对比样本_与004视觉系同构(self, evaluators, visual_config):
         """同工件经新旧评估器各评一次：得分域 [0,1] 与 diagnostics dict 结构一致。"""
@@ -182,8 +181,19 @@ class Test执行器接线:
     def adapter(self, editing_config_small):
         return SimulatedEditRenderer(editing_config_small.render)
 
-    def _run(self, round_id, edls, tree_store, artifact_store, adapter, engine, cfg,
-             library, structure, gateway):
+    def _run(
+        self,
+        round_id,
+        edls,
+        tree_store,
+        artifact_store,
+        adapter,
+        engine,
+        cfg,
+        library,
+        structure,
+        gateway,
+    ):
         class _Policy:
             policy_version = "stub-editing-v1"
 
@@ -204,14 +214,30 @@ class Test执行器接线:
         )
 
     def test_真实五评估器落树(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        editing_config_small, make_shot_library, make_scene_structure, mock_gateway,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        editing_config_small,
+        make_shot_library,
+        make_scene_structure,
+        mock_gateway,
     ):
         library = make_shot_library()
         structure = make_scene_structure(library=library)
         result = self._run(
-            "us2-1", [make_edl()], tree_store, artifact_store, adapter,
-            editing_jobs_engine, editing_config_small, library, structure, mock_gateway,
+            "us2-1",
+            [make_edl()],
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            editing_config_small,
+            library,
+            structure,
+            mock_gateway,
         )
         assert result.jobs[0]["status"] == "inserted"
         nodes = [n for n in tree_store.nodes_of(result.tree_id) if n.parent_id is not None]
@@ -225,22 +251,48 @@ class Test执行器接线:
         assert tree.config_snapshot["composite_policy"] == COMPOSITE_POLICY
 
     def test_gate违规节点judge未调用(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        editing_config_small, make_shot_library, make_scene_structure, mock_gateway,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        editing_config_small,
+        make_shot_library,
+        make_scene_structure,
+        mock_gateway,
     ):
         """含 300ms 镜头（< min_shot_ms 500）→ 分布 gate 判 0：总分 0 且网关 0 调用。"""
         library = make_shot_library()
         structure = make_scene_structure(library=library)
-        bad_edl = make_edl(clips=[
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 300,  # 300ms 碎片化镜头
-             "transition": {"type": "cut", "duration_ms": 0}},
-            {"shot_id": "shot-5", "in_ms": 0, "out_ms": 6000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-        ])
+        bad_edl = make_edl(
+            clips=[
+                {
+                    "shot_id": "shot-1",
+                    "in_ms": 0,
+                    "out_ms": 300,  # 300ms 碎片化镜头
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
+                {
+                    "shot_id": "shot-5",
+                    "in_ms": 0,
+                    "out_ms": 6000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
+            ]
+        )
         before = mock_gateway.call_count
         result = self._run(
-            "us2-2", [bad_edl], tree_store, artifact_store, adapter,
-            editing_jobs_engine, editing_config_small, library, structure, mock_gateway,
+            "us2-2",
+            [bad_edl],
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            editing_config_small,
+            library,
+            structure,
+            mock_gateway,
         )
         assert result.jobs[0]["status"] == "inserted"  # 非法≠失败：如实落树判 0
         nodes = [n for n in tree_store.nodes_of(result.tree_id) if n.parent_id is not None]

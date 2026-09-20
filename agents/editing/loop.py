@@ -23,10 +23,17 @@ from sqlalchemy.engine import Engine
 from agents.editing.config import EditingConfig
 from agents.editing.db import edit_render_jobs
 from agents.editing.edl import EditDecisionList, validate_edl
+from agents.editing.evaluators import build_editing_evaluators
+from agents.editing.evaluators.composite import (
+    COMPOSITE_POLICY,
+    composite_editing,
+    evaluate_editing,
+)
 from agents.editing.platform.base import EditRenderAdapter, RenderError
 from agents.editing.shots import SceneStructure, ShotLibrary
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
+from core.llm_gateway.gateway import LLMGateway
 from core.tree.artifacts import ArtifactStore
 from core.tree.errors import DuplicateError, ValidationError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
@@ -125,14 +132,23 @@ def run_editing_round(
     engine: Engine,
     config: EditingConfig,
     inputs: dict,
-    evaluators: list[Evaluator] | None = None,
+    evaluators: list[Evaluator] | dict | None = None,
+    gateway: LLMGateway | None = None,
 ) -> EditingRoundResult:
-    """执行一轮剪辑线上探索（全流程幂等）。"""
+    """执行一轮剪辑线上探索（全流程幂等）。
+
+    evaluators：None → 默认装配真实五评估器（build_editing_evaluators，需 gateway）；
+    dict（{"gates","pacing","judge","all"}）→ 真实编排（gate 短路不跑 judge）；
+    list → 评估器桩注入路径（测试/无偏性回放，面向评估器协议编程）。
+    """
     # 0) 输入与素材预检先于一切副作用（适配器 0 调用、0 成本、0 落库）
     library, structure = _validate_inputs(inputs)
-    # 评估器装配：US1 显式注入桩（面向评估器协议编程）；T727 接线真实五评估器
+    # 评估器装配：缺省按 evaluator_weights.editing 装配真实五评估器（T727 接线）；
+    # 显式注入用于测试桩/无偏性回放（US1 取舍：面向评估器协议编程）
     if evaluators is None:
-        raise EditingLoopError("US1 执行器必须显式注入评估器（US2 接线真实五评估器）")
+        if gateway is None:
+            raise EditingLoopError("装配真实五评估器必须提供 LLM 网关（judge 计费路径）")
+        evaluators = build_editing_evaluators(config, gateway)
 
     tree_id = round_tree_id(round_id)
     root_id = _round_root_id(round_id)
@@ -262,13 +278,14 @@ def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> Discov
     return matches[0]
 
 
-def _config_snapshot(config: EditingConfig, evaluators: list[Evaluator]) -> dict:
+def _config_snapshot(config: EditingConfig, evaluators: list[Evaluator] | dict) -> dict:
     """快照冻结：权重 + 评估器版本组合 + 观测白名单 + 剪辑口径配置。"""
+    all_evaluators = evaluators["all"] if isinstance(evaluators, dict) else evaluators
     return {
         "evaluator_weights": config.evaluator_weights,
-        "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in evaluators},
+        "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in all_evaluators},
         "observation_fields": ["edl", "edl_hash", "job_id"],
-        "composite_policy": "us1-stub-weighted-mean",  # US1 桩口径（T727 替换真实合成）
+        "composite_policy": COMPOSITE_POLICY,  # 合成归一口径进版本元信息（C9）
         "transition_rules": config.transition_rules,
         "shot_limits": config.shot_limits,
         "target_duration_s": config.target_duration_s,
@@ -519,15 +536,22 @@ def _run_job(
         "config": config,
     }
     try:
-        breakdown = {}
-        for evaluator in evaluators:
-            result = evaluator.evaluate(artifact_ref, ctx)
-            breakdown[evaluator.spec.key] = {
-                "score": result.score,
-                "diagnostics": result.diagnostics,
-            }
-        # 合成：gate 短路 + 适用分量加权归一 → quantize 6 位定点
-        score = quantize_score(_composite_score(breakdown, config.evaluator_weights))
+        if isinstance(evaluators, dict):
+            # 真实五评估器编排（C9：gate 短路不跑 judge；judge 计费用量入节点成本）
+            breakdown, score, judge_usage = evaluate_editing(
+                evaluators, artifact_ref, ctx, config.evaluator_weights
+            )
+        else:
+            # 评估器桩注入路径（US1 测试/无偏性回放）：逐评估器打分 + 正式合成
+            breakdown = {}
+            for evaluator in evaluators:
+                result = evaluator.evaluate(artifact_ref, ctx)
+                breakdown[evaluator.spec.key] = {
+                    "score": result.score,
+                    "diagnostics": result.diagnostics,
+                }
+            score = quantize_score(composite_editing(breakdown, config.evaluator_weights))
+            judge_usage = {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
         node_id = _append_edl_node(
             store,
             tree_id=tree_id,
@@ -541,8 +565,10 @@ def _run_job(
             score=score,
             breakdown=breakdown,
             cost=CostRecord(
+                llm_calls=judge_usage["llm_calls"],
+                llm_tokens=judge_usage["llm_tokens"],
                 generation_api_calls=1,
-                generation_api_cost_usd=film.actual_cost_usd,
+                generation_api_cost_usd=film.actual_cost_usd + judge_usage["cost_usd"],
             ),
             reason=None,
         )
@@ -574,29 +600,6 @@ def _run_job(
             "reason": f"评估器崩溃：{exc}",
             "edl_hash": edl_hash,
         }
-
-
-def _composite_score(breakdown: dict, weights: dict) -> float:
-    """US1 临时合成口径（T727 替换为 evaluators/composite.py 真实五评估器合成）。
-
-    gate 短路（gate 分量 score=0 → 总分 0）+ 适用分量加权归一
-    （未装配/不适用分量跳过，分母为适用权重和）。
-    """
-    by_id = {key.split("@")[0]: entry["score"] for key, entry in breakdown.items()}
-    total_weight = 0.0
-    acc = 0.0
-    for evaluator_id, weight in weights.items():
-        if evaluator_id not in by_id:
-            continue  # 分量未装配/不适用：跳过（归一分母不含其权重）
-        score = by_id[evaluator_id]
-        if str(weight).lower() == "gate":
-            if score <= 0.0:
-                return 0.0  # gate 短路
-            continue
-        w = float(weight)
-        acc += w * score
-        total_weight += w
-    return acc / total_weight if total_weight > 0 else 0.0
 
 
 class _BudgetExceeded(Exception):
