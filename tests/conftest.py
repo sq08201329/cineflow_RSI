@@ -1130,3 +1130,376 @@ def storyboard_config():
 
     path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
     return StoryboardConfig.from_yaml(path)
+
+
+# ---------------------------------------------------------------------------
+# 功能 009（剧本 Agent 降级模式）夹具：ScriptArtifact 工厂（三段 outline/scenes/script
+# + 结构化标记：节拍清单/场景头/角色表含别名/行）+ 七类缺陷变体（节拍缺失/页数越界/
+# 幽灵角色/地点不一致/比例失衡/同名异写/时间线矛盾）+ 人工策略源码 + 临时库/目录/配置
+# ---------------------------------------------------------------------------
+
+# 节拍表（与 configs/movie.yaml 的 screenplay.beat_sheet 同源；required 才必需，
+# theme_stated 为可选节拍——合法工件可不含，约束见 tests/unit/test_screenplay_config.py）
+_SCREENPLAY_REQUIRED_BEATS = [
+    ("opening_image", "act1"),
+    ("inciting_incident", "act1"),
+    ("act1_turn", "act1"),
+    ("midpoint", "act2"),
+    ("dark_night", "act2"),
+    ("act2_turn", "act2"),
+    ("climax", "act3"),
+    ("resolution", "act3"),
+]
+_SCREENPLAY_OPTIONAL_BEATS = [("theme_stated", "act1")]
+
+# 角色表（含别名；归一化口径 = name ∪ aliases，proxy.entity_consistency 依据）
+_SCREENPLAY_CHARACTERS = [
+    {"name": "林静", "aliases": ["阿静"]},
+    {"name": "陈默", "aliases": ["默哥"]},
+    {"name": "周医生", "aliases": []},
+]
+
+# 场景头（heading = "{内景|外景} - {地点} - {时间描述}"，地点段与 location 字段机检一致）
+_SCREENPLAY_SCENES = [
+    {
+        "scene_id": "scene-1",
+        "prefix": "内景",
+        "location": "病房",
+        "time_desc": "夜",
+        "time_marker": 0,  # 剧内时间戳（分钟，非降序 —— proxy.timeline_conflict 口径）
+        "characters": ["林静", "陈默", "周医生"],
+        "axis_base": "A",
+    },
+    {
+        "scene_id": "scene-2",
+        "prefix": "内景",
+        "location": "走廊",
+        "time_desc": "夜",
+        "time_marker": 30,
+        "characters": ["林静", "周医生"],
+        "axis_base": "A",
+    },
+    {
+        "scene_id": "scene-3",
+        "prefix": "外景",
+        "location": "天台",
+        "time_desc": "清晨",
+        "time_marker": 75,
+        "characters": ["陈默", "林静"],
+        "axis_base": "B",  # 与 008 ScriptScene.axis_base 同域（A|B）
+    },
+]
+
+# 每场景 3 行基准（对白 6 / 动作 3 → 对白行占比 0.667 ∈ 配置区间 [0.4, 0.8]；
+# 关键行 3 条 = 导出 008 必覆盖清单；行情绪取 008 情绪向量表同域取值，s2-l3 无标注）
+_SCREENPLAY_LINES = [
+    {  # scene-1
+        "dialogue": {"character": "林静", "text": "你醒了。", "key": False, "emotion": "tense"},
+        "action": {
+            "character": "陈默",
+            "text": "陈默伸手去够床头的病历本，输液管绷紧。",
+            "key": True,
+            "emotion": "tense",
+        },
+        "closing": {
+            "character": "周医生",
+            "text": "别乱动，伤口还没长好。",
+            "key": False,
+            "emotion": "calm",
+        },
+    },
+    {  # scene-2
+        "dialogue": {
+            "character": "林静",
+            "text": "他到底瞒了我多久？",
+            "key": False,
+            "emotion": "sorrow",
+        },
+        "action": {
+            "character": None,  # 群体动作：动作行允许无归属主体
+            "text": "走廊尽头的灯一盏一盏亮起来。",
+            "key": True,
+            "emotion": "tense",
+        },
+        "closing": {
+            "character": "周医生",
+            "text": "三个月。他让我们都不要说。",
+            "key": False,
+            "emotion": None,  # 情绪无标注（不适用路径，导出后 008 侧同样可缺）
+        },
+    },
+    {  # scene-3
+        "dialogue": {
+            "character": "陈默",
+            "text": "我本想等手术结束再告诉你。",
+            "key": False,
+            "emotion": "sorrow",
+        },
+        "action": {
+            "character": None,
+            "text": "风把两人的外套吹得鼓起。",
+            "key": False,
+            "emotion": "awe",
+        },
+        "closing": {
+            "character": "林静",
+            "text": "以后不用一个人扛。",
+            "key": True,
+            "emotion": "joyful",
+        },
+    },
+]
+_SCREENPLAY_FILLER_EMOTIONS = ("calm", "tense", "sorrow", "joyful", "awe")
+
+
+@pytest.fixture()
+def make_script_artifact():
+    """ScriptArtifact 工厂（功能 009 / T902）：三段工件 + 结构化标记 + 七类缺陷变体。
+
+    结构：beats（节拍清单，默认含全部 required 节拍）+ scenes（场景头，含 location/
+    time_marker/出场角色/axis_base）+ characters（角色表含 aliases）+ lines（行含归属
+    角色/关键行标注/情绪）。默认 3 场景 × 3 行 = 9 行（对白 6 / 动作 3 → 占比 0.667）。
+
+    - stage：outline / scenes / script（三段共用同一结构化标记，落树时各自独立节点）；
+    - lines_per_scene：每场景行数（默认 3；超出基准行的部分按模板补齐，行 id 连续）；
+    - pages + lines_per_page：按页数生成长形态工件（总行数 = pages × lines_per_page，
+      需能被场景数整除；用于页数门禁的界内/界外对照）；
+    - 变体（缺陷各只注入一类，其余保持合法）：
+      * missing_beat：缺关键节拍 climax（required 缺失，rule.beat_structure 判 0）；
+      * page_out_of_range：行数 × 3（页数约为基准 3 倍，越出目标 ± 容差）；
+      * ghost_character：scene-2 出场角色与 s2-l3 归属角色改为未登记"赵护士"；
+      * location_mismatch：scene-2 场景头地点段"病房"与 location 字段"走廊"不一致；
+      * ratio_imbalance：全部行改为对白（对白行占比 1.0 > 上限 0.8）；
+      * entity_variant：s1-l1 归属角色改为"小静"（未登记、与登记名"林静"同源的异写）；
+      * timeline_conflict：scene-3 时间戳 75 → 5（相对 scene-2 的 30 回退，时间线矛盾）。
+    字段可被调用方整体覆盖（beats/scenes/characters/lines/text/stage/schema_version）。
+    """
+    from agents.screenplay.artifact import ScriptArtifact
+
+    def _make(
+        variant: str = "valid",
+        *,
+        stage: str = "outline",
+        lines_per_scene: int = 3,
+        pages: int | None = None,
+        lines_per_page: int = 45,
+        **overrides,
+    ):
+        import copy
+
+        scenes_spec = copy.deepcopy(_SCREENPLAY_SCENES)
+        if pages is not None:
+            total = pages * lines_per_page
+            if total % len(scenes_spec):
+                raise ValueError("pages × lines_per_page 必须能被场景数整除（夹具约束）")
+            lines_per_scene = total // len(scenes_spec)
+        if variant == "page_out_of_range":
+            lines_per_scene *= 3
+
+        beats = [
+            {
+                "beat_id": beat_id,
+                "act": act,
+                "required": True,
+                "description": f"节拍 {beat_id} 的结构要求（夹具）",
+            }
+            for beat_id, act in _SCREENPLAY_REQUIRED_BEATS
+        ]
+        if variant == "missing_beat":
+            beats = [beat for beat in beats if beat["beat_id"] != "climax"]
+
+        if variant == "ghost_character":
+            scenes_spec[1]["characters"] = [*scenes_spec[1]["characters"], "赵护士"]
+
+        scenes, lines = [], []
+        for index, scene in enumerate(scenes_spec):
+            heading_location = scene["location"]
+            if variant == "location_mismatch" and scene["scene_id"] == "scene-2":
+                heading_location = "病房"  # 场景头地点段与 location 字段不一致
+            scenes.append(
+                {
+                    "scene_id": scene["scene_id"],
+                    "heading": f"{scene['prefix']} - {heading_location} - {scene['time_desc']}",
+                    "location": scene["location"],
+                    "time_marker": scene["time_marker"],
+                    "characters": list(scene["characters"]),
+                    "axis_base": scene["axis_base"],
+                }
+            )
+            if variant == "timeline_conflict" and scene["scene_id"] == "scene-3":
+                scenes[-1]["time_marker"] = 5  # 相对 scene-2（30）回退 → 时间线矛盾
+
+            base = _SCREENPLAY_LINES[index]
+            scene_lines = [
+                {"kind": "dialogue", **base["dialogue"]},
+                {"kind": "action", **base["action"]},
+                {"kind": "dialogue", **base["closing"]},
+            ]
+            for extra in range(3, lines_per_scene):
+                name = scene["characters"][extra % len(scene["characters"])]
+                is_dialogue = extra % 3 != 0
+                scene_lines.append(
+                    {
+                        "kind": "dialogue" if is_dialogue else "action",
+                        "character": name,
+                        "text": (
+                            f"（续）{name}把话说完：这一夜还没结束。"
+                            if is_dialogue
+                            else f"（续）{name}的动作接续：灯光晃了晃。"
+                        ),
+                        "key": False,
+                        "emotion": _SCREENPLAY_FILLER_EMOTIONS[
+                            extra % len(_SCREENPLAY_FILLER_EMOTIONS)
+                        ],
+                    }
+                )
+            for offset, line in enumerate(scene_lines, start=1):
+                line_id = f"s{index + 1}-l{offset}"
+                if variant == "ghost_character" and line_id == "s2-l3":
+                    line["character"] = "赵护士"  # 幽灵角色出现在行归属（未登记）
+                if variant == "entity_variant" and line_id == "s1-l1":
+                    line["character"] = "小静"  # 同名异写：未登记但与"林静"同源的写法
+                if variant == "ratio_imbalance":
+                    line["kind"] = "dialogue"  # 比例失衡：对白行占比 1.0
+                lines.append({"line_id": line_id, "scene_id": scene["scene_id"], **line})
+
+        payload = {
+            "schema_version": "1.0.0",
+            "stage": stage,
+            "text": (
+                f"（{stage} 阶段文本）病房的夜与天台的清晨之间，"
+                "陈默藏了三个月的手术通知，林静必须决定要不要拆穿。"
+            ),
+            "beats": beats,
+            "scenes": scenes,
+            "characters": copy.deepcopy(_SCREENPLAY_CHARACTERS),
+            "lines": lines,
+        }
+        payload.update(overrides)
+        return ScriptArtifact.from_dict(payload)
+
+    return _make
+
+
+@pytest.fixture()
+def script_artifact(make_script_artifact):
+    """默认合法剧本工件（outline 阶段，3 场景 9 行）。"""
+    return make_script_artifact()
+
+
+@pytest.fixture()
+def make_script_artifacts(make_script_artifact):
+    """三段工件工厂：{"outline": ..., "scenes": ..., "script": ...}（同一结构化标记）。"""
+    counter = {"n": 0}
+
+    def _make(variant: str = "valid", **overrides):
+        counter["n"] += 1
+        return {
+            stage: make_script_artifact(
+                variant,
+                stage=stage,
+                text=f"{stage} 阶段文本（第 {counter['n']} 轮）",
+                **overrides,
+            )
+            for stage in ("outline", "scenes", "script")
+        }
+
+    return _make
+
+
+@pytest.fixture()
+def screenplay_policy_source():
+    """人工剧本策略源码工厂（功能 009 / C13）：静态检查必过的合法策略 + 违规变体。
+
+    - valid（默认）：纯计算（无白名单外 import）+ Policy 类 + produce(inputs, budget)；
+    - forbidden_import：`import socket`（白名单外 import，静态检查拒绝）；
+    - forbidden_call：`open(...)` 文件 IO（危险内建，静态检查拒绝）；
+    - bad_signature：produce 缺 budget 参数（接口签名检查拒绝，T929 提交通道）。
+
+    策略接口（produce 的输入输出形态）在 T914 执行器定案；本夹具锁定静态检查与
+    版本化所需形态（可导入 + 可 AST 扫描）。
+    """
+
+    def _make(variant: str = "valid", *, scene_count: int = 3):
+        header = ""
+        if variant == "forbidden_import":
+            header = "import socket\n\n"
+        body_io = (
+            '        with open("outline.json", "w") as handle:\n'
+            "            handle.write(str(grid))\n"
+            if variant == "forbidden_call"
+            else ""
+        )
+        signature = (
+            "    def produce(self, inputs):\n"
+            if variant == "bad_signature"
+            else "    def produce(self, inputs, budget):\n"
+        )
+        return f'''{header}class Policy:
+    """人工剧本策略（降级模式：策略由人编写，不自动进化）。"""
+
+    # 节拍优先序：先写哪条线（开场→激励→转折→中点→黑夜→决意→高潮→结局）
+    BEAT_ORDER = (
+        "opening_image",
+        "inciting_incident",
+        "act1_turn",
+        "midpoint",
+        "dark_night",
+        "act2_turn",
+        "climax",
+        "resolution",
+    )
+
+{signature}        target_minutes = inputs["target_duration_min"]
+        scenes = max(1, min(12, inputs.get("scene_count", {scene_count})))
+        grid = []
+        for index in range(scenes):
+            position = (index + 0.5) / scenes
+            slot = min(len(self.BEAT_ORDER) - 1, int(position * len(self.BEAT_ORDER)))
+            grid.append(
+                {{
+                    "scene": index + 1,
+                    "position": position,
+                    "beat": self.BEAT_ORDER[slot],
+                    "weight": 1.0 + position,
+                }}
+            )
+{body_io}        return {{
+            "beats": list(self.BEAT_ORDER),
+            "grid": grid,
+            "target_minutes": target_minutes,
+        }}
+'''
+
+    return _make
+
+
+@pytest.fixture()
+def screenplay_jobs_engine():
+    """剧本运营表夹具：SQLite 内存库建 screenplay_jobs（可变表，无 immutable 触发器）。"""
+    from agents.screenplay.db import create_jobs_schema
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_jobs_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def screenplay_data_dir(tmp_path):
+    """剧本临时数据目录夹具：artifacts（内容寻址工件）/rounds（轮次收口落盘）两层结构。"""
+    base = tmp_path / "screenplay"
+    for sub in ("artifacts", "rounds"):
+        (base / sub).mkdir(parents=True)
+    return base
+
+
+@pytest.fixture()
+def screenplay_config():
+    """剧本形态配置夹具：直接读 configs/movie.yaml 的 screenplay 段（真实配置路径）。"""
+    from pathlib import Path
+
+    from agents.screenplay.config import ScreenplayConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return ScreenplayConfig.from_yaml(path)
