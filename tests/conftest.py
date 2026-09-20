@@ -1409,65 +1409,133 @@ def make_script_artifacts(make_script_artifact):
 
 @pytest.fixture()
 def screenplay_policy_source():
-    """人工剧本策略源码工厂（功能 009 / C13）：静态检查必过的合法策略 + 违规变体。
+    """人工剧本策略源码工厂（功能 009 / T914 定案接口 + C13 提交通道）：合法策略 + 违规变体。
 
-    - valid（默认）：纯计算（无白名单外 import）+ Policy 类 + produce(inputs, budget)；
+    策略接口（T914 定案）：`plan(inputs, config)` 产**分阶段计划**
+    `{stage: {beats, scenes, characters, lines}}`——节拍取自配置节拍表的 required 项
+    （策略不重复声明门禁口径），场景/角色/行由人编写的结构探索工艺给出；三阶段
+    逐级细化（每场行数随阶段递增）。
+
+    - valid（默认）：纯计算（无白名单外 import）+ Policy 类 + plan(inputs, config)；
     - forbidden_import：`import socket`（白名单外 import，静态检查拒绝）；
     - forbidden_call：`open(...)` 文件 IO（危险内建，静态检查拒绝）；
-    - bad_signature：produce 缺 budget 参数（接口签名检查拒绝，T929 提交通道）。
+    - bad_signature：plan 缺 config 参数（接口签名检查拒绝，T929 提交通道）。
 
-    策略接口（produce 的输入输出形态）在 T914 执行器定案；本夹具锁定静态检查与
-    版本化所需形态（可导入 + 可 AST 扫描）。
+    静态检查口径（002）：策略源码不得有白名单外 import、危险内建、私有/dunder 属性访问
+    ——故策略只暴露公开方法（stage_markers 而非 _markers）。
     """
 
-    def _make(variant: str = "valid", *, scene_count: int = 3):
+    def _make(variant: str = "valid"):
         header = ""
         if variant == "forbidden_import":
             header = "import socket\n\n"
         body_io = (
             '        with open("outline.json", "w") as handle:\n'
-            "            handle.write(str(grid))\n"
+            "            handle.write(str(plans))\n"
             if variant == "forbidden_call"
             else ""
         )
         signature = (
-            "    def produce(self, inputs):\n"
+            "    def plan(self, inputs):\n"
             if variant == "bad_signature"
-            else "    def produce(self, inputs, budget):\n"
+            else "    def plan(self, inputs, config):\n"
         )
         return f'''{header}class Policy:
     """人工剧本策略（降级模式：策略由人编写，不自动进化）。"""
 
-    # 节拍优先序：先写哪条线（开场→激励→转折→中点→黑夜→决意→高潮→结局）
-    BEAT_ORDER = (
-        "opening_image",
-        "inciting_incident",
-        "act1_turn",
-        "midpoint",
-        "dark_night",
-        "act2_turn",
-        "climax",
-        "resolution",
+    # 场景网格：场景头（内景/外景 - 地点 - 时间）+ 剧内时间戳 + 出场角色 + 轴向基准
+    SCENES = (
+        {{
+            "scene_id": "scene-1",
+            "prefix": "内景",
+            "location": "病房",
+            "time_desc": "夜",
+            "time_marker": 0,
+            "cast": ("林静", "陈默", "周医生"),
+            "axis_base": "A",
+        }},
+        {{
+            "scene_id": "scene-2",
+            "prefix": "内景",
+            "location": "走廊",
+            "time_desc": "夜",
+            "time_marker": 30,
+            "cast": ("林静", "周医生"),
+            "axis_base": "A",
+        }},
+        {{
+            "scene_id": "scene-3",
+            "prefix": "外景",
+            "location": "天台",
+            "time_desc": "清晨",
+            "time_marker": 75,
+            "cast": ("陈默", "林静"),
+            "axis_base": "B",
+        }},
     )
+    CHARACTERS = (
+        {{"name": "林静", "aliases": ["阿静"]}},
+        {{"name": "陈默", "aliases": ["默哥"]}},
+        {{"name": "周医生", "aliases": []}},
+    )
+    EMOTIONS = ("calm", "tense", "sorrow", "joyful", "awe")
+    # 阶段细化深度：每场行数（大纲 → 分场 → 剧本逐级细化）
+    LINES_PER_SCENE = {{"outline": 2, "scenes": 2, "script": 3}}
 
-{signature}        target_minutes = inputs["target_duration_min"]
-        scenes = max(1, min(12, inputs.get("scene_count", {scene_count})))
-        grid = []
-        for index in range(scenes):
-            position = (index + 0.5) / scenes
-            slot = min(len(self.BEAT_ORDER) - 1, int(position * len(self.BEAT_ORDER)))
-            grid.append(
+{signature}        beats = [
+            {{
+                "beat_id": beat["beat_id"],
+                "act": beat["act"],
+                "required": beat["required"],
+                "description": beat["description"],
+            }}
+            for beat in config.beat_sheet
+            if beat["required"]
+        ]
+        return {{
+            stage: self.stage_markers(stage, inputs, beats)
+            for stage in self.LINES_PER_SCENE
+        }}
+
+    def stage_markers(self, stage, inputs, beats):
+        scenes = []
+        lines = []
+        for index, scene in enumerate(self.SCENES):
+            scenes.append(
                 {{
-                    "scene": index + 1,
-                    "position": position,
-                    "beat": self.BEAT_ORDER[slot],
-                    "weight": 1.0 + position,
+                    "scene_id": scene["scene_id"],
+                    "heading": " - ".join(
+                        (scene["prefix"], scene["location"], scene["time_desc"])
+                    ),
+                    "location": scene["location"],
+                    "time_marker": scene["time_marker"],
+                    "characters": list(scene["cast"]),
+                    "axis_base": scene["axis_base"],
                 }}
             )
+            for offset in range(self.LINES_PER_SCENE[stage]):
+                name = scene["cast"][offset % len(scene["cast"])]
+                is_dialogue = offset % 2 == 0
+                lines.append(
+                    {{
+                        "line_id": "s" + str(index + 1) + "-l" + str(offset + 1),
+                        "scene_id": scene["scene_id"],
+                        "kind": "dialogue" if is_dialogue else "action",
+                        "text": (
+                            name + "把话说完（" + stage + " 阶段）。"
+                            if is_dialogue
+                            else name + "在" + scene["location"] + "留下一个动作。"
+                        ),
+                        "character": name,
+                        "key": offset == 0,
+                        "emotion": self.EMOTIONS[(index + offset) % len(self.EMOTIONS)],
+                    }}
+                )
 {body_io}        return {{
-            "beats": list(self.BEAT_ORDER),
-            "grid": grid,
-            "target_minutes": target_minutes,
+            "beats": beats,
+            "scenes": scenes,
+            "characters": [dict(character) for character in self.CHARACTERS],
+            "lines": lines,
         }}
 '''
 
@@ -1477,8 +1545,9 @@ def screenplay_policy_source():
 @pytest.fixture()
 def screenplay_jobs_engine():
     """剧本运营表夹具：SQLite 内存库建 screenplay_jobs（可变表，无 immutable 触发器）。"""
-    from agents.screenplay.db import create_jobs_schema
     from sqlalchemy import create_engine
+
+    from agents.screenplay.db import create_jobs_schema
 
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_jobs_schema(engine)
