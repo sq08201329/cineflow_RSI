@@ -14,12 +14,12 @@ from agents.editing.config import EditingConfigError
 from agents.editing.evaluators.pacing import PacingCurveEvaluator
 from core.evaluators.base import ArtifactRef, EvaluatorKind
 
-# 测试基准：两段等分（前段 mean 2100/var 10000/weight 1.0，后段 4000/40000/2.0）
+# 测试基准：两段等分；var_ms 为 ms² 量纲（d_cap 同量纲，否则距离饱和恒 0）
 _BASELINE = {
-    "d_cap": 4000.0,
+    "d_cap": 2000000.0,
     "segments": [
-        {"span": [0.0, 0.5], "mean_ms": 2100, "var_ms": 10000, "weight": 1.0},
-        {"span": [0.5, 1.0], "mean_ms": 4000, "var_ms": 40000, "weight": 2.0},
+        {"span": [0.0, 0.5], "mean_ms": 2000, "var_ms": 250000, "weight": 1.0},
+        {"span": [0.5, 1.0], "mean_ms": 4000, "var_ms": 1000000, "weight": 2.0},
     ],
 }
 
@@ -50,55 +50,55 @@ def _expected(durations, baseline=_BASELINE) -> float:
 
 class Test距离口径:
     def test_手算交叉验证误差小于阈值(self):
-        """C7：距离口径误差 < 1e-6。durations 凑出 d=100 → score=0.975。"""
-        durations = [2100, 1900, 4200, 3800]  # 前段 mean 2000 var 10000；后段精确命中
+        """C7：距离口径误差 < 1e-6（测试侧平行实现交叉验证）。"""
+        durations = [1600, 2500, 3000, 5000]  # 前段 mean 2050 var 202500；后段精确命中
         result = _evaluate(durations)
         assert abs(result.score - _expected(durations)) < 1e-6
-        assert result.score == pytest.approx(0.975, abs=1e-6)
+        expected_d = math.sqrt((2050 - 2000) ** 2 + (202500 - 250000) ** 2)
+        assert result.diagnostics["distance"] == pytest.approx(expected_d)
 
     def test_定点六位(self):
-        result = _evaluate([2000, 2300, 3700, 4300])
+        result = _evaluate([1450, 2550, 3100, 4900])
         assert result.score == round(result.score, 6)
 
     def test_诊断分段统计(self):
-        result = _evaluate([2100, 1900, 4200, 3800])
+        result = _evaluate([1600, 2500, 3000, 5000])
         segments = result.diagnostics["segments"]
         assert len(segments) == 2
         assert segments[0]["shot_count"] == 2
-        assert segments[0]["mean_ms"] == pytest.approx(2000.0)
-        assert segments[0]["var_ms"] == pytest.approx(10000.0)
-        assert result.diagnostics["distance"] == pytest.approx(100.0)
-        assert result.diagnostics["d_cap"] == 4000.0
+        assert segments[0]["mean_ms"] == pytest.approx(2050.0)
+        assert segments[0]["var_ms"] == pytest.approx(202500.0)
+        assert result.diagnostics["d_cap"] == 2000000.0
 
 
 class Test贴近与背离:
     def test_贴近基准满分(self):
-        """完全贴合基准统计 → d=0 → score=1.0。"""
-        assert _evaluate([2000, 2200, 3800, 4200]).score == 1.0
+        """完全贴合基准统计（mean/var 双双命中）→ d=0 → score=1.0。"""
+        assert _evaluate([1500, 2500, 3000, 5000]).score == 1.0
 
     def test_背离基准低分(self):
-        """前段过碎（500ms）、后段拖沓（8000ms）→ d 超 d_cap → score=0.0。"""
-        assert _evaluate([500, 500, 8000, 8000]).score == 0.0
+        """前段过碎（200ms）、后段拖沓（20s）→ d 逼近 d_cap → 低分。"""
+        assert _evaluate([200, 200, 20000, 20000]).score < 0.3
 
     def test_分差显著(self):
         """验收场景 4：贴近 vs 背离两组分差显著（> 0.5）。"""
-        close = _evaluate([2100, 2000, 4000, 4100]).score
-        far = _evaluate([600, 700, 7500, 8500]).score
+        close = _evaluate([1450, 2550, 3100, 4900]).score
+        far = _evaluate([200, 200, 20000, 20000]).score
         assert close - far > 0.5
 
 
 class Test分段语义:
     def test_相对位置分段与段权重(self):
-        """权重生效：同样的偏差落在高权重段（后段 w=2.0）比前段扣分更多。"""
-        front_deviated = _evaluate([3000, 3000, 4000, 4000]).score  # 偏差在前段
-        back_deviated = _evaluate([2100, 2100, 6000, 6000]).score  # 同等偏差在后段
+        """权重生效：同样的均值偏差落在高权重段（后段 w=2.0）扣分更多。"""
+        front_deviated = _evaluate([3000, 4000, 3000, 5000]).score  # 偏差在前段
+        back_deviated = _evaluate([1500, 2500, 5000, 6000]).score  # 同等偏差在后段
         assert back_deviated < front_deviated
 
     def test_空段跳过不臆造(self):
         """无镜头落入的段不参与距离（diagnostics 注明 shot_count=0）。"""
-        result = _evaluate([2000, 2200])  # 两镜头都落前段（0.25/0.75？见下）
+        result = _evaluate([1500])  # 单镜头相对位置 0.5 → 只落后段
         counts = [s["shot_count"] for s in result.diagnostics["segments"]]
-        assert 0 in counts  # 有段为空且被跳过
+        assert counts == [0, 1]  # 前段为空且被跳过
         assert 0.0 <= result.score <= 1.0
 
 
@@ -117,7 +117,7 @@ class Test基准纪律:
         )
         result = evaluator.evaluate(artifact, {})
         assert 0.0 <= result.score <= 1.0
-        assert result.diagnostics["d_cap"] == 4000.0
+        assert result.diagnostics["d_cap"] == 2000000.0
 
     def test_注册元数据(self):
         spec = PacingCurveEvaluator(_BASELINE).spec

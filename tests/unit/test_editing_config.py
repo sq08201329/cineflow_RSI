@@ -42,7 +42,7 @@ class Test真实配置解析:
     def test_基准曲线分段读取(self):
         cfg = EditingConfig.from_dict(_valid_dict())
         baseline = cfg.pacing_baseline
-        assert baseline["d_cap"] == 4000.0
+        assert baseline["d_cap"] == 2000000.0
         assert len(baseline["segments"]) == 3
         first = baseline["segments"][0]
         assert first["span"] == [0.0, 0.15]

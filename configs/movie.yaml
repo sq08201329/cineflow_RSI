@@ -127,7 +127,7 @@ editing:
     dissolve_max_ms: 2000 # 叠化时长上限
     forbid_jump_cut_within_scene: true # 同区连续镜头禁跳切（须叠化/淡入淡出）
   pacing_baseline: # 节奏基准 = 分段目标统计 + 段权重（决策 4；缺基准即报错，不允许静默无基准打分）
-    d_cap: 4000.0 # 加权欧氏距离归一化上限（score = 1 − min(1, d / d_cap)）
+    d_cap: 2000000.0 # 加权欧氏距离归一化上限（score = 1 − min(1, d / d_cap)）；ms² 量纲（var 项主导，过小会饱和恒 0）
     segments:
       - {span: [0.0, 0.15], mean_ms: 1200, var_ms: 160000, weight: 2.0} # 前段留存权重上调
       - {span: [0.15, 0.75], mean_ms: 4000, var_ms: 1000000, weight: 1.0}

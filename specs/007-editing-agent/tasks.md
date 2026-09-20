@@ -73,7 +73,7 @@
 ### 用户故事 2 的实现
 
 - [x] T724 [US2] 实现 agents/editing/evaluators/duration.py + shot_distribution.py + transitions.py（三 gate；转场与 T708 校验同库）
-- [ ] T725 [US2] 实现 agents/editing/evaluators/pacing.py（分段统计 + 加权欧氏距离映射）
+- [x] T725 [US2] 实现 agents/editing/evaluators/pacing.py（分段统计 + 加权欧氏距离映射）
 - [ ] T726 [US2] 实现 agents/editing/evaluators/narrative.py（judge：摘要 × 3 提示词 × 锚点 EDL 集成对比较；三段哈希版本号；依赖 T714）
 - [ ] T727 [US2] 执行器接线真实五评估器（evaluator_weights.editing + composite + quantize 替换桩，gate 短路纪律；依赖 T719、T724~T726）
 
