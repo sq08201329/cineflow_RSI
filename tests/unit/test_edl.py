@@ -56,7 +56,7 @@ class Test规范化:
         digest = make_edl().edl_hash()
         assert len(digest) == 64 and digest == digest.lower()
 
-    def test_无音轨规范化含空 audio(self, make_edl):
+    def test_无音轨规范化含空audio(self, make_edl):
         parsed = json.loads(make_edl(audio=[]).canonical_json())
         assert parsed["audio"] == []
 
@@ -68,8 +68,16 @@ class Test构造形状校验:
     @pytest.mark.parametrize("in_ms", [-1, 1.5, True])
     def test_非法入点(self, make_edl, in_ms):
         with pytest.raises(ValidationError, match="in_ms"):
-            make_edl(clips=[{"shot_id": "shot-1", "in_ms": in_ms, "out_ms": 1000,
-                             "transition": {"type": "cut", "duration_ms": 0}}])
+            make_edl(
+                clips=[
+                    {
+                        "shot_id": "shot-1",
+                        "in_ms": in_ms,
+                        "out_ms": 1000,
+                        "transition": {"type": "cut", "duration_ms": 0},
+                    }
+                ]
+            )
 
     def test_空_clips_拒绝(self, make_edl):
         with pytest.raises(ValidationError, match="clips"):
@@ -81,8 +89,16 @@ class Test构造形状校验:
 
     def test_非法转场时长(self, make_edl):
         with pytest.raises(ValidationError, match="duration_ms"):
-            make_edl(clips=[{"shot_id": "shot-1", "in_ms": 0, "out_ms": 1000,
-                             "transition": {"type": "cut", "duration_ms": -1}}])
+            make_edl(
+                clips=[
+                    {
+                        "shot_id": "shot-1",
+                        "in_ms": 0,
+                        "out_ms": 1000,
+                        "transition": {"type": "cut", "duration_ms": -1},
+                    }
+                ]
+            )
 
 
 class Test合法EDL通过:
@@ -110,8 +126,16 @@ class Test第二层出入点越界:
             _validate(make_edl("out_of_bounds"), library, structure)
 
     def test_入点不小于出点(self, make_edl, library, structure):
-        edl = make_edl(clips=[{"shot_id": "shot-1", "in_ms": 2000, "out_ms": 2000,
-                               "transition": {"type": "cut", "duration_ms": 0}}])
+        edl = make_edl(
+            clips=[
+                {
+                    "shot_id": "shot-1",
+                    "in_ms": 2000,
+                    "out_ms": 2000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                }
+            ]
+        )
         with pytest.raises(ValidationError, match="in_ms"):
             _validate(edl, library, structure)
 
@@ -134,10 +158,18 @@ class Test第四层转场规则库:
 
     def test_叠化超上限(self, make_edl, library, structure):
         clips = [
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "dissolve", "duration_ms": 2500}},  # > 2000 上限
-            {"shot_id": "shot-3", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
+            {
+                "shot_id": "shot-1",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "dissolve", "duration_ms": 2500},
+            },  # > 2000 上限
+            {
+                "shot_id": "shot-3",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
         ]
         with pytest.raises(ValidationError, match="dissolve_max_ms|叠化"):
             _validate(make_edl(clips=clips), library, structure)
@@ -145,10 +177,18 @@ class Test第四层转场规则库:
     def test_同区跳切拒绝(self, make_edl, library, structure):
         """同区连续镜头用 cut 衔接 = 跳切（forbid_jump_cut_within_scene 开启时拒绝）。"""
         clips = [
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},  # 同区衔接 shot-2 用 cut
-            {"shot_id": "shot-2", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
+            {
+                "shot_id": "shot-1",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },  # 同区衔接 shot-2 用 cut
+            {
+                "shot_id": "shot-2",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
         ]
         with pytest.raises(ValidationError, match="跳切"):
             _validate(make_edl(clips=clips), library, structure)
@@ -156,10 +196,18 @@ class Test第四层转场规则库:
     def test_跳切检测配置关闭则放行(self, make_edl, library, structure):
         """规则库配置驱动：关闭 forbid_jump_cut_within_scene 后同序列合法。"""
         clips = [
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-            {"shot_id": "shot-2", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
+            {
+                "shot_id": "shot-1",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
+            {
+                "shot_id": "shot-2",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
         ]
         _validate(
             make_edl(clips=clips),

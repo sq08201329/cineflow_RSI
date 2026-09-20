@@ -602,7 +602,7 @@ def make_shot_library():
             "shot-4": 4000,
             "shot-5": 6000,
             "shot-6": 4000,
-            "shot-orphan": 3000,
+            "shot-orphan": 4000,  # ≥ 合法 EDL 变体的 out_ms，保证跨分区变体精确落在第③层
         }
         scenes = {
             "shot-1": "scene-a",
@@ -782,8 +782,9 @@ def make_audio_tracks():
 @pytest.fixture()
 def editing_jobs_engine():
     """剪辑运营表夹具：SQLite 内存库建 edit_render_jobs（可变表，无 immutable 触发器）。"""
-    from agents.editing.db import create_render_jobs_schema
     from sqlalchemy import create_engine
+
+    from agents.editing.db import create_render_jobs_schema
 
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_render_jobs_schema(engine)
