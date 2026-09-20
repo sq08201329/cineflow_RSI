@@ -21,7 +21,7 @@ uv run pytest tests/unit -k "storyboard_dreaming" # 做梦一轮接入验证
 3. **预算门禁与幂等**：超界拒绝；同 round_id 重建 0 重复扣费
 4. **评估**：五分量 + gate 短路（违规不跑 judge）+ 定点归一重算一致
 5. **无偏性**：回放 vs 真实重跑 τ ≥ 0.95
-6. **做梦**：分镜策略候选一轮 → reward 排名 + 首轮基线
+6. **做梦**：分镜策略候选一轮 → reward 排名 + 首轮基线（落盘形态 `history_root/storyboard/dream-storyboard-1.json`，演示档 M=8 见 `uv run pytest tests/unit -k "storyboard_dreaming"`；champion 手工首版 `policies/history/storyboard/{版本}.py` + `.meta.json` 谱系根）
 
 ## 里程碑验收（立项书周 6~8 / SC-001）
 
