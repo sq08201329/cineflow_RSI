@@ -20,12 +20,14 @@ import blake3
 from sqlalchemy import func, insert, select
 from sqlalchemy.engine import Engine
 
+from agents.sound.audio import decode_wav_samples
 from agents.sound.config import SoundConfig
 from agents.sound.db import sound_gen_jobs
+from agents.sound.evaluators import build_sound_evaluators
+from agents.sound.evaluators.composite import COMPOSITE_POLICY, composite_sound
 from agents.sound.platform.base import SoundGenAdapter, SoundGenError
 from agents.sound.timing import TimingSheet
-from core.evaluators.base import ArtifactRef, EvalResult, Evaluator
-from core.evaluators.composite import composite_score_versioned
+from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
 from core.tree.artifacts import ArtifactStore
 from core.tree.errors import DuplicateError
@@ -110,11 +112,15 @@ def run_sound_round(
     engine: Engine,
     config: SoundConfig,
     inputs: dict,
-    evaluators: list[Evaluator],
+    evaluators: list[Evaluator] | None = None,
 ) -> SoundRoundResult:
     """执行一轮声音线上探索（全流程幂等）。"""
     # 0) 输入校验先于一切副作用（适配器 0 调用、0 成本、0 落库）
     timing_sheet = _validate_inputs(inputs)
+    # 评估器装配：缺省按 evaluator_weights.sound 装配真实四评估器（T621 接线）；
+    # 显式注入用于测试桩/无偏性回放（US1 取舍：面向评估器协议编程）
+    if evaluators is None:
+        evaluators = build_sound_evaluators(config)
 
     tree_id = round_tree_id(round_id)
     root_id = _round_root_id(round_id)
@@ -177,6 +183,7 @@ def _config_snapshot(config: SoundConfig, evaluators: list[Evaluator]) -> dict:
         "evaluator_weights": config.evaluator_weights,
         "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in evaluators},
         "observation_fields": ["gen_params", "gen_type", "job_id"],
+        "composite_policy": COMPOSITE_POLICY,  # 合成归一口径进版本元信息（C8）
         "loudness": config.loudness,
         "av_sync_threshold_ms": config.av_sync_threshold_ms,
         "sample_rate": config.sample_rate,
@@ -406,6 +413,7 @@ def _run_job(
         "metadata": produced.metadata,
         "timing_sheet": timing_sheet,
         "sample_rate": config.sample_rate,
+        "samples": decode_wav_samples(produced.wav_bytes),  # 响度测量的波形输入
     }
     try:
         breakdown = {}
@@ -415,12 +423,8 @@ def _run_job(
                 "score": result.score,
                 "diagnostics": result.diagnostics,
             }
-        score = quantize_score(
-            composite_score_versioned(
-                {k: EvalResult(score=v["score"]) for k, v in breakdown.items()},
-                _weights(config),
-            )
-        )
+        # 合成：gate 短路 + 不适用分量跳过归一（C8）→ quantize 6 位定点
+        score = quantize_score(composite_sound(breakdown, _weights(config)))
         node_id = _append_job_node(
             store,
             tree_id=tree_id,
