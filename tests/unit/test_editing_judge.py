@@ -74,7 +74,8 @@ class Test成对比较投票:
 
         def _run():
             gateway = LLMGateway(
-                MockBackend(), price_book={_MODEL: {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+                MockBackend(),
+                price_book={_MODEL: {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
                 sleep=lambda _: None,
             )
             ev = NarrativeFlowJudgeEvaluator(
@@ -90,14 +91,13 @@ class Test成对比较投票:
 
     def test_摘要为_judge_输入(self, evaluator, ctx, make_edl):
         """澄清 Q1：judge 输入 = EDL 摘要——不同 EDL 摘要有别，比较行为随摘要变化。"""
-        other = evaluator.evaluate(
-            _artifact(), {**ctx, "edl": make_edl("scene_disorder")}
-        )
+        other = evaluator.evaluate(_artifact(), {**ctx, "edl": make_edl("scene_disorder")})
         # 摘要不同 → 提示词载荷不同 → Mock 后端确定性文本不同（投票大概率变化；
         # 至少摘要函数被实际调用——diagnostics 携带候选摘要哈希供审计）
-        assert other.diagnostics["summary_hash"] != evaluator.evaluate(
-            _artifact(), ctx
-        ).diagnostics["summary_hash"]
+        assert (
+            other.diagnostics["summary_hash"]
+            != evaluator.evaluate(_artifact(), ctx).diagnostics["summary_hash"]
+        )
 
 
 class Test版本号三段哈希:
