@@ -63,6 +63,44 @@ class ReplayComparison:
 
 
 @dataclass(frozen=True)
+class UnbiasednessAttestation:
+    """无偏性验收凭证（FR-013 发布阻塞门禁的凭据形态）。
+
+    对比报告必须附验收结论：`verdict == "pass"` 才允许产出（`compare_versions` 前置检查）。
+    来源 = 无偏性验收报告（002 `verify_unbiasedness(...).to_dict()`）的 JSON，
+    可落盘流转（CLI `--unbiasedness <path>`）。
+    """
+
+    verdict: str
+    tau: float | None = None
+    threshold: float | None = None
+    notes: str = ""
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "UnbiasednessAttestation":
+        if not isinstance(payload, dict) or "verdict" not in payload:
+            raise CompareError("无偏性验收结论必须为含 verdict 的 JSON 对象")
+        return cls(
+            verdict=str(payload["verdict"]),
+            tau=None if payload.get("tau") is None else float(payload["tau"]),
+            threshold=None if payload.get("threshold") is None else float(payload["threshold"]),
+            notes=str(payload.get("notes", "")),
+        )
+
+    @classmethod
+    def load(cls, path: str | Path) -> "UnbiasednessAttestation":
+        """按路径读取验收结论（不存在/非法即报错，不静默放行）。"""
+        target = Path(path)
+        if not target.is_file():
+            raise CompareError(f"无偏性验收结论不存在：{target}（FR-013 发布阻塞凭据）")
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise CompareError(f"无偏性验收结论非合法 JSON：{target}（{exc}）") from exc
+        return cls.from_dict(payload)
+
+
+@dataclass(frozen=True)
 class _PolicyReplay:
     """单策略回放结果：池级最优曲线 + 逐树得分 + 分项明细（全部来自历史节点）。"""
 

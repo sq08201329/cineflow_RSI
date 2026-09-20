@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""剧本 Agent CLI（功能 009）：produce / submit 子命令。
+"""剧本 Agent CLI（功能 009）：produce / submit / compare / adopt / reject / evidence。
 
 - submit：提交人工策略版本（C13）——静态检查（002）与接口签名（plan(inputs, config)）
   均过才落 `policies/history/screenplay/{version}.py` + meta.json；`--draft` 只校验算版本
@@ -16,9 +16,13 @@ CLI 默认面向 PG 库（--dsn 或 CINEFLOW_PG_DSN，schema 由 Alembic 迁移�
 人工策略版本核验：`--policy <version>` 读该路径并校验源码哈希与版本一致（不符即拒绝）；
 `--policy-file` 按源码哈希派生版本（本地验证用）。
 
-退出码：0 成功；2 参数/依赖/策略拒绝（缺 DSN、策略未过静态检查、版本不符等）；1 运行期
-错误（输入预检拒绝、评估器装配失败等）。后续 submit/compare/adopt/reject/evidence
-子命令在 T931 扩展。
+- compare：新版本 vs 部署版本回放对比（**必须附无偏性验收结论**，FR-013 发布阻塞）；
+- adopt / reject：人工采纳/拒绝（采纳才更新部署指针；拒绝留痕理由非空）；
+- evidence：生成周期升级判据材料（阈值快照 + 原始数值 + 系统结论）；`--override` 追加
+  推翻留痕（系统结论字段不变）。
+
+退出码：0 成功；2 参数/依赖/门禁拒绝（缺 DSN、策略未过静态检查、版本不符、未过无偏性、
+理由为空等）；1 运行期错误（输入预检拒绝、评估器装配失败等）。
 """
 
 import argparse
@@ -231,6 +235,228 @@ def _backend(args):
     return MockBackend()
 
 
+def _store_and_pool(dsn: str):
+    """引擎 + 树存储 + 冻结树池装配（回放对比用；未冻结树跳过并计数）。"""
+    from sqlalchemy import create_engine
+
+    from core.replay.pool import PoolError, SimulatorPool
+    from core.tree.store import create_tree_store
+
+    engine = create_engine(dsn)
+    store = create_tree_store(engine)
+    pool = SimulatorPool(store)
+    skipped = 0
+    for tree in store.trees_by(agent_id=AGENT_ID):
+        try:
+            pool.add_tree(tree)
+        except PoolError:
+            skipped += 1  # 未冻结（仍在写入）的树不入池
+    return engine, store, pool, skipped
+
+
+def _comparison_inputs(args) -> dict:
+    inputs = {
+        "topic": args.topic,
+        "constraints": list(getattr(args, "constraints", None) or []),
+        "characters": list(getattr(args, "characters", None) or []),
+    }
+    if getattr(args, "target_duration_min", None) is not None:
+        inputs["target_duration_min"] = args.target_duration_min
+    return inputs
+
+
+def _cmd_compare(args) -> int:
+    """回放对比：前置无偏性验收结论 + 逐树结构键回放（零 LLM）。"""
+    import json as _json
+
+    from agents.screenplay.sandbox_compare import (
+        CompareError,
+        UnbiasednessAttestation,
+        compare_versions,
+    )
+
+    dsn = _resolve_dsn(args)
+    if not dsn:
+        return _fail("缺少 DSN（--dsn 或 CINEFLOW_PG_DSN）", 2)
+    try:
+        attestation = UnbiasednessAttestation.load(Path(args.unbiasedness))
+    except CompareError as exc:
+        return _fail(str(exc), 2)
+    if attestation.verdict != "pass":
+        return _fail(
+            "未过无偏性验收（FR-013 发布阻塞）：回放口径不可信时不得产出对比报告"
+            f"（verdict={attestation.verdict}，τ={attestation.tau}）",
+            2,
+        )
+    try:
+        from agents.screenplay.config import ScreenplayConfig, ScreenplayConfigError
+
+        config = ScreenplayConfig.from_yaml(args.config)
+    except ScreenplayConfigError as exc:
+        return _fail(f"形态配置非法：{exc}", 2)
+    data_dir = Path(args.data_dir).expanduser()
+    _, store, pool, skipped = _store_and_pool(dsn)
+    if not pool.trees:
+        return _fail("无可用冻结树（回放对比需要至少一棵已冻结的剧本轮次树）", 2)
+    try:
+        comparison = compare_versions(
+            args.new_version,
+            args.deployed_version,
+            pool,
+            config,
+            store=store,
+            inputs=_comparison_inputs(args),
+            unbiasedness=attestation,
+            history_root=Path(args.policy_dir).expanduser(),
+            comparison_dir=data_dir / "comparisons",
+        )
+    except (CompareError, ValueError) as exc:
+        return _fail(str(exc), 1)
+    payload = comparison.to_dict()
+    payload["skipped_unfrozen_trees"] = skipped
+    payload["data_dir"] = str(data_dir)
+    print(_json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def _cmd_adopt(args) -> int:
+    return _decide(args, decision="adopt")
+
+
+def _cmd_reject(args) -> int:
+    return _decide(args, decision="reject")
+
+
+def _decide(args, *, decision: str) -> int:
+    """人工采纳/拒绝（同一实现，decision 由子命令固定）：仅 adopt 更新部署指针。"""
+    import json as _json
+
+    from agents.screenplay.adoption import AdoptionError, adopt
+
+    data_dir = Path(args.data_dir).expanduser()
+    try:
+        record = adopt(
+            args.comparison,
+            decision,
+            args.by,
+            args.reason,
+            config_path=Path(args.config),
+            comparison_dir=data_dir / "comparisons",
+            adoption_dir=data_dir / "adoptions",
+            history_root=Path(args.policy_dir).expanduser(),
+        )
+    except (AdoptionError, FileNotFoundError) as exc:
+        return _fail(str(exc), 2)
+    print(_json.dumps(record.to_dict(), ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def _load_ledger_record(calibration_dir: Path, period: str) -> dict | None:
+    """010 台账 judge 记录（本周期末行）：读 ledger/screenplay/judge.*.jsonl。"""
+    import json as _json
+
+    directory = calibration_dir / "ledger" / AGENT_ID
+    if not directory.is_dir():
+        return None
+    for path in sorted(directory.glob("judge.*.jsonl")):
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        current = [_json.loads(line) for line in lines]
+        current = [record for record in current if record.get("period") == period]
+        if current:
+            return current[-1]
+    return None
+
+
+def _period_window(args, days: int) -> tuple[str, str]:
+    from datetime import UTC, datetime, timedelta
+
+    period_end = args.period_end or datetime.now(UTC).date().isoformat()
+    period_start = (
+        args.period_start or (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
+    )
+    return period_start, period_end
+
+
+def _cmd_evidence(args) -> int:
+    """生成/推翻周期升级判据材料（阈值快照 + 原始数值 + 系统结论）。"""
+    import json as _json
+
+    from agents.screenplay.config import ScreenplayConfig, ScreenplayConfigError
+    from agents.screenplay.upgrade_evidence import (
+        UpgradeEvidenceError,
+        build_upgrade_evidence,
+        override_conclusion,
+    )
+    from core.calibration.config import CalibrationConfig
+    from core.calibration.errors import CalibrationConfigError
+    from core.calibration.rounds import iso_week_label
+
+    data_dir = Path(args.data_dir).expanduser()
+    if args.override:
+        if not args.by or not args.reason:
+            return _fail("--override 必须同时提供 --by（推翻人）与 --reason（理由）", 2)
+        try:
+            evidence = override_conclusion(
+                args.period, by=args.by, reason=args.reason, data_dir=data_dir
+            )
+        except UpgradeEvidenceError as exc:
+            return _fail(str(exc), 2)
+        print(_json.dumps(evidence.to_dict(), ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    try:
+        config = ScreenplayConfig.from_yaml(args.config)
+        calibration = CalibrationConfig.from_yaml(args.config)
+    except (ScreenplayConfigError, CalibrationConfigError) as exc:
+        return _fail(f"形态配置非法：{exc}", 2)
+
+    period_start, period_end = _period_window(args, calibration.period_days)
+    anchors = args.human_anchor_count
+    violation_rate = 0.0
+    dsn = _resolve_dsn(args)
+    if dsn:
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import create_engine
+
+        from core.tree.store import create_tree_store
+
+        start_ts = datetime.fromisoformat(period_start).replace(tzinfo=UTC).timestamp()
+        end_ts = (
+            datetime.fromisoformat(period_end).replace(tzinfo=UTC) + timedelta(days=1)
+        ).timestamp()
+        store = create_tree_store(create_engine(dsn))
+        nodes = [
+            node
+            for tree in store.trees_by(agent_id=AGENT_ID)
+            for node in store.nodes_of(tree.tree_id)
+            if start_ts <= node.created_at < end_ts
+        ]
+        from agents.screenplay.upgrade_evidence import gate_violation_rate_of
+
+        violation_rate = gate_violation_rate_of(nodes)
+
+    ledger = _load_ledger_record(Path(args.calibration_dir).expanduser(), args.period)
+    try:
+        evidence = build_upgrade_evidence(
+            args.period,
+            config,
+            ledger,
+            calibration,
+            drift=args.drift,
+            gate_violation_rate=violation_rate,
+            human_anchor_count=anchors,
+            data_dir=data_dir,
+        )
+    except UpgradeEvidenceError as exc:
+        return _fail(str(exc), 2)
+    payload = evidence.to_dict()
+    payload["period_window"] = [period_start, period_end]
+    payload["week_label"] = iso_week_label(period_end)
+    print(_json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def _artifact_store(data_dir: Path):
     """工件存储装配：本地内容寻址目录（生产装配层换 S3ArtifactStore，接口不变）。"""
     from core.tree.artifacts import LocalArtifactStore
@@ -282,6 +508,76 @@ def main(argv: list[str] | None = None) -> int:
         help="策略历史根目录（默认仓库 policies/history）",
     )
     submit.set_defaults(func=_cmd_submit)
+
+    compare = sub.add_parser("compare", help="新版本 vs 部署版本回放对比（需附无偏性结论）")
+    compare.add_argument("--new-version", required=True, help="待评估的新策略版本")
+    compare.add_argument("--deployed-version", required=True, help="当前部署策略版本")
+    compare.add_argument(
+        "--unbiasedness", required=True, help="无偏性验收结论 JSON 路径（FR-013 发布阻塞）"
+    )
+    compare.add_argument("--topic", required=True, help="题材（回放结构键的重算输入）")
+    compare.add_argument("--constraints", nargs="*", default=[], help="题材约束")
+    compare.add_argument("--characters", nargs="*", default=[], help="角色设定")
+    compare.add_argument("--target-duration-min", type=int, default=None)
+    compare.add_argument(
+        "--policy-dir",
+        default=str(REPO_ROOT / "policies" / "history"),
+        help="策略历史根目录",
+    )
+    compare.add_argument(
+        "--data-dir",
+        default=str(REPO_ROOT / "screenplay"),
+        help="对比报告落盘目录（<data-dir>/comparisons）",
+    )
+    compare.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    compare.add_argument("--dsn", default=None, help="PG DSN，默认读 CINEFLOW_PG_DSN")
+    compare.set_defaults(func=_cmd_compare)
+
+    for name, handler, help_text in (
+        ("adopt", _cmd_adopt, "人工采纳：更新部署指针并留痕"),
+        ("reject", _cmd_reject, "人工拒绝：指针不变、理由留痕"),
+    ):
+        decide = sub.add_parser(name, help=help_text)
+        decide.add_argument("--comparison", required=True, help="对比报告 ID（依据引用）")
+        decide.add_argument("--by", required=True, help="决策人（留痕必填）")
+        decide.add_argument("--reason", required=True, help="理由（留痕必填，非空）")
+        decide.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+        decide.add_argument(
+            "--policy-dir",
+            default=str(REPO_ROOT / "policies" / "history"),
+            help="策略历史根目录（采纳前校验版本已版本化）",
+        )
+        decide.add_argument(
+            "--data-dir",
+            default=str(REPO_ROOT / "screenplay"),
+            help="对比/采纳记录落盘目录",
+        )
+        decide.set_defaults(func=handler)
+
+    evidence = sub.add_parser("evidence", help="生成/推翻周期升级判据材料")
+    evidence.add_argument("--period", required=True, help="周期标签（如 2026-W38）")
+    evidence.add_argument(
+        "--drift", type=float, default=None, help="漂移指标（缺省如实标注未测量）"
+    )
+    evidence.add_argument(
+        "--human-anchor-count", type=int, default=0, help="本周期人评锚点计数（010 口径）"
+    )
+    evidence.add_argument("--period-start", default=None, help="门禁违规率统计窗口起（ISO 日期）")
+    evidence.add_argument("--period-end", default=None, help="统计窗口止（ISO 日期）")
+    evidence.add_argument(
+        "--calibration-dir", default=str(REPO_ROOT / "calibration"), help="010 台账目录"
+    )
+    evidence.add_argument(
+        "--data-dir",
+        default=str(REPO_ROOT / "calibration" / "upgrade-events"),
+        help="判据材料落盘目录",
+    )
+    evidence.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    evidence.add_argument("--dsn", default=None, help="PG DSN（用于门禁违规率统计）")
+    evidence.add_argument("--override", action="store_true", help="追加推翻留痕（不重产材料）")
+    evidence.add_argument("--by", default=None, help="推翻人（--override 时必填）")
+    evidence.add_argument("--reason", default=None, help="推翻理由（--override 时必填）")
+    evidence.set_defaults(func=_cmd_evidence)
 
     args = parser.parse_args(argv)
     return args.func(args)

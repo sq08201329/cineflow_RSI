@@ -450,3 +450,250 @@ class TestSubmit子命令:
         )
         assert code == 2
         assert "源码不存在" in payload["error"]
+
+
+class TestCompareAdoptRejectEvidence子命令:
+    """T931 补全：compare / adopt / reject / evidence 子命令（库函数组装 + 退出码语义）。"""
+
+    def test_顶层帮助列出全部子命令(self, cli, capsys):
+        with pytest.raises(SystemExit):
+            cli.main(["--help"])
+        out = capsys.readouterr().out
+        for name in ("produce", "submit", "compare", "adopt", "reject", "evidence"):
+            assert name in out
+
+    @pytest.mark.parametrize(
+        "command, flags",
+        [
+            ("compare", ("--new-version", "--deployed-version", "--unbiasedness", "--topic")),
+            ("adopt", ("--comparison", "--by", "--reason")),
+            ("reject", ("--comparison", "--by", "--reason")),
+            ("evidence", ("--period", "--drift", "--calibration-dir", "--override")),
+        ],
+    )
+    def test_子命令帮助列出参数(self, cli, capsys, command, flags):
+        with pytest.raises(SystemExit) as exc:
+            cli.main([command, "--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        for flag in flags:
+            assert flag in out
+
+    def test_compare_缺_dsn(self, cli, capsys, tmp_path, monkeypatch):
+        monkeypatch.delenv("CINEFLOW_PG_DSN", raising=False)
+        report = tmp_path / "unbiased.json"
+        report.write_text(
+            json.dumps({"verdict": "pass", "tau": 1.0, "threshold": 0.95, "notes": ""}),
+            encoding="utf-8",
+        )
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "compare",
+            "--new-version",
+            "111111111111",
+            "--deployed-version",
+            "222222222222",
+            "--unbiasedness",
+            str(report),
+            "--topic",
+            "题材",
+        )
+        assert code == 2
+        assert "DSN" in payload["error"]
+
+    def test_compare_无偏性未过拒绝(self, cli, capsys, tmp_path, dsn):
+        """FR-013：未过无偏性验收不得产出对比报告（退出码 2 + 原因）。"""
+        report = tmp_path / "unbiased.json"
+        report.write_text(
+            json.dumps({"verdict": "reject", "tau": -1.0, "threshold": 0.95, "notes": ""}),
+            encoding="utf-8",
+        )
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "compare",
+            "--new-version",
+            "111111111111",
+            "--deployed-version",
+            "222222222222",
+            "--unbiasedness",
+            str(report),
+            "--topic",
+            "题材",
+            "--dsn",
+            dsn,
+        )
+        assert code == 2
+        assert "无偏性" in payload["error"]
+
+    def test_compare_验收结论缺失(self, cli, capsys, tmp_path, dsn):
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "compare",
+            "--new-version",
+            "111111111111",
+            "--deployed-version",
+            "222222222222",
+            "--unbiasedness",
+            str(tmp_path / "missing.json"),
+            "--topic",
+            "题材",
+            "--dsn",
+            dsn,
+        )
+        assert code == 2
+        assert "无偏性" in payload["error"]
+
+    def test_adopt_缺对比报告拒绝(self, cli, capsys, tmp_path):
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "adopt",
+            "--comparison",
+            "cmp-screenplay-a-b",
+            "--by",
+            "sunqi",
+            "--reason",
+            "具备优势",
+            "--config",
+            str(REPO_ROOT / "configs" / "movie.yaml"),
+            "--data-dir",
+            str(tmp_path / "data"),
+        )
+        assert code == 2
+        assert "对比报告" in payload["error"]
+
+    def test_reject_理由为空拒绝(self, cli, capsys, tmp_path):
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "reject",
+            "--comparison",
+            "cmp-screenplay-a-b",
+            "--by",
+            "sunqi",
+            "--reason",
+            "   ",
+            "--data-dir",
+            str(tmp_path / "data"),
+        )
+        assert code == 2
+        assert "理由" in payload["error"]
+
+    def test_evidence_生成材料并标注未测量漂移(self, cli, capsys, tmp_path):
+        """判据材料：无台账记录 + 未测漂移 → 结论 below 并如实标注（不暗示可升级）。"""
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "evidence",
+            "--period",
+            "2026-W38",
+            "--data-dir",
+            str(tmp_path / "events"),
+            "--calibration-dir",
+            str(tmp_path / "calibration"),
+            "--config",
+            str(REPO_ROOT / "configs" / "movie.yaml"),
+        )
+        assert code == 0
+        assert payload["conclusion"] == "below"
+        assert any("台账" in reason for reason in payload["reasons"])
+        assert any("漂移指标缺失" in reason for reason in payload["reasons"])
+        assert payload["threshold_snapshot"]["judge_r_target"] == 0.6
+        assert Path(tmp_path / "events" / "2026-W38.json").is_file()
+
+    def test_evidence_达标路径需带内漂移与台账(self, cli, capsys, tmp_path, monkeypatch):
+        """显式传入带内漂移 + 010 台账达标记录 → meets（判据四条齐达）。"""
+        calibration_dir = tmp_path / "calibration"
+        ledger_dir = calibration_dir / "ledger" / "screenplay"
+        ledger_dir.mkdir(parents=True)
+        record = {
+            "evaluator_key": "judge.dramatic_tension@1.0.0+j1",
+            "period": "2026-W38",
+            "samples": 8,
+            "kendall_tau": 0.72,
+            "note": "",
+        }
+        (ledger_dir / "judge.dramatic_tension.jsonl").write_text(
+            json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "evidence",
+            "--period",
+            "2026-W38",
+            "--drift",
+            "0.05",
+            "--human-anchor-count",
+            "5",
+            "--data-dir",
+            str(tmp_path / "events"),
+            "--calibration-dir",
+            str(calibration_dir),
+            "--config",
+            str(REPO_ROOT / "configs" / "movie.yaml"),
+        )
+        assert code == 0
+        assert payload["conclusion"] == "meets"
+        assert payload["raw"]["judge_samples"] == 8
+        assert payload["raw"]["drift"] == pytest.approx(0.05)
+
+    def test_evidence_推翻留痕(self, cli, capsys, tmp_path):
+        events = tmp_path / "events"
+        events.mkdir()
+        material = {
+            "period": "2026-W39",
+            "agent_id": "screenplay",
+            "threshold_snapshot": {},
+            "raw": {},
+            "conclusion": "below",
+            "reasons": [],
+            "alerts": [],
+            "human_anchor_count": 0,
+            "created_at": "2026-09-20T00:00:00+00:00",
+            "overrides": [],
+        }
+        from agents.screenplay.upgrade_evidence import _system_digest
+
+        material["system_digest"] = _system_digest(material)
+        (events / "2026-W39.json").write_text(
+            json.dumps(material, ensure_ascii=False), encoding="utf-8"
+        )
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "evidence",
+            "--period",
+            "2026-W39",
+            "--override",
+            "--by",
+            "sunqi",
+            "--reason",
+            "已补齐锚点",
+            "--data-dir",
+            str(events),
+        )
+        assert code == 0
+        assert payload["conclusion"] == "below"  # 系统结论不变
+        assert payload["overrides"] == [
+            {"by": "sunqi", "reason": "已补齐锚点", "at": payload["overrides"][0]["at"]}
+        ]
+
+    def test_evidence_推翻缺人拒绝(self, cli, capsys, tmp_path):
+        code, payload = _invoke(
+            cli,
+            capsys,
+            "evidence",
+            "--period",
+            "2026-W39",
+            "--override",
+            "--reason",
+            "理由",
+            "--data-dir",
+            str(tmp_path / "events"),
+        )
+        assert code == 2
+        assert "--by" in payload["error"]
