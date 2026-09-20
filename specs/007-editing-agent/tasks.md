@@ -105,7 +105,7 @@
 
 - [x] T732 集成测试 tests/integration/test_editing_pg.py（真实 PG：0006 迁移执行、唯一键冲突幂等重建、两段式全链路、成本对账）
 - [x] T733 [P] 实现端到端演示 ops/demo_editing_loop.py（quickstart 六步；断言退出码 0、逐字节一致、gate 短路、τ 达标）
-- [ ] T734 运行 quickstart.md 全部验证步骤并记录（验证记录回填 quickstart；覆盖率 ≥85% 复核；**验证命令与 ci.yml 逐字一致含 `ruff format --check .`**）
+- [x] T734 运行 quickstart.md 全部验证步骤并记录（验证记录回填 quickstart；覆盖率 ≥85% 复核；**验证命令与 ci.yml 逐字一致含 `ruff format --check .`**）
 - [ ] T735 [P] 更新 README.md（剪辑闭环用法）与 docs/二期立项书.md 里程碑表（F2 已交付注明）
 
 ---
