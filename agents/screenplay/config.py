@@ -319,6 +319,15 @@ class ScreenplayConfig:
         """关键节拍清单（rule.beat_structure 的存在性判定依据）。"""
         return tuple(beat["beat_id"] for beat in self.beat_sheet if beat["required"])
 
+    @property
+    def page_minutes_slice(self) -> dict:
+        """页数门禁配置切片（rule.page_minutes 构造入参，测试与装配共用）。"""
+        return {
+            "target_duration_min": self.target_duration_min,
+            "page_tolerance": self.page_tolerance,
+            "lines_per_page": self.lines_per_page,
+        }
+
     # --- 角色别名表访问（实体一致性规范化口径） ---
     def registered_names(self) -> frozenset[str]:
         return frozenset(

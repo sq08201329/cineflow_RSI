@@ -32,6 +32,15 @@ class Test真实配置解析:
         assert cfg.page_tolerance == 5
         assert cfg.lines_per_page == 45
 
+    def test_页数门禁配置切片(self):
+        """页数门禁构造入参切片（rule.page_minutes 与测试共用，缺项由评估器报错）。"""
+        cfg = ScreenplayConfig.from_dict(_valid_dict())
+        assert cfg.page_minutes_slice == {
+            "target_duration_min": 90,
+            "page_tolerance": 5,
+            "lines_per_page": 45,
+        }
+
     def test_对白行占比区间读取(self):
         cfg = ScreenplayConfig.from_dict(_valid_dict())
         assert cfg.dialogue_action_ratio == {"min": 0.4, "max": 0.8}
