@@ -575,3 +575,236 @@ def sound_config():
 
     path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
     return SoundConfig.from_yaml(path)
+
+
+# ---------------------------------------------------------------------------
+# 功能 007（剪辑闭环）夹具：镜头库/场景分区/EDL（合法 + 五类非法变体）/
+# 素材帧/音轨/运营表/临时目录/形态配置
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def make_shot_library():
+    """镜头库工厂（功能 007）：6 镜头 3 分区归属 + 1 个未分区镜头（跨分区变体用）。
+
+    分区归属：scene-a = {shot-1, shot-2}，scene-b = {shot-3, shot-4}，
+    scene-c = {shot-5, shot-6}；shot-orphan 在库但不归属 SceneStructure 任何分区
+    （EDL 跨分区非法变体的素材）。音轨集合两条（bgm-01/voice-01）。
+    字段可被调用方覆盖（shots/audio_tracks）。
+    """
+    from agents.editing.shots import ShotEntry, ShotLibrary
+
+    def _make(**overrides):
+        durations = {
+            "shot-1": 4000,
+            "shot-2": 4000,
+            "shot-3": 5000,
+            "shot-4": 4000,
+            "shot-5": 6000,
+            "shot-6": 4000,
+            "shot-orphan": 3000,
+        }
+        scenes = {
+            "shot-1": "scene-a",
+            "shot-2": "scene-a",
+            "shot-3": "scene-b",
+            "shot-4": "scene-b",
+            "shot-5": "scene-c",
+            "shot-6": "scene-c",
+            "shot-orphan": "scene-x",
+        }
+        shots = [
+            ShotEntry(
+                shot_id=sid,
+                artifact_hash=f"{i + 1:064x}",
+                duration_ms=durations[sid],
+                scene_id=scenes[sid],
+                metadata={"source": "fixture"},
+            )
+            for i, sid in enumerate(durations)
+        ]
+        fields = {"shots": shots, "audio_tracks": ("bgm-01", "voice-01")}
+        fields.update(overrides)
+        return ShotLibrary(**fields)
+
+    return _make
+
+
+@pytest.fixture()
+def make_scene_structure(make_shot_library):
+    """SceneStructure 工厂（功能 007）：与默认镜头库一致的有序分区结构。
+
+    variant=valid（默认）/duplicate（shot_ids 跨分区重复）/unknown（引用不存在镜头）/
+    mismatched（shot 归属与 ShotEntry.scene_id 不一致）。
+    """
+    from agents.editing.shots import Scene, SceneStructure
+
+    def _make(variant: str = "valid", library=None, **overrides):
+        library = library if library is not None else make_shot_library()
+        scenes = [
+            Scene(scene_id="scene-a", shot_ids=("shot-1", "shot-2")),
+            Scene(scene_id="scene-b", shot_ids=("shot-3", "shot-4")),
+            Scene(scene_id="scene-c", shot_ids=("shot-5", "shot-6")),
+        ]
+        if variant == "duplicate":
+            scenes[1] = Scene(scene_id="scene-b", shot_ids=("shot-2", "shot-3"))
+        elif variant == "unknown":
+            scenes[0] = Scene(scene_id="scene-a", shot_ids=("shot-1", "shot-999"))
+        elif variant == "mismatched":
+            scenes[0] = Scene(scene_id="scene-a", shot_ids=("shot-1", "shot-3"))
+        fields = {"scenes": scenes, "shot_library": library}
+        fields.update(overrides)
+        return SceneStructure(**fields)
+
+    return _make
+
+
+@pytest.fixture()
+def make_edl():
+    """EDL 工厂（功能 007）：合法 + 五类非法变体（执行前四层校验各拒绝一类）。
+
+    - valid（默认）：5 镜头 3 分区有序，同区衔接用叠化（forbid_jump_cut_within_scene
+      约束下合法），跨区用 cut；带一条音轨；
+    - unknown_ref：引用不存在镜头（第①层拒绝）；
+    - out_of_bounds：出点越界（out_ms > 镜头时长，第②层拒绝）；
+    - cross_partition：引用未分区镜头 shot-orphan（第③层拒绝）；
+    - scene_disorder：场景顺序回退（scene-b → scene-a，第③层拒绝）；
+    - illegal_transition：转场类型不在规则库 allowed（第④层拒绝）。
+    """
+    from agents.editing.edl import EditDecisionList
+
+    _VALID_CLIPS = [
+        {
+            "shot_id": "shot-1",
+            "in_ms": 500,
+            "out_ms": 3500,
+            "transition": {"type": "dissolve", "duration_ms": 800},
+        },  # 同区衔接须叠化
+        {
+            "shot_id": "shot-2",
+            "in_ms": 0,
+            "out_ms": 3000,
+            "transition": {"type": "cut", "duration_ms": 0},
+        },  # 跨区 cut 合法
+        {
+            "shot_id": "shot-3",
+            "in_ms": 0,
+            "out_ms": 4000,
+            "transition": {"type": "dissolve", "duration_ms": 500},
+        },
+        {
+            "shot_id": "shot-4",
+            "in_ms": 200,
+            "out_ms": 3200,
+            "transition": {"type": "cut", "duration_ms": 0},
+        },
+        {
+            "shot_id": "shot-5",
+            "in_ms": 0,
+            "out_ms": 5000,
+            "transition": {"type": "cut", "duration_ms": 0},
+        },
+    ]
+
+    def _make(variant: str = "valid", **overrides):
+        import copy
+
+        clips = copy.deepcopy(_VALID_CLIPS)
+        if variant == "unknown_ref":
+            clips[0] = {**clips[0], "shot_id": "shot-999"}
+        elif variant == "out_of_bounds":
+            clips[1] = {**clips[1], "out_ms": 4500}  # shot-2 时长 4000ms
+        elif variant == "cross_partition":
+            clips[0] = {**clips[0], "shot_id": "shot-orphan"}
+        elif variant == "scene_disorder":
+            clips[0], clips[1] = (
+                {**clips[2], "transition": {"type": "cut", "duration_ms": 0}},
+                clips[0],
+            )  # scene-b 镜头提到 scene-a 之前
+        elif variant == "illegal_transition":
+            clips[0] = {**clips[0], "transition": {"type": "wipe", "duration_ms": 500}}
+        fields = {
+            "clips": clips,
+            "audio": [{"track_ref": "bgm-01", "at_ms": 0, "gain": 0.8}],
+        }
+        fields.update(overrides)
+        return EditDecisionList(**fields)
+
+    return _make
+
+
+@pytest.fixture()
+def make_shot_frames(make_shot_library):
+    """素材帧夹具（功能 007）：shot_id → numpy 帧序列（确定性程序化渐变帧）。
+
+    帧数 = 镜头时长 × fps / 1000（整除口径）；帧内容以 shot_id 哈希为种子，
+    同镜头重算逐字节一致。小尺寸（64x48）控制单测渲染耗时。
+    """
+    import blake3
+    import numpy as np
+
+    def _make(library=None, *, fps: int = 8, width: int = 64, height: int = 48):
+        library = library if library is not None else make_shot_library()
+        ys, xs = np.mgrid[0:height, 0:width]
+        frames_by_shot = {}
+        for shot in library.shots:
+            count = shot.duration_ms * fps // 1000
+            seed = int(blake3.blake3(shot.shot_id.encode()).hexdigest()[:16], 16)
+            brightness = 40 + seed % 120
+            frames = np.zeros((count, height, width, 3), dtype=np.uint8)
+            for t in range(count):
+                gray = np.clip(brightness + (xs * 0.3 + t * 2) % 100, 0, 255)
+                frames[t] = np.stack([gray, np.clip(gray + 10, 0, 255), gray], axis=-1).astype(
+                    np.uint8
+                )
+            frames_by_shot[shot.shot_id] = frames
+        return frames_by_shot
+
+    return _make
+
+
+@pytest.fixture()
+def make_audio_tracks():
+    """音轨采样夹具（功能 007）：track_ref → int16 单声道采样序列（确定性）。"""
+    import numpy as np
+
+    def _make(*, sample_rate: int = 16000, duration_s: float = 2.0):
+        n = int(round(duration_s * sample_rate))
+        t = np.arange(n, dtype=np.float64) / sample_rate
+        return {
+            "bgm-01": (0.3 * np.sin(2.0 * np.pi * 220.0 * t) * 32767.0).astype(np.int16),
+            "voice-01": (0.2 * np.sin(2.0 * np.pi * 440.0 * t) * 32767.0).astype(np.int16),
+        }
+
+    return _make
+
+
+@pytest.fixture()
+def editing_jobs_engine():
+    """剪辑运营表夹具：SQLite 内存库建 edit_render_jobs（可变表，无 immutable 触发器）。"""
+    from agents.editing.db import create_render_jobs_schema
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_render_jobs_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def editing_data_dir(tmp_path):
+    """剪辑临时数据目录夹具：artifacts（mp4 工件）/rounds（轮次收口落盘）两层结构。"""
+    base = tmp_path / "editing"
+    for sub in ("artifacts", "rounds"):
+        (base / sub).mkdir(parents=True)
+    return base
+
+
+@pytest.fixture()
+def editing_config():
+    """剪辑形态配置夹具：直接读 configs/movie.yaml 的 editing 段（真实配置路径）。"""
+    from pathlib import Path
+
+    from agents.editing.config import EditingConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return EditingConfig.from_yaml(path)

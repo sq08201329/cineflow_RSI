@@ -21,6 +21,13 @@ evaluator_weights:
     rule.av_sync: gate # 事件时间偏差 ≤ sound.av_sync_threshold_ms
     proxy.asr_transcript: 0.5 # 仅 TTS 工件适用；CER → score
     proxy.emotion_music_match: 0.5 # 仅 music 工件适用；情绪向量距离 → score
+  editing:
+    # gate 表示硬规则门禁：score 为 0 时总分直接为 0；gate 短路不跑 judge（省 LLM 成本）
+    rule.duration_compliance: gate # 总时长 ∈ target ± tolerance
+    rule.shot_distribution: gate # 镜头时长 ∈ editing.shot_limits
+    rule.transition_rules: gate # 转场规则库（与执行前校验同一配置库）
+    proxy.pacing_curve: 0.6 # 分段统计 vs pacing_baseline 加权距离
+    judge.narrative_flow: 0.4 # EDL 摘要成对比较（3 提示词 × 锚点 EDL 集）
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
@@ -103,6 +110,50 @@ sound:
     cer_cap: 0.2 # CER 归一化上限（score = 1 − min(1, CER / cer_cap)）
   emotion: # proxy.emotion_music_match 口径（决策 9：余弦距离映射）
     calibration_band: 0.5 # 校准带：余弦距离超带 → diagnostics 标低置信
+
+# 剪辑（editing）形态参数：探索预算、时长容差、镜头限制、转场规则库（执行前校验与
+# 门禁共用单一事实源）、节奏基准曲线（分段统计 + 段权重）、渲染价目与编码参数、
+# judge 提示词与锚点 EDL 集（澄清 Q1：judge 输入 = EDL 结构化文本摘要）
+editing:
+  exploration_per_round_usd: 400 # 单轮剪辑探索预算上限（预算门禁，按成片时长计价）
+  edits_per_round: 3 # 单轮 EDL 组合数
+  target_duration_s: 120 # 成片目标时长（rule.duration_compliance 对照）
+  duration_tolerance_s: 10 # 时长容差：总时长 ∈ [110, 130]s 过 gate
+  shot_limits: # 镜头时长限制（rule.shot_distribution 对照）
+    min_shot_ms: 500
+    max_shot_ms: 20000
+  transition_rules: # 转场规则库：EDL 执行前校验第④层与 rule.transition_rules 共用
+    allowed: [cut, dissolve, fade]
+    dissolve_max_ms: 2000 # 叠化时长上限
+    forbid_jump_cut_within_scene: true # 同区连续镜头禁跳切（须叠化/淡入淡出）
+  pacing_baseline: # 节奏基准 = 分段目标统计 + 段权重（决策 4；缺基准即报错，不允许静默无基准打分）
+    d_cap: 4000.0 # 加权欧氏距离归一化上限（score = 1 − min(1, d / d_cap)）
+    segments:
+      - {span: [0.0, 0.15], mean_ms: 1200, var_ms: 160000, weight: 2.0} # 前段留存权重上调
+      - {span: [0.15, 0.75], mean_ms: 4000, var_ms: 1000000, weight: 1.0}
+      - {span: [0.75, 1.0], mean_ms: 2000, var_ms: 400000, weight: 1.5}
+  render: # 渲染合成参数（决策 2：编码单线程确定性档，消除 004 x264 多线程 flake 根因）
+    fps: 8
+    width: 320
+    height: 240
+    codec: libx264
+    encode_threads: 1 # 固定单线程档：同 EDL 两次渲染逐字节一致（SC-002）
+    price_per_second_usd: 0.05 # 成片时长计价；缺价目即报错，不允许静默零成本（原则三）
+  judge: # judge.narrative_flow 委员会（决策 5）：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
+    prompts:
+      - "哪一版剪辑的叙事更连贯？"
+      - "哪一版的情绪推进更好？"
+      - "哪一版的节奏更贴合类型片？"
+    anchor_edls: # 冻结锚点 EDL 集（与候选摘要做成对比较）
+      - clips:
+          - {shot_id: "anchor-a1", in_ms: 0, out_ms: 1500, transition: {type: cut, duration_ms: 0}}
+          - {shot_id: "anchor-a2", in_ms: 0, out_ms: 2500, transition: {type: dissolve, duration_ms: 800}}
+        audio: []
+      - clips:
+          - {shot_id: "anchor-b1", in_ms: 500, out_ms: 4000, transition: {type: cut, duration_ms: 0}}
+          - {shot_id: "anchor-b2", in_ms: 0, out_ms: 3000, transition: {type: fade, duration_ms: 600}}
+        audio:
+          - {track_ref: "anchor-music", at_ms: 0, gain: 0.6}
 
 # 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）
