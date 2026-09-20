@@ -258,6 +258,72 @@ judge，quantize 6 位定点归一）；ShotList 三层执行前校验（引用�
 （`schema_version=1.0.0`：字段名/枚举值文档化）为视觉线（004）与剪辑线（007）的
 下游接入契约，快照稳定性由 `tests/unit/test_storyboard_replay.py` 断言。
 
+## 剧本降级模式（功能 009）
+
+```bash
+# 单元测试（工件/配置/摘要/导出对接/七评估器/合成/执行器/回放对比与采纳/判据材料/CLI）
+uv run pytest tests/unit -k screenplay
+
+# 契约套件（C12 禁用自动进化 + C16 周校准接入）
+uv run pytest tests/contract -k screenplay
+
+# PG 集成（0008 迁移真实执行 + 唯一键 (round_id, stage, params_hash) 幂等 +
+# 分阶段两段式落盘 + 成本对账，需 Docker PG）
+uv run pytest tests/integration -k screenplay -m integration
+
+# 无偏性验收（发布阻塞：回放 vs 真实重跑 τ ≥ 0.95；注入偏差 100% 拒绝；
+# 未达标不得产出对比报告）
+uv run pytest tests/unbiasedness -k screenplay
+
+# 闭环端到端演示（确定性夹具 + Mock 网关 + SQLite，离线可跑；六步见 quickstart）
+uv run python ops/demo_screenplay_loop.py
+
+# 产出与人工策略提交通道（CLI：produce / submit / compare / adopt / reject / evidence）
+uv run python ops/screenplay.py produce --round r1 --topic "病房里的三个月" --policy <版本>
+uv run python ops/screenplay.py submit --source-file <策略.py> --by <提交人>
+```
+
+### 为什么这个 Agent 不自动进化（宪章原则六，可机检）
+
+剧本环节的评估信号**过弱**（判据数据尚未积累），按原则六"诚实边界"以**降级模式**接入：
+
+- **策略由人编写与提交**：`policies/history/screenplay/{版本}.py` + `.meta.json`
+  （版本 = 源码 BLAKE3 前 12 位；父版本/提交人/时间/静态检查结果/名单审计）；
+- **dreaming 禁止为剧本生成候选**：配置 `dreaming.no_auto_evolve_agents: [screenplay, dev]`
+  ——`run_dream_round(agent_id="screenplay")` 命中名单即在**候选生成之前**抛
+  `AutoEvolutionForbiddenError`（**显式拒绝、非静默跳过**；0 候选 0 计费 0 落盘）。
+  契约套件三重保证：拒绝行为断言 + 默认配置实值断言（防配置漂移）+ 审计断言
+  （候选生成次数恒 0、守卫早于生成调用的源码顺序、dreaming/010 源码无 Agent 名字面量）；
+- **人工改策略走沙盘**：候选策略过静态检查（import 白名单/禁危险内建/禁私有属性）后在
+  模拟器池上**回放对比**（零 LLM，只读历史节点）→ **人工采纳才更新部署指针**
+  （未采纳指针逐字节不变，机检；拒绝同样留痕且理由非空）；
+- **升级判据持续积累**：`calibration/upgrade-events/{周期}.json` 不可变快照（阈值快照 +
+  judge 信度/漂移/门禁违规分布/人评锚点数 + **系统结论 meets|below** + 人推翻留痕，
+  推翻不改写系统结论字段）；**升级为自动进化不在本特性范围**，须另立决议并修订宪章。
+
+### 技术事实与口径
+
+- **七评估器**：四门禁（`rule.beat_structure` 节拍结构 / `rule.page_minutes` 页数-时长换算 /
+  `rule.scene_character` 场景-角色一致性 / `rule.dialogue_action_ratio` 对白行占比）+
+  两代理（`proxy.entity_consistency` 实体一致性 / `proxy.timeline_conflict` 时间线冲突）+
+  `judge.dramatic_tension`（**仅大纲阶段**；非大纲阶段"不适用"，合成按适用权重归一，
+  不伪造 0 分）；gate 短路不跑 judge，quantize 6 位定点。
+- **分阶段产出**：outline → scenes → script 各自独立节点与评估（`stage` 字段）；网关缓存键
+  与响应哈希落盘（回放核对），同输入跨轮次命中缓存零成本复现。
+- **回放匹配槽 = 策略可复现结构键**（stage/策略版本/模型与采样档/目标时长/计划摘要）：
+  生成产物摘要不进匹配键——回放只读历史节点、零 LLM（原则三）；UNKNOWN = 该结构无历史
+  覆盖，记 0 分并提示扩大记录（不编造）。
+- **无偏性 τ ≥ 0.95 为发布阻塞**（FR-013/SC-008）：未达标不得产出回放对比报告；实测 τ=1.0。
+- **010 周校准接入**：盲评对象 = 大纲阶段 top-k（`observation_match={"stage": "outline"}`
+  为 010 的**通用**观测槽过滤机制，010 内无 screenplay 特判）。
+- **与 008 分镜 schema 对接**：`export_segment(工件) -> ScriptSegment`，字段名/枚举值由
+  双向快照断言锁定（任一侧漂移即红）。
+- **人工策略首版**：`policies/history/screenplay/fa6b7bca77ed.py`（谱系根；三阶段工艺由粗到
+  细：大纲 135 行/块 → 分场 45 行/场 → 剧本 27 行/场，按目标页数铺满）。
+
+体量提示：正文按目标页数铺满（90 分钟 × 45 行/页 = 4050 行），故 90 分钟档单轮生成提示词为
+MB 级（实测 4 秒、Mock 价目下约 $2.5/轮，含 judge）；演示档用缩放页数窗口控制体量。
+
 ## 做梦层（功能 005）
 
 ```bash

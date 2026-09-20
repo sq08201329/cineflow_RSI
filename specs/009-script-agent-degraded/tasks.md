@@ -104,11 +104,11 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T933 集成测试 tests/integration/test_screenplay_pg.py（真实 PG：0008 迁移执行、唯一键幂等、分阶段两段式全链路、成本对账）
-- [ ] T934 [P] 实现端到端演示 ops/demo_screenplay_loop.py（quickstart 六步；断言退出码 0、拒绝语义、采纳门禁、判据结论）
-- [ ] T935 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
+- [X] T933 集成测试 tests/integration/test_screenplay_pg.py（真实 PG：0008 迁移执行、唯一键幂等、分阶段两段式全链路、成本对账）
+- [X] T934 [P] 实现端到端演示 ops/demo_screenplay_loop.py（quickstart 六步；断言退出码 0、拒绝语义、采纳门禁、判据结论）
+- [X] T935 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
 - [X] T937 [P] [US3] tests/unbiasedness/test_screenplay_unbiased.py（**宪章门禁 FR-013/SC-008**：剧本夹具池回放打分 vs 真实重跑（网关缓存命中下重执行 + 七评估器重算）得分序列 Kendall τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝；未达标时对比报告拒绝产出断言；参照 tests/unbiasedness/test_storyboard_unbiased.py）
-- [ ] T936 [P] 更新 README.md（剧本降级模式用法 + 禁止自动进化的说明）与 docs/二期立项书.md 里程碑表（F4 已交付注明）
+- [X] T936 [P] 更新 README.md（剧本降级模式用法 + 禁止自动进化的说明）与 docs/二期立项书.md 里程碑表（F4 已交付注明）
 
 ---
 
