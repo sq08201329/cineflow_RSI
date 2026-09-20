@@ -170,6 +170,26 @@ class Test场景1_一轮探索落树分账:
         assert sorted(r.gen_type for r in rows) == ["music", "sfx", "tts", "tts"]
         assert all(r.actual_cost_usd == pytest.approx(0.4) for r in rows)
 
+    def test_节点_policy_version_为真实策略版本(
+        self, make_sound_gen_params, tree_store, artifact_store, adapters, sound_jobs_engine, inputs
+    ):
+        """回归：谱系正确性（原则二）——节点 policy_version 必须落当前策略版本，
+        不得硬编码 agent_id（007 US1 发现的 006 遗留缺陷）。"""
+        policy = _StubPolicy(make_sound_gen_params)
+        result = _run(
+            "r1b",
+            policy,
+            tree_store,
+            artifact_store,
+            adapters,
+            sound_jobs_engine,
+            _config(),
+            inputs,
+        )
+        nodes = [n for n in tree_store.nodes_of(result.tree_id) if n.parent_id is not None]
+        assert nodes
+        assert all(n.policy_version == "sound-stub-v1" for n in nodes)
+
 
 class Test场景2_超预算拒绝:
     def test_超额拒绝已执行照常入账(

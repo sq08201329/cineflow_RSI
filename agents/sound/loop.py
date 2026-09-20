@@ -155,6 +155,7 @@ def run_sound_round(
                 round_id,
                 tree_id,
                 root_id,
+                policy_version=policy_version,
                 store=store,
                 artifacts=artifacts,
                 adapters=adapters,
@@ -282,6 +283,7 @@ def _append_job_node(
     tree_id: str,
     root_id: str,
     job_id: str,
+    policy_version: str,
     gen_type: str,
     gen_params: dict,
     artifact_hash: str,
@@ -291,7 +293,7 @@ def _append_job_node(
     cost: CostRecord,
     reason: str | None,
 ) -> str:
-    """声音节点一次性完整 INSERT（落盘即冻结）。"""
+    """声音节点一次性完整 INSERT（落盘即冻结）；policy_version 落真实策略版本（谱系正确性）。"""
     observation = {"gen_params": gen_params, "gen_type": gen_type, "job_id": job_id}
     if reason:
         observation["reject_reason"] = reason
@@ -301,7 +303,7 @@ def _append_job_node(
         parent_id=root_id,
         depth=1,
         agent_id="sound",
-        policy_version="sound",
+        policy_version=policy_version,
         prompt="",
         observation_context=observation,
         artifact_hash=artifact_hash,
@@ -322,6 +324,7 @@ def _run_job(
     tree_id: str,
     root_id: str,
     *,
+    policy_version,
     store,
     artifacts,
     adapters,
@@ -350,6 +353,7 @@ def _run_job(
             tree_id=tree_id,
             root_id=root_id,
             job_id=job_id,
+            policy_version=policy_version,
             gen_type=gen_type,
             gen_params=gen_params,
             artifact_hash=PLACEHOLDER_HASH,
@@ -382,6 +386,7 @@ def _run_job(
             tree_id=tree_id,
             root_id=root_id,
             job_id=job_id,
+            policy_version=policy_version,
             gen_type=gen_type,
             gen_params=gen_params,
             artifact_hash=PLACEHOLDER_HASH,
@@ -420,6 +425,7 @@ def _run_job(
             tree_id=tree_id,
             root_id=root_id,
             job_id=job_id,
+            policy_version=policy_version,
             gen_type=gen_type,
             gen_params=gen_params,
             artifact_hash=artifact_hash,
@@ -459,6 +465,7 @@ def _run_job(
             tree_id=tree_id,
             root_id=root_id,
             job_id=job_id,
+            policy_version=policy_version,
             gen_type=gen_type,
             gen_params=gen_params,
             artifact_hash=artifact_hash,
@@ -479,6 +486,7 @@ def _run_job(
             tree_id=tree_id,
             root_id=root_id,
             job_id=job_id,
+            policy_version=policy_version,
             gen_type=gen_type,
             gen_params=gen_params,
             artifact_hash=artifact_hash,
