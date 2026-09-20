@@ -57,6 +57,11 @@ class Test真实配置解析:
         assert sorted(cfg.emotion_vectors) == ["awe", "calm", "joyful", "sorrow", "tense"]
         assert len(cfg.emotion_vectors["tense"]) == 3
 
+    def test_对齐口径读取(self):
+        """对齐映射阈值配置化（原则五）：cos ≤ 下限 → 0 分。"""
+        cfg = StoryboardConfig.from_dict(_valid_dict())
+        assert cfg.alignment == {"cos_floor": 0.90}
+
     def test_渲染价目与编码单线程档(self):
         cfg = StoryboardConfig.from_dict(_valid_dict())
         assert cfg.render["price_per_shot_usd"] == 0.06
@@ -66,6 +71,7 @@ class Test真实配置解析:
     def test_judge_锚点集解析为_ShotList(self):
         """judge 输入 = ShotList 摘要：锚点集解析为 ShotList 供摘要。"""
         cfg = StoryboardConfig.from_dict(_valid_dict())
+        assert cfg.judge["model"] == "mock-copy-v1"
         assert len(cfg.judge["prompts"]) == 3
         assert len(cfg.anchor_shotlists) == 2
         assert all(isinstance(sl, ShotList) for sl in cfg.anchor_shotlists)
@@ -105,7 +111,7 @@ class Test缺失即报错:
 
     @pytest.mark.parametrize(
         "key",
-        ["shot_grammar", "axis_rules", "emotion_vectors", "render", "judge"],
+        ["shot_grammar", "axis_rules", "alignment", "emotion_vectors", "render", "judge"],
     )
     def test_缺结构段(self, key):
         config = _valid_dict()
@@ -193,6 +199,21 @@ class Test价目纪律:
             StoryboardConfig.from_dict(config)
 
 
+class Test对齐口径纪律:
+    def test_缺_cos_floor_即报错(self):
+        config = _valid_dict()
+        del config["storyboard"]["alignment"]["cos_floor"]
+        with pytest.raises(StoryboardConfigError, match="cos_floor"):
+            StoryboardConfig.from_dict(config)
+
+    @pytest.mark.parametrize("value", [1.0, -1.5, "0.9", True])
+    def test_cos_floor_取值域非法即报错(self, value):
+        config = _valid_dict()
+        config["storyboard"]["alignment"]["cos_floor"] = value
+        with pytest.raises(StoryboardConfigError, match="cos_floor"):
+            StoryboardConfig.from_dict(config)
+
+
 class Test情绪向量纪律:
     def test_空向量表即报错(self):
         config = _valid_dict()
@@ -219,6 +240,19 @@ class TestJudge纪律:
         config = _valid_dict()
         config["storyboard"]["judge"]["prompts"] = []
         with pytest.raises(StoryboardConfigError, match="prompts"):
+            StoryboardConfig.from_dict(config)
+
+    def test_缺模型名即报错(self):
+        """judge 走网关计费：模型名须显式配置（缺价目网关即报错，不允许静默零成本）。"""
+        config = _valid_dict()
+        del config["storyboard"]["judge"]["model"]
+        with pytest.raises(StoryboardConfigError, match="model"):
+            StoryboardConfig.from_dict(config)
+
+    def test_模型名为空即报错(self):
+        config = _valid_dict()
+        config["storyboard"]["judge"]["model"] = ""
+        with pytest.raises(StoryboardConfigError, match="model"):
             StoryboardConfig.from_dict(config)
 
     def test_锚点集为空即报错(self):

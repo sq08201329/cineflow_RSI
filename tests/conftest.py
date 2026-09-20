@@ -946,7 +946,8 @@ def make_shotlist(make_script_segment):
     """ShotList 工厂（功能 008）：合法 + 四类非法变体（执行前三层校验各拒绝一类）。
 
     - valid（默认）：3 场景 9 镜（每场景 3 镜），承接行与剧本一致、key 行逐条承接、
-      档位全部在规则库枚举内，场景内同侧（轴线基准）；
+      档位全部在规则库枚举内、场景内同侧（轴线基准）、**景别序列满足镜头语法门禁**
+      （相邻跳跃 ≤ max_size_jump=2、无同景别连续）——US2 五评估器全过路径的夹具；
     - unknown_line：承接剧本不存在的行 s1-l9（第①层拒绝）；
     - scene_uncovered：scene-2 全部镜头移除（第②层场景承接拒绝）；
     - key_line_uncovered：移除承接关键行 s2-l1 的镜头（scene-2 仍有镜头，第②层拒绝）；
@@ -1003,7 +1004,7 @@ def make_shotlist(make_script_segment):
             "shot_id": "shot-05",
             "scene_id": "scene-2",
             "covers": ["s2-l2"],
-            "shot_size": "wide",
+            "shot_size": "medium",
             "camera": "high_angle",
             "side": "A",
             "movement": "tilt",
@@ -1014,7 +1015,7 @@ def make_shotlist(make_script_segment):
             "shot_id": "shot-06",
             "scene_id": "scene-2",
             "covers": ["s2-l3"],
-            "shot_size": "close_up",
+            "shot_size": "wide",
             "camera": "eye_level",
             "side": "A",
             "movement": "handheld",
@@ -1025,7 +1026,7 @@ def make_shotlist(make_script_segment):
             "shot_id": "shot-07",
             "scene_id": "scene-3",
             "covers": ["s3-l1"],
-            "shot_size": "wide",
+            "shot_size": "medium",
             "camera": "high_angle",
             "side": "B",
             "movement": "static",
@@ -1036,7 +1037,7 @@ def make_shotlist(make_script_segment):
             "shot_id": "shot-08",
             "scene_id": "scene-3",
             "covers": ["s3-l2"],
-            "shot_size": "medium",
+            "shot_size": "close_up",
             "camera": "eye_level",
             "side": "B",
             "movement": "dolly",
@@ -1047,7 +1048,7 @@ def make_shotlist(make_script_segment):
             "shot_id": "shot-09",
             "scene_id": "scene-3",
             "covers": ["s3-l3"],  # 关键行
-            "shot_size": "close_up",
+            "shot_size": "full",
             "camera": "low_angle",
             "side": "B",
             "movement": "static",

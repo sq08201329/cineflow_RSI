@@ -179,6 +179,8 @@ storyboard:
     require_transition_on_cross: true # 侧别硬跳必须带过渡镜头
     allowed_transition_shots: 1 # 过渡镜头允许条数（越轴合法手法的豁免额度）
     side_field: side # 侧别字段名（ShotEntry.side ∈ A|B）
+  alignment: # proxy.emotion_alignment 口径（读分镜卡帧像素：余弦 → 得分映射，实现哈希即版本）
+    cos_floor: 0.90 # 余弦下限：≤ 下限 → 0 分（对齐度阈值全配置化，原则五）
   emotion_vectors: # 情绪基调向量表（归一化 RGB 色板；对齐代理读分镜卡帧像素做余弦）
     calm: [0.30, 0.55, 0.45] # 平静（青绿）
     tense: [0.75, 0.18, 0.15] # 紧张（暗红）
@@ -193,6 +195,7 @@ storyboard:
     encode_threads: 1 # 固定单线程档：消除 x264 多线程编码的非确定性
     price_per_shot_usd: 0.06 # 按镜头数计价；缺价目即报错，不允许静默零成本（原则三）
   judge: # judge.script_fit 委员会：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
+    model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
     prompts:
       - "哪一版分镜的镜头语言更贴合剧本段落？"
       - "哪一版分镜的景别节奏更能传递剧本情绪？"

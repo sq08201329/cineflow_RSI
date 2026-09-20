@@ -117,6 +117,22 @@ def _require_axis_rules(rules: dict) -> dict:
     }
 
 
+def _require_alignment(alignment: dict) -> dict:
+    """对齐口径：余弦 → 得分映射下限（proxy.emotion_alignment 阈值配置化）。"""
+    if not isinstance(alignment, dict):
+        raise StoryboardConfigError(f"storyboard.alignment 必须为 dict，实际为 {alignment!r}")
+    cos_floor = _require(alignment, "cos_floor", "storyboard.alignment")
+    if (
+        not isinstance(cos_floor, (int, float))
+        or isinstance(cos_floor, bool)
+        or not -1.0 <= float(cos_floor) < 1.0
+    ):
+        raise StoryboardConfigError(
+            f"storyboard.alignment.cos_floor 必须为 [-1, 1) 内数值，实际为 {cos_floor!r}"
+        )
+    return {"cos_floor": float(cos_floor)}
+
+
 def _require_emotion_vectors(vectors: dict) -> dict:
     """情绪基调向量表：非空；每项 3 维归一化 RGB ∈ [0, 1]（色板与余弦对照口径）。"""
     if not isinstance(vectors, dict) or not vectors:
@@ -171,16 +187,19 @@ def _require_render(render: dict) -> dict:
 
 
 def _require_judge(judge: dict) -> tuple[dict, tuple[ShotList, ...]]:
-    """judge 段：提示词非空列表 + 锚点 ShotList 集解析为 ShotList（C8 版号三段之一）。"""
+    """judge 段：模型名 + 提示词非空列表 + 锚点 ShotList 集解析为 ShotList（C8 版号三段之一）。"""
     if not isinstance(judge, dict):
         raise StoryboardConfigError(f"storyboard.judge 必须为 dict，实际为 {judge!r}")
+    model = _require(judge, "model", "storyboard.judge")
+    if not isinstance(model, str) or not model:
+        raise StoryboardConfigError(f"storyboard.judge.model 必须为非空字符串，实际为 {model!r}")
     prompts = _require(judge, "prompts", "storyboard.judge")
     prompts = _require_str_list(prompts, "storyboard.judge.prompts")
     anchors = _require(judge, "anchor_shotlists", "storyboard.judge")
     if not isinstance(anchors, list) or not anchors:
         raise StoryboardConfigError("storyboard.judge.anchor_shotlists 必须为非空列表")
     anchor_shotlists = tuple(ShotList.from_dict(anchor) for anchor in anchors)
-    return {"prompts": prompts}, anchor_shotlists
+    return {"model": model, "prompts": prompts}, anchor_shotlists
 
 
 @dataclass(frozen=True)
@@ -191,6 +210,7 @@ class StoryboardConfig:
     boards_per_round: int
     shot_grammar: dict
     axis_rules: dict
+    alignment: dict
     emotion_vectors: dict
     render: dict
     judge: dict
@@ -215,6 +235,7 @@ class StoryboardConfig:
             boards_per_round=int(_require(storyboard, "boards_per_round", "storyboard")),
             shot_grammar=_require_shot_grammar(_require(storyboard, "shot_grammar", "storyboard")),
             axis_rules=_require_axis_rules(_require(storyboard, "axis_rules", "storyboard")),
+            alignment=_require_alignment(_require(storyboard, "alignment", "storyboard")),
             emotion_vectors=_require_emotion_vectors(
                 _require(storyboard, "emotion_vectors", "storyboard")
             ),
