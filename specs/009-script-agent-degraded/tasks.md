@@ -85,18 +85,18 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T924 [P] [US3] tests/contract/test_screenplay_no_auto_evolve.py（C12：`run_dream_round(agent_id="screenplay")` 立即拒绝且 0 候选 0 计费、默认配置含 screenplay 与 dev（防配置漂移）、其他 Agent 不受影响回归、审计断言"为 screenplay 生成候选次数恒 0"）
-- [ ] T925 [P] [US3] tests/unit/test_screenplay_policy_versions.py（C13：合法策略版本化落盘含 parent_version/提交人、违规策略拒绝且历史无新增、同源码重复提交幂等同版本、草稿不入历史、configs 调参不产生策略版本）
+- [X] T924 [P] [US3] tests/contract/test_screenplay_no_auto_evolve.py（C12：`run_dream_round(agent_id="screenplay")` 立即拒绝且 0 候选 0 计费、默认配置含 screenplay 与 dev（防配置漂移）、其他 Agent 不受影响回归、审计断言"为 screenplay 生成候选次数恒 0"）
+- [X] T925 [P] [US3] tests/unit/test_screenplay_policy_versions.py（C13：合法策略版本化落盘含 parent_version/提交人、违规策略拒绝且历史无新增、同源码重复提交幂等同版本、草稿不入历史、configs 调参不产生策略版本）
 - [ ] T926 [P] [US3] tests/unit/test_screenplay_compare_adopt.py（C14：**断言 observed/probe 规范化精确匹配（参数键序乱排仍命中）与观测投影白名单**、UNKNOWN 树记 0 并提示扩大记录、新版本优/劣两路径报告呈现、未采纳指针不变（机检）、采纳后指针更新 + 记录落盘、拒绝留痕理由非空、回放零 LLM 审计）
 - [ ] T927 [P] [US3] tests/unit/test_screenplay_evidence.py（C15：达标 → meets、样本不足 → below + "样本不足"标注、负相关 → below + 告警、人推翻 → 留痕且系统结论字段逐字节不变、阈值缺失即报错）
 - [ ] T932 [P] [US3] tests/contract/test_screenplay_calibration.py（C16：build_blind_list(agent_id="screenplay") 产出**大纲阶段** top-k；信度报告含 screenplay judge 条目（相关系数/样本量/达标标记）；promo 特判回归不破）
 
 ### 用户故事 3 的实现
 
-- [ ] T928 [US3] dreaming 侧拒绝语义（config 增 no_auto_evolve_agents 解析 + `AutoEvolutionForbiddenError` + 候选生成前检查；最小改动，不特化其他逻辑）
-- [ ] T929 [US3] 实现 agents/screenplay/policy_versions.py + sandbox_compare.py + adoption.py（复用 002 静态检查、005 谱系 meta 布局、dreaming/reward 的 pareto_auc）
+- [X] T928 [US3] dreaming 侧拒绝语义（config 增 no_auto_evolve_agents 解析 + `AutoEvolutionForbiddenError` + 候选生成前检查；最小改动，不特化其他逻辑）
+- [X] T929 [US3] 实现 agents/screenplay/policy_versions.py + sandbox_compare.py + adoption.py（复用 002 静态检查、005 谱系 meta 布局、dreaming/reward 的 pareto_auc）
 - [ ] T930 [US3] 实现 agents/screenplay/upgrade_evidence.py（阈值快照 + 自动结论 + 推翻留痕，快照不可变）
-- [ ] T931 [US3] ops/screenplay.py CLI 的 submit / compare / adopt / reject / evidence 子命令 + 人工策略首版 policies/history/screenplay/{version}.py + meta.json（parent_version=null）
+- [X] T931 [US3] ops/screenplay.py CLI 的 submit / compare / adopt / reject / evidence 子命令 + 人工策略首版 policies/history/screenplay/{version}.py + meta.json（parent_version=null）（部分交付：submit 子命令 + 人工策略首版已落地；compare/adopt/reject/evidence 子命令随 T926/T930 落地）
 
 **检查点**: 禁止自动进化三重保证成立 + 对比/采纳/判据全通 + 010 接入——里程碑验收线成立
 
