@@ -678,7 +678,7 @@ def make_edl():
             "shot_id": "shot-1",
             "in_ms": 500,
             "out_ms": 3500,
-            "transition": {"type": "dissolve", "duration_ms": 800},
+            "transition": {"type": "dissolve", "duration_ms": 750},  # 帧网格对齐（8fps×750ms=6 帧）
         },  # 同区衔接须叠化
         {
             "shot_id": "shot-2",

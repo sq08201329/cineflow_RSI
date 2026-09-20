@@ -70,10 +70,18 @@ class Test拼接与转场:
 
     def test_全_cut_总时长为段长和(self, make_edl, frames):
         clips = [
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 2000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-            {"shot_id": "shot-3", "in_ms": 0, "out_ms": 3000,
-             "transition": {"type": "cut", "duration_ms": 0}},
+            {
+                "shot_id": "shot-1",
+                "in_ms": 0,
+                "out_ms": 2000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
+            {
+                "shot_id": "shot-3",
+                "in_ms": 0,
+                "out_ms": 3000,
+                "transition": {"type": "cut", "duration_ms": 0},
+            },
         ]
         _, meta = _render(make_edl(clips=clips, audio=[]), frames)
         assert meta["duration_ms"] == 5000
@@ -84,10 +92,18 @@ class Test拼接与转场:
 
         edl = EditDecisionList(
             clips=[
-                {"shot_id": "shot-1", "in_ms": 0, "out_ms": 2000,
-                 "transition": {"type": "dissolve", "duration_ms": 1000}},
-                {"shot_id": "shot-2", "in_ms": 0, "out_ms": 2000,
-                 "transition": {"type": "cut", "duration_ms": 0}},
+                {
+                    "shot_id": "shot-1",
+                    "in_ms": 0,
+                    "out_ms": 2000,
+                    "transition": {"type": "dissolve", "duration_ms": 1000},
+                },
+                {
+                    "shot_id": "shot-2",
+                    "in_ms": 0,
+                    "out_ms": 2000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
             ]
         )
         frames_out = render.compose_frames(edl, frames, fps=_FPS)
@@ -97,12 +113,14 @@ class Test拼接与转场:
         blend_end = frames_out[15]  # 叠化区末帧：α 大 → 接近后段
         prev_tail = frames["shot-1"][8:]
         next_head = frames["shot-2"][:8]
-        assert np.abs(blend_start.astype(int) - prev_tail[0].astype(int)).mean() < np.abs(
-            blend_start.astype(int) - next_head[0].astype(int)
-        ).mean()
-        assert np.abs(blend_end.astype(int) - next_head[-1].astype(int)).mean() < np.abs(
-            blend_end.astype(int) - prev_tail[-1].astype(int)
-        ).mean()
+        assert (
+            np.abs(blend_start.astype(int) - prev_tail[0].astype(int)).mean()
+            < np.abs(blend_start.astype(int) - next_head[0].astype(int)).mean()
+        )
+        assert (
+            np.abs(blend_end.astype(int) - next_head[-1].astype(int)).mean()
+            < np.abs(blend_end.astype(int) - prev_tail[-1].astype(int)).mean()
+        )
 
 
 class Test混音:
