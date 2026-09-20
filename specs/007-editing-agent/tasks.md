@@ -28,7 +28,7 @@
 - [x] T709 [P] 渲染合成测试 tests/unit/test_editing_render.py（同 EDL 两次 mp4 逐字节一致、单线程确定性编码参数断言、叠化/混音元数据正确、元数据镜头时长序列与 EDL 一致）
 - [x] T710 [P] 实现 agents/editing/render.py（numpy 定点拼接/叠化 alpha 混合/混音增益叠加 → mp4，复用 004 encode_mp4 路径并固定单线程档——消除 x264 flake 根因）
 - [x] T711 [P] 配置测试 tests/unit/test_editing_config.py（editing 段解析、基准曲线缺失即报错、价目缺失即报错、judge 锚点集解析）
-- [ ] T712 [P] 实现 agents/editing/config.py
+- [x] T712 [P] 实现 agents/editing/config.py
 - [ ] T713 [P] 摘要函数测试 tests/unit/test_editing_summary.py（EDL → 结构化文本确定性、同 EDL 重算逐字节一致、摘要函数哈希稳定）
 - [ ] T714 [P] 实现 agents/editing/summary.py
 
