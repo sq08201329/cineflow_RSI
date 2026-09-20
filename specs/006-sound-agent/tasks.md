@@ -40,14 +40,14 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T611 [P] [US1] 适配器契约测试 tests/contract/test_sound_platform_contract.py（C9~C12：estimate ≤ actual、wav 可解析、元数据键齐全、错误分型、模拟全过/真实无凭证 skip——三类型 × 双实现同构）
-- [ ] T612 [P] [US1] 执行器测试 tests/unit/test_sound_loop.py（C1 场景 1~5：一轮 4 组参数落树分账齐全、超界拒绝已执行入账、同 round_id 重建 0 重复扣费、失败 job 成本照计入账、TimingSheet 非法执行前拒绝 0 调用；评估器以桩注入）
+- [x] T611 [P] [US1] 适配器契约测试 tests/contract/test_sound_platform_contract.py（C9~C12：estimate ≤ actual、wav 可解析、元数据键齐全、错误分型、模拟全过/真实无凭证 skip——三类型 × 双实现同构）
+- [x] T612 [P] [US1] 执行器测试 tests/unit/test_sound_loop.py（C1 场景 1~5：一轮 4 组参数落树分账齐全、超界拒绝已执行入账、同 round_id 重建 0 重复扣费、失败 job 成本照计入账、TimingSheet 非法执行前拒绝 0 调用；评估器以桩注入）
 
 ### 用户故事 1 的实现
 
-- [ ] T613 [US1] 实现 agents/sound/platform/base.py（协议 + 错误分型 + GeneratedAudio）+ simulated.py（TTS/SFX/Music 三模拟器；依赖 T608）
-- [ ] T614 [P] [US1] 实现 agents/sound/platform/http_real.py（三真实骨架，SOUND_TTS_*/SFX_*/MUSIC_* 环境变量，无凭证 skip 语义）
-- [ ] T615 [US1] 实现 agents/sound/loop.py（预算门禁申请前校验 + 事务复核、按 gen_type 分账、幂等派生 + 唯一键重建、评估器协议注入、两段式落盘；依赖 T604、T606、T610、T613）
+- [x] T613 [US1] 实现 agents/sound/platform/base.py（协议 + 错误分型 + GeneratedAudio）+ simulated.py（TTS/SFX/Music 三模拟器；依赖 T608）
+- [x] T614 [P] [US1] 实现 agents/sound/platform/http_real.py（三真实骨架，SOUND_TTS_*/SFX_*/MUSIC_* 环境变量，无凭证 skip 语义）
+- [x] T615 [US1] 实现 agents/sound/loop.py（预算门禁申请前校验 + 事务复核、按 gen_type 分账、幂等派生 + 唯一键重建、评估器协议注入、两段式落盘；依赖 T604、T606、T610、T613）
 
 **检查点**: 一轮探索（模拟器）工件落树 + 分账 + 幂等成立——MVP 成立
 
