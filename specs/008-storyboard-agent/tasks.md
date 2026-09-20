@@ -44,14 +44,14 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T815 [P] [US1] 预演契约测试 tests/contract/test_storyboard_platform_contract.py（C10~C13：estimate ≥ actual、mp4 可探测时长/帧率符合配置、元数据键齐全（景别序列/帧哈希/音轨标记）、错误分型、模拟全过/真实 skip）
-- [ ] T816 [P] [US1] 执行器测试 tests/unit/test_storyboard_loop.py（C1/C2 全场景：四类非法执行前拒绝 0 渲染 0 成本、一轮 3 组落树、预算超界拒绝已执行入账、同 round_id 重建 0 重复、渲染失败成本照计、剧本不足预检拒绝注明、双键观测（shotlist + gen_params）、freeze_round_tree 终态门禁；评估器桩注入）
+- [X] T815 [P] [US1] 预演契约测试 tests/contract/test_storyboard_platform_contract.py（C10~C13：estimate ≥ actual、mp4 可探测时长/帧率符合配置、元数据键齐全（景别序列/帧哈希/音轨标记）、错误分型、模拟全过/真实 skip）
+- [X] T816 [P] [US1] 执行器测试 tests/unit/test_storyboard_loop.py（C1/C2 全场景：四类非法执行前拒绝 0 渲染 0 成本、一轮 3 组落树、预算超界拒绝已执行入账、同 round_id 重建 0 重复、渲染失败成本照计、剧本不足预检拒绝注明、双键观测（shotlist + gen_params）、freeze_round_tree 终态门禁；评估器桩注入）
 
 ### 用户故事 1 的实现
 
-- [ ] T817 [US1] 实现 agents/storyboard/platform/base.py（协议 + 错误分型 + RenderedAnimatic）+ simulated.py（确定性模拟渲染器，用 T810；estimated ≥ actual）
-- [ ] T818 [P] [US1] 实现 agents/storyboard/platform/http_real.py（STORYBOARD_RENDER_* 环境变量骨架，无凭证 skip）
-- [ ] T819 [US1] 实现 agents/storyboard/loop.py（run_storyboard_round：三层校验前置 → 预算门禁 → 渲染 → 内容寻址 → 评估器协议注入 → quantize → 一次性 INSERT → 双键观测 + freeze_round_tree；依赖 T804、T808、T812、T817）
+- [X] T817 [US1] 实现 agents/storyboard/platform/base.py（协议 + 错误分型 + RenderedAnimatic）+ simulated.py（确定性模拟渲染器，用 T810；estimated ≥ actual）
+- [X] T818 [P] [US1] 实现 agents/storyboard/platform/http_real.py（STORYBOARD_RENDER_* 环境变量骨架，无凭证 skip）
+- [X] T819 [US1] 实现 agents/storyboard/loop.py（run_storyboard_round：三层校验前置 → 预算门禁 → 渲染 → 内容寻址 → 评估器协议注入 → quantize → 一次性 INSERT → 双键观测 + freeze_round_tree；依赖 T804、T808、T812、T817）
 
 **检查点**: 一轮分镜（模拟渲染器）预演落树 + 幂等 + 非法拒绝成立——MVP 成立
 
