@@ -60,9 +60,7 @@ class Test合法录入:
             make_anchor_entry(node_id=nid, score=0.7, reviewer="reviewer-1") for nid in node_ids
         ]
         with anchors_engine.begin() as conn:
-            accepted = intake_anchors(
-                conn, round_.round_id, entries, data_dir=calibration_data_dir
-            )
+            accepted = intake_anchors(conn, round_.round_id, entries, data_dir=calibration_data_dir)
         assert accepted == 3
         rows = _rows(anchors_engine)
         assert len(rows) == 3
@@ -85,7 +83,10 @@ class Test逐条拒绝不中断:
         rejections: list = []
         with anchors_engine.begin() as conn:
             accepted = intake_anchors(
-                conn, round_.round_id, entries, data_dir=calibration_data_dir,
+                conn,
+                round_.round_id,
+                entries,
+                data_dir=calibration_data_dir,
                 rejections=rejections,
             )
         assert accepted == 1
@@ -149,7 +150,10 @@ class Test幂等拒绝:
         rejections: list = []
         with anchors_engine.begin() as conn:
             accepted = intake_anchors(
-                conn, round_.round_id, [entry], data_dir=calibration_data_dir,
+                conn,
+                round_.round_id,
+                [entry],
+                data_dir=calibration_data_dir,
                 rejections=rejections,
             )
         assert accepted == 0
@@ -177,9 +181,7 @@ class Test幂等拒绝:
             make_anchor_entry(node_id=node_ids[0], score=0.9, reviewer="r2"),
         ]
         with anchors_engine.begin() as conn:
-            accepted = intake_anchors(
-                conn, round_.round_id, entries, data_dir=calibration_data_dir
-            )
+            accepted = intake_anchors(conn, round_.round_id, entries, data_dir=calibration_data_dir)
         assert accepted == 2
 
 
@@ -187,9 +189,7 @@ class Test轮次门禁:
     def test_轮次不存在报错(self, anchors_engine, calibration_data_dir):
         with anchors_engine.begin() as conn:
             with pytest.raises(ValidationError, match="不存在"):
-                intake_anchors(
-                    conn, "ghost-round", [], data_dir=calibration_data_dir
-                )
+                intake_anchors(conn, "ghost-round", [], data_dir=calibration_data_dir)
 
     def test_closed_轮次拒绝录入(
         self, anchors_engine, round_with_list, calibration_data_dir, make_anchor_entry

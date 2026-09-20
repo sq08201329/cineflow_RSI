@@ -75,8 +75,9 @@ def _calibrated(config: SoundConfig, gen_type: str, seed: int, **extra) -> dict:
         "emotion_vector": [0.5, 0.5],
         **extra,
     }
-    wav0, _ = synthesize_wav({**base, "loudness_gain_db": 0.0}, config.simulated_gen,
-                             config.sample_rate)
+    wav0, _ = synthesize_wav(
+        {**base, "loudness_gain_db": 0.0}, config.simulated_gen, config.sample_rate
+    )
     gain = float(config.loudness[tier]["target_lufs"]) - measure_loudness_lufs(
         decode_wav_samples(wav0), config.sample_rate
     )
@@ -198,8 +199,10 @@ def main() -> int:
             config=small,
             inputs=INPUTS,
         )
-        step2 = {"jobs": [j["status"] for j in budget_result.jobs],
-                 "spent_usd": budget_result.spent_usd}
+        step2 = {
+            "jobs": [j["status"] for j in budget_result.jobs],
+            "spent_usd": budget_result.spent_usd,
+        }
         step2["ok"] = step2["jobs"] == ["inserted", "inserted", "rejected", "rejected"] and (
             budget_result.spent_usd == 0.8
         )
@@ -244,37 +247,37 @@ def main() -> int:
             config=config,
             inputs=INPUTS,
         )
-        gate_node = next(
-            n for n in store.nodes_of(gate_result.tree_id) if n.parent_id is not None
-        )
+        gate_node = next(n for n in store.nodes_of(gate_result.tree_id) if n.parent_id is not None)
         step4 = {
             "breakdown_sizes": breakdown_sizes,
             "recompute_consistent": recompute_ok,
             "gate_violation_score": gate_node.score,
         }
-        step4["ok"] = (
-            breakdown_sizes == [4] and recompute_ok and gate_node.score == 0.0
-        )
+        step4["ok"] = breakdown_sizes == [4] and recompute_ok and gate_node.score == 0.0
         report["steps"]["4_四评估器gate定点重算"] = step4
 
         # ---- 步骤 5：无偏性（回放 vs 真实重跑 τ ≥ 0.95）----
         freeze_round_tree("demo-r1", store, engine)
         pool = SimulatorPool(store)
-        pool.add_tree(next(t for t in store.trees_by(agent_id="sound")
-                           if t.tree_id == result.tree_id))
-        simulator = pool.build(
-            worker_count=1, budget=Budget(max_probes=8), latency_quantum_ms=0
+        pool.add_tree(
+            next(t for t in store.trees_by(agent_id="sound") if t.tree_id == result.tree_id)
         )
+        simulator = pool.build(worker_count=1, budget=Budget(max_probes=8), latency_quantum_ms=0)
         replay_scores = []
         for plan_item in plans:
-            probe = simulator.probe(store.get_node(
-                f"{result.tree_id}-root").node_id, plan_item["gen_params"])
+            probe = simulator.probe(
+                store.get_node(f"{result.tree_id}-root").node_id, plan_item["gen_params"]
+            )
             assert probe.status == "ok"
             replay_scores.append(probe.nodes[0].score)
         real_scores = [_real_rerun_score(p["gen_params"], config) for p in plans]
         unbiased = verify_unbiasedness(real_scores, replay_scores)
-        step5 = {"tau": unbiased.tau, "verdict": unbiased.verdict,
-                 "real": real_scores, "replay": replay_scores}
+        step5 = {
+            "tau": unbiased.tau,
+            "verdict": unbiased.verdict,
+            "real": real_scores,
+            "replay": replay_scores,
+        }
         step5["ok"] = unbiased.verdict == "pass" and unbiased.tau >= 0.95
         report["steps"]["5_无偏性tau"] = step5
 
@@ -368,18 +371,32 @@ def _dream_pool(store) -> SimulatorPool:
         store.create_tree(tree)
         store.append_node(
             TreeNode(
-                node_id=root_id, tree_id=tree_id, parent_id=None, depth=0,
-                agent_id="sound", policy_version="demo-champion", prompt="",
-                observation_context={"gen_params": {}}, artifact_hash="ab" * 32,
-                eval_breakdown={}, score=0.4, cost=CostRecord(),
-                status=NodeStatus.EVALUATED, created_at=float(t * 10),
+                node_id=root_id,
+                tree_id=tree_id,
+                parent_id=None,
+                depth=0,
+                agent_id="sound",
+                policy_version="demo-champion",
+                prompt="",
+                observation_context={"gen_params": {}},
+                artifact_hash="ab" * 32,
+                eval_breakdown={},
+                score=0.4,
+                cost=CostRecord(),
+                status=NodeStatus.EVALUATED,
+                created_at=float(t * 10),
             )
         )
         for i, params in enumerate(grid):
             store.append_node(
                 TreeNode(
-                    node_id=new_id(), tree_id=tree_id, parent_id=root_id, depth=1,
-                    agent_id="sound", policy_version="demo-champion", prompt="",
+                    node_id=new_id(),
+                    tree_id=tree_id,
+                    parent_id=root_id,
+                    depth=1,
+                    agent_id="sound",
+                    policy_version="demo-champion",
+                    prompt="",
                     observation_context={
                         "gen_params": params,
                         "gen_type": params["gen_type"],
@@ -387,8 +404,10 @@ def _dream_pool(store) -> SimulatorPool:
                     },
                     artifact_hash="ab" * 32,
                     eval_breakdown={"rule.x@1": {"score": 0.5}},
-                    score=0.5 + 0.05 * t + 0.05 * i, cost=CostRecord(llm_calls=1),
-                    status=NodeStatus.EVALUATED, created_at=float(t * 10 + 1 + i),
+                    score=0.5 + 0.05 * t + 0.05 * i,
+                    cost=CostRecord(llm_calls=1),
+                    status=NodeStatus.EVALUATED,
+                    created_at=float(t * 10 + 1 + i),
                 )
             )
         pool.add_tree(tree)

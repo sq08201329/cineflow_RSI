@@ -18,9 +18,7 @@ _PERIOD = "2026-W39"
 
 def _pairs(key: str, anchor_scores: list[float]) -> list[PairingRecord]:
     return [
-        PairingRecord(
-            anchor_id=f"a{i}", evaluator_key=key, anchor_score=a, auto_score=0.5
-        )
+        PairingRecord(anchor_id=f"a{i}", evaluator_key=key, anchor_score=a, auto_score=0.5)
         for i, a in enumerate(anchor_scores)
     ]
 

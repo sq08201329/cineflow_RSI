@@ -48,9 +48,7 @@ def _walk_keys(payload):
 
 
 class TestTopK降序:
-    def test_周期内12节点取5条降序(
-        self, tree_store, build_calibration_tree, calibration_data_dir
-    ):
+    def test_周期内12节点取5条降序(self, tree_store, build_calibration_tree, calibration_data_dir):
         scores = [0.1, 0.9, 0.5, 0.3, 0.8, 0.2, 0.95, 0.4, 0.6, 0.7, 0.15, 0.85]
         _, node_ids = build_calibration_tree(
             _specs(scores), agent_id="visual", base_created_at=_BASE_TS
@@ -65,18 +63,14 @@ class TestTopK降序:
         )
         assert len(round_.node_ids) == 5
         # 期望顺序 = score 降序前五
-        expected = [
-            node_ids[scores.index(s)] for s in sorted(scores, reverse=True)[:5]
-        ]
+        expected = [node_ids[scores.index(s)] for s in sorted(scores, reverse=True)[:5]]
         assert list(round_.node_ids) == expected
         assert round_.status is RoundStatus.OPEN
         assert round_.note == ""
 
     def test_周期外节点不入清单(self, tree_store, build_calibration_tree, calibration_data_dir):
         # 周期内 2 个 + 周期外（2025 年）1 个高分节点
-        build_calibration_tree(
-            _specs([0.5, 0.6]), agent_id="visual", base_created_at=_BASE_TS
-        )
+        build_calibration_tree(_specs([0.5, 0.6]), agent_id="visual", base_created_at=_BASE_TS)
         build_calibration_tree(
             _specs([0.99]),
             agent_id="visual",

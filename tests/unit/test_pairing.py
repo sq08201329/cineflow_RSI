@@ -52,9 +52,7 @@ def visual_node(tree_store, build_calibration_tree):
 
 class Test自循环剔除:
     def test_platform_truth_剔除自身分量(self, tree_store, promo_node):
-        records = pair_anchors(
-            [_anchor(promo_node, "platform_truth")], tree_store, _EXCLUSIONS
-        )
+        records = pair_anchors([_anchor(promo_node, "platform_truth")], tree_store, _EXCLUSIONS)
         by_key = {r.evaluator_key: r for r in records}
         excluded = by_key["human.platform_metrics@1.0.0"]
         assert excluded.excluded is True

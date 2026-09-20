@@ -150,13 +150,9 @@ class TestPairingRecord:
 
     def test_得分域校验(self):
         with pytest.raises(ValidationError, match="anchor_score"):
-            PairingRecord(
-                anchor_id="a1", evaluator_key="e@1", anchor_score=1.5, auto_score=0.5
-            )
+            PairingRecord(anchor_id="a1", evaluator_key="e@1", anchor_score=1.5, auto_score=0.5)
         with pytest.raises(ValidationError, match="auto_score"):
-            PairingRecord(
-                anchor_id="a1", evaluator_key="e@1", anchor_score=0.5, auto_score=-0.1
-            )
+            PairingRecord(anchor_id="a1", evaluator_key="e@1", anchor_score=0.5, auto_score=-0.1)
 
 
 class TestBiasRecord:
@@ -180,9 +176,7 @@ class TestBiasRecord:
         assert record.pearson_r is None
 
     def test_样本不足不产偏差值(self):
-        record = BiasRecord(
-            evaluator_key="e@1", period="2026-W39", samples=2, note="样本不足"
-        )
+        record = BiasRecord(evaluator_key="e@1", period="2026-W39", samples=2, note="样本不足")
         assert record.mean_shift is None and record.pearson_r is None
 
     @pytest.mark.parametrize("field", ["pearson_r", "kendall_tau"])

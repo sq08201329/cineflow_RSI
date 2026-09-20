@@ -107,17 +107,19 @@ class Test迁移0005真实执行:
             conn.execute(insert(sound_gen_jobs).values(**_JOB))
         with pytest.raises(IntegrityError):
             with migrated_engine.begin() as conn:
-                conn.execute(
-                    insert(sound_gen_jobs).values(**{**_JOB, "job_id": "pg-j2"})
-                )
+                conn.execute(insert(sound_gen_jobs).values(**{**_JOB, "job_id": "pg-j2"}))
 
     def test_实际成本超预估被_CHECK_拒绝(self, migrated_engine):
         with pytest.raises(IntegrityError):
             with migrated_engine.begin() as conn:
                 conn.execute(
                     insert(sound_gen_jobs).values(
-                        **{**_JOB, "job_id": "pg-j3", "params_hash": "bb" * 32,
-                           "actual_cost_usd": 0.6}
+                        **{
+                            **_JOB,
+                            "job_id": "pg-j3",
+                            "params_hash": "bb" * 32,
+                            "actual_cost_usd": 0.6,
+                        }
                     )
                 )
 

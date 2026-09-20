@@ -32,9 +32,7 @@ _CONFIG = CalibrationConfig.from_dict(
 
 
 @pytest.fixture()
-def round_with_anchors(
-    tree_store, build_calibration_tree, anchors_engine, calibration_data_dir
-):
+def round_with_anchors(tree_store, build_calibration_tree, anchors_engine, calibration_data_dir):
     """3 节点树 + 轮次 + 3 条人评锚点入库（intake 态）。"""
     breakdown = {
         "proxy.aesthetic@1.0.0": {"score": 0.6},

@@ -96,8 +96,11 @@ class Test唯一键与域约束:
         with pytest.raises(IntegrityError):
             with migrated_engine.begin() as conn:
                 conn.execute(
-                    text(_ANCHOR.replace("'a1'", "'a3'").replace("0.8", "1.2")
-                         .replace("'n1'", "'n2'")),
+                    text(
+                        _ANCHOR.replace("'a1'", "'a3'")
+                        .replace("0.8", "1.2")
+                        .replace("'n1'", "'n2'")
+                    ),
                     {"hash": "ef" * 32},
                 )
 
@@ -126,9 +129,17 @@ class Test生效管线对真实配置副本:
         for sub in ("rounds", "ledger", "reports", "proposals"):
             (data_dir / sub).mkdir(parents=True)
         append_ledger(
-            data_dir, "visual",
-            [BiasRecord(evaluator_key="proxy.aesthetic@1.0.0", period="2026-W38", samples=5,
-                        mean_shift=0.2, pearson_r=0.7)],
+            data_dir,
+            "visual",
+            [
+                BiasRecord(
+                    evaluator_key="proxy.aesthetic@1.0.0",
+                    period="2026-W38",
+                    samples=5,
+                    mean_shift=0.2,
+                    pearson_r=0.7,
+                )
+            ],
         )
         cfg = CalibrationConfig.from_yaml(config_copy)
         weights = {
@@ -139,8 +150,9 @@ class Test生效管线对真实配置副本:
             "judge.cinematic": 0.25,
         }
         pairs = [
-            PairingRecord(anchor_id=f"a{i}", evaluator_key=key,
-                          anchor_score=0.65 + i * 0.05, auto_score=auto)
+            PairingRecord(
+                anchor_id=f"a{i}", evaluator_key=key, anchor_score=0.65 + i * 0.05, auto_score=auto
+            )
             for i in range(5)
             for key, auto in (
                 ("proxy.aesthetic@1.0.0", 0.3 + i * 0.05),
@@ -151,17 +163,30 @@ class Test生效管线对真实配置副本:
         ]
         proposal = maybe_propose(
             agent_id="visual",
-            bias_records=[BiasRecord(evaluator_key="proxy.aesthetic@1.0.0", period="2026-W38",
-                                     samples=5, mean_shift=0.2, pearson_r=0.7)],
-            pairs=pairs, current_weights=weights, cfg=cfg, has_history=True,
+            bias_records=[
+                BiasRecord(
+                    evaluator_key="proxy.aesthetic@1.0.0",
+                    period="2026-W38",
+                    samples=5,
+                    mean_shift=0.2,
+                    pearson_r=0.7,
+                )
+            ],
+            pairs=pairs,
+            current_weights=weights,
+            cfg=cfg,
+            has_history=True,
             data_dir=data_dir,
             fixed_keys=frozenset({"rule.format_compliance"}),
         )
         assert proposal is not None
 
         new_version = confirm_proposal(
-            data_dir, config_copy, proposal_id=proposal.proposal_id,
-            by="ops-user", registry=Registry(),
+            data_dir,
+            config_copy,
+            proposal_id=proposal.proposal_id,
+            by="ops-user",
+            registry=Registry(),
         )
         text = config_copy.read_text(encoding="utf-8")
         assert "    rule.format_compliance: gate\n" in text  # gate 行不动

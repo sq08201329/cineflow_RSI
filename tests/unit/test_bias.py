@@ -22,9 +22,7 @@ _PERIOD = "2026-W39"
 
 def _pairs(pairs: list[tuple[float, float]], key: str = _KEY) -> list[PairingRecord]:
     return [
-        PairingRecord(
-            anchor_id=f"a{i}", evaluator_key=key, anchor_score=a, auto_score=s
-        )
+        PairingRecord(anchor_id=f"a{i}", evaluator_key=key, anchor_score=a, auto_score=s)
         for i, (a, s) in enumerate(pairs)
     ]
 
@@ -139,8 +137,6 @@ class Test样本不足:
                 note="防自循环剔除",
             )
         )
-        record = compute_bias(
-            pairs, evaluator_key=_KEY, period=_PERIOD, min_samples=3
-        )
+        record = compute_bias(pairs, evaluator_key=_KEY, period=_PERIOD, min_samples=3)
         assert record.samples == 2  # 剔除记录不计样本
         assert "样本不足" in record.note

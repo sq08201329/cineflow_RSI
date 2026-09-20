@@ -248,11 +248,7 @@ def _raw_config(config_path, pointer_block=""):
 def _changed_lines(before: str, after: str, sign: str) -> list[str]:
     """unified diff 中指定方向（+/-）的真实变更行（排除文件头 +++/---）。"""
     diff = difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
-    return [
-        line
-        for line in diff
-        if line.startswith(sign) and not line.startswith(sign * 3)
-    ]
+    return [line for line in diff if line.startswith(sign) and not line.startswith(sign * 3)]
 
 
 class Test部署指针保注释:
@@ -329,9 +325,9 @@ class Test部署指针保注释:
         # 原文逐字节保留（deployment 段仅追加在文件尾）
         assert after.startswith(before)
         winner = env["round"].winner_version
-        assert yaml.safe_load(after)["deployment"]["agent-dream"][
-            "current_policy_version"
-        ] == winner
+        assert (
+            yaml.safe_load(after)["deployment"]["agent-dream"]["current_policy_version"] == winner
+        )
         pointer = current_policy_version(
             "agent-dream", env["config_path"], history_root=env["history_root"]
         )

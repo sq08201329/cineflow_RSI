@@ -158,16 +158,18 @@ class TestC2人评录入:
         self, anchors_engine, open_round, visual_tree, calibration_data_dir
     ):
         entries = [
-            {"node_id": nid, "score": 0.7, "reviewer": "r1"}
-            for nid in open_round.node_ids[:3]
+            {"node_id": nid, "score": 0.7, "reviewer": "r1"} for nid in open_round.node_ids[:3]
         ]
         entries.append({"node_id": open_round.node_ids[3], "score": 1.2, "reviewer": "r1"})
         entries.append(dict(entries[0]))  # 同键重复
         rejections: list = []
         with anchors_engine.begin() as conn:
             accepted = intake_anchors(
-                conn, open_round.round_id, entries,
-                data_dir=calibration_data_dir, rejections=rejections,
+                conn,
+                open_round.round_id,
+                entries,
+                data_dir=calibration_data_dir,
+                rejections=rejections,
             )
         assert accepted == 3
         assert len(rejections) == 2  # 越界 + 重复各一，整批不中断
@@ -197,9 +199,7 @@ class TestC3平台真值锚点:
             )
         assert len(first) == 12 and second == []
         with anchors_engine.connect() as conn:
-            rows = conn.execute(
-                text("SELECT source, reviewer FROM calibration_anchors")
-            ).all()
+            rows = conn.execute(text("SELECT source, reviewer FROM calibration_anchors")).all()
         assert len(rows) == 12
         assert all(row[0] == "platform_truth" for row in rows)
 
@@ -209,22 +209,31 @@ class TestC4配对:
         from core.calibration.models import AnchorScore
 
         _, promo_nodes = build_calibration_tree(
-            [(0.45, {
-                "human.platform_metrics@1.0.0": {"score": 0.5},
-                "proxy.ctr_history@1.0.0": {"score": 0.4},
-            })],
+            [
+                (
+                    0.45,
+                    {
+                        "human.platform_metrics@1.0.0": {"score": 0.5},
+                        "proxy.ctr_history@1.0.0": {"score": 0.4},
+                    },
+                )
+            ],
             agent_id="promo",
         )
-        _, visual_nodes = build_calibration_tree(
-            [(0.65, dict(_BREAKDOWN))], agent_id="visual"
-        )
+        _, visual_nodes = build_calibration_tree([(0.65, dict(_BREAKDOWN))], agent_id="visual")
         exclusions = {"platform_truth": ("human.platform_metrics",)}
 
         def _anchor(node_id, source):
             return AnchorScore(
-                anchor_id=f"a-{node_id}", node_id=node_id, artifact_hash="ab" * 32,
-                agent_id="x", source=source, score=0.8, reviewer="r1",
-                round_id="r", created_at="2026-09-19T00:00:00+00:00",
+                anchor_id=f"a-{node_id}",
+                node_id=node_id,
+                artifact_hash="ab" * 32,
+                agent_id="x",
+                source=source,
+                score=0.8,
+                reviewer="r1",
+                round_id="r",
+                created_at="2026-09-19T00:00:00+00:00",
             )
 
         promo_records = pair_anchors(
@@ -234,8 +243,7 @@ class TestC4配对:
         assert len(excluded) == 1
         assert excluded[0].excluded_components == ("human.platform_metrics",)
         assert any(
-            r.evaluator_key == "proxy.ctr_history@1.0.0" and not r.excluded
-            for r in promo_records
+            r.evaluator_key == "proxy.ctr_history@1.0.0" and not r.excluded for r in promo_records
         )
 
         visual_records = pair_anchors(
@@ -251,12 +259,14 @@ class TestC5偏差数学:
         from core.calibration.models import PairingRecord
 
         pairs = [
-            PairingRecord(anchor_id=f"a{i}", evaluator_key="proxy.a@1.0.0",
-                          anchor_score=a, auto_score=s)
+            PairingRecord(
+                anchor_id=f"a{i}", evaluator_key="proxy.a@1.0.0", anchor_score=a, auto_score=s
+            )
             for i, (a, s) in enumerate(zip(anchors, autos, strict=True))
         ]
-        record = compute_bias(pairs, evaluator_key="proxy.a@1.0.0", period="2026-W38",
-                              min_samples=3)
+        record = compute_bias(
+            pairs, evaluator_key="proxy.a@1.0.0", period="2026-W38", min_samples=3
+        )
         assert record.mean_shift == pytest.approx(0.2, abs=1e-6)
         assert record.pearson_r == pytest.approx(1.0, abs=1e-9)
 
@@ -273,14 +283,24 @@ class TestC5偏差数学:
 
 class TestC6台账与报告:
     def test_append_only_逐字节不变与报告_schema(self, calibration_data_dir):
-        first = BiasRecord(evaluator_key="proxy.a@1.0.0", period="2026-W38", samples=5,
-                           mean_shift=0.1, pearson_r=0.55)
+        first = BiasRecord(
+            evaluator_key="proxy.a@1.0.0",
+            period="2026-W38",
+            samples=5,
+            mean_shift=0.1,
+            pearson_r=0.55,
+        )
         append_ledger(calibration_data_dir, "visual", [first])
         path = calibration_data_dir / "ledger" / "visual" / "proxy.a.jsonl"
         before = path.read_bytes()
 
-        second = BiasRecord(evaluator_key="proxy.a@1.0.0", period="2026-W39", samples=5,
-                            mean_shift=0.05, pearson_r=0.62)
+        second = BiasRecord(
+            evaluator_key="proxy.a@1.0.0",
+            period="2026-W39",
+            samples=5,
+            mean_shift=0.05,
+            pearson_r=0.62,
+        )
         append_ledger(calibration_data_dir, "visual", [second])
         after = path.read_bytes()
         assert after.startswith(before)  # 首轮行逐字节不变
@@ -303,39 +323,70 @@ class TestC6台账与报告:
 
         before = _snapshot()
         append_ledger(
-            calibration_data_dir, "visual",
-            [BiasRecord(evaluator_key="proxy.a@1.0.0", period="2026-W39", samples=5,
-                        mean_shift=0.1, pearson_r=0.6)],
+            calibration_data_dir,
+            "visual",
+            [
+                BiasRecord(
+                    evaluator_key="proxy.a@1.0.0",
+                    period="2026-W39",
+                    samples=5,
+                    mean_shift=0.1,
+                    pearson_r=0.6,
+                )
+            ],
         )
         assert _snapshot() == before
 
 
 class TestC7提案生成:
     def _records(self, shift=0.2, pearson=0.7, samples=5):
-        return [BiasRecord(evaluator_key="proxy.aesthetic@1.0.0", period="2026-W38",
-                           samples=samples, mean_shift=shift, pearson_r=pearson)]
+        return [
+            BiasRecord(
+                evaluator_key="proxy.aesthetic@1.0.0",
+                period="2026-W38",
+                samples=samples,
+                mean_shift=shift,
+                pearson_r=pearson,
+            )
+        ]
 
     def _pairs(self):
         from core.calibration.models import PairingRecord
 
         return [
-            PairingRecord(anchor_id=f"a{i}", evaluator_key=key,
-                          anchor_score=0.6 + i * 0.05, auto_score=auto)
+            PairingRecord(
+                anchor_id=f"a{i}", evaluator_key=key, anchor_score=0.6 + i * 0.05, auto_score=auto
+            )
             for i in range(5)
-            for key, auto in (("proxy.aesthetic@1.0.0", 0.4 + i * 0.05),
-                              ("judge.cinematic@1.0.0", 0.6))
+            for key, auto in (
+                ("proxy.aesthetic@1.0.0", 0.4 + i * 0.05),
+                ("judge.cinematic@1.0.0", 0.6),
+            )
         ]
 
     def test_四路径(self, calibration_data_dir):
         weights = {"rule.format_compliance": 0.0, "proxy.aesthetic": 0.5, "judge.cinematic": 0.5}
-        base = dict(agent_id="visual", pairs=self._pairs(), current_weights=weights,
-                    has_history=True, data_dir=calibration_data_dir,
-                    fixed_keys=_GATE_KEYS)
-        cfg = CalibrationConfig.from_dict({"calibration": {
-            "period_days": 7, "top_k": 5, "min_samples": 3, "bias_threshold": 0.15,
-            "reliability_target": 0.6, "ridge_lambda": 1.0,
-            "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
-        }})
+        base = dict(
+            agent_id="visual",
+            pairs=self._pairs(),
+            current_weights=weights,
+            has_history=True,
+            data_dir=calibration_data_dir,
+            fixed_keys=_GATE_KEYS,
+        )
+        cfg = CalibrationConfig.from_dict(
+            {
+                "calibration": {
+                    "period_days": 7,
+                    "top_k": 5,
+                    "min_samples": 3,
+                    "bias_threshold": 0.15,
+                    "reliability_target": 0.6,
+                    "ridge_lambda": 1.0,
+                    "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
+                }
+            }
+        )
         # 超阈 → pending
         proposal = maybe_propose(bias_records=self._records(), cfg=cfg, **base)
         assert proposal is not None and proposal.status is ProposalStatus.PENDING
@@ -343,11 +394,15 @@ class TestC7提案生成:
         # 未超阈 → None
         assert maybe_propose(bias_records=self._records(shift=0.05), cfg=cfg, **base) is None
         # 负相关 → 禁止
-        assert maybe_propose(bias_records=self._records(shift=0.3, pearson=-0.4),
-                             cfg=cfg, **base) is None
+        assert (
+            maybe_propose(bias_records=self._records(shift=0.3, pearson=-0.4), cfg=cfg, **base)
+            is None
+        )
         # 首轮基线 → None
-        assert maybe_propose(bias_records=self._records(), cfg=cfg,
-                             **{**base, "has_history": False}) is None
+        assert (
+            maybe_propose(bias_records=self._records(), cfg=cfg, **{**base, "has_history": False})
+            is None
+        )
 
 
 class TestC8确认与生效:
@@ -356,23 +411,45 @@ class TestC8确认与生效:
         from core.calibration.models import PairingRecord
 
         pairs = [
-            PairingRecord(anchor_id=f"a{i}", evaluator_key=key,
-                          anchor_score=0.65 + i * 0.05, auto_score=auto)
+            PairingRecord(
+                anchor_id=f"a{i}", evaluator_key=key, anchor_score=0.65 + i * 0.05, auto_score=auto
+            )
             for i in range(5)
-            for key, auto in (("proxy.aesthetic@1.0.0", 0.4 + i * 0.05),
-                              ("judge.cinematic@1.0.0", 0.6))
+            for key, auto in (
+                ("proxy.aesthetic@1.0.0", 0.4 + i * 0.05),
+                ("judge.cinematic@1.0.0", 0.6),
+            )
         ]
-        cfg = CalibrationConfig.from_dict({"calibration": {
-            "period_days": 7, "top_k": 5, "min_samples": 3, "bias_threshold": 0.15,
-            "reliability_target": 0.6, "ridge_lambda": 1.0,
-            "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
-        }})
+        cfg = CalibrationConfig.from_dict(
+            {
+                "calibration": {
+                    "period_days": 7,
+                    "top_k": 5,
+                    "min_samples": 3,
+                    "bias_threshold": 0.15,
+                    "reliability_target": 0.6,
+                    "ridge_lambda": 1.0,
+                    "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
+                }
+            }
+        )
         return maybe_propose(
             agent_id="visual",
-            bias_records=[BiasRecord(evaluator_key="proxy.aesthetic@1.0.0", period="2026-W38",
-                                     samples=5, mean_shift=0.2, pearson_r=0.7)],
-            pairs=pairs, current_weights=weights, cfg=cfg, has_history=True,
-            data_dir=data_dir, fixed_keys=_GATE_KEYS,
+            bias_records=[
+                BiasRecord(
+                    evaluator_key="proxy.aesthetic@1.0.0",
+                    period="2026-W38",
+                    samples=5,
+                    mean_shift=0.2,
+                    pearson_r=0.7,
+                )
+            ],
+            pairs=pairs,
+            current_weights=weights,
+            cfg=cfg,
+            has_history=True,
+            data_dir=data_dir,
+            fixed_keys=_GATE_KEYS,
         )
 
     def test_confirm_生效与_sc006_历史节点审计(
@@ -381,14 +458,19 @@ class TestC8确认与生效:
         proposal = self._proposal(calibration_data_dir)
         # SC-006 前置快照：生效前历史节点 score/eval_breakdown
         nodes_before = {
-            nid: (tree_store.get_node(nid).score,
-                  json.dumps(tree_store.get_node(nid).eval_breakdown, sort_keys=True))
+            nid: (
+                tree_store.get_node(nid).score,
+                json.dumps(tree_store.get_node(nid).eval_breakdown, sort_keys=True),
+            )
             for nid in visual_tree
         }
         registry = Registry()
         new_version = confirm_proposal(
-            calibration_data_dir, cfg, proposal_id=proposal.proposal_id,
-            by="ops-user", registry=registry,
+            calibration_data_dir,
+            cfg,
+            proposal_id=proposal.proposal_id,
+            by="ops-user",
+            registry=registry,
         )
         assert new_version == composite_version(proposal.candidate_weights)
         # yaml 定点改写：gate 行与注释保留
@@ -419,8 +501,11 @@ class TestC8确认与生效:
         cfg.write_text(cfg.read_text().replace("proxy.aesthetic: 0.5", "proxy.aesthetic: 0.7"))
         with pytest.raises(ValidationError, match="过期"):
             confirm_proposal(
-                calibration_data_dir, cfg, proposal_id=proposal.proposal_id,
-                by="ops-user", registry=Registry(),
+                calibration_data_dir,
+                cfg,
+                proposal_id=proposal.proposal_id,
+                by="ops-user",
+                registry=Registry(),
             )
 
 
@@ -433,11 +518,18 @@ class TestC9一轮完整收口:
             for i, nid in enumerate(open_round.node_ids)
         ]
         with anchors_engine.begin() as conn:
-            assert intake_anchors(conn, open_round.round_id, entries,
-                                  data_dir=calibration_data_dir) == 5
+            assert (
+                intake_anchors(conn, open_round.round_id, entries, data_dir=calibration_data_dir)
+                == 5
+            )
         with anchors_engine.connect() as conn:
-            summary = close_round(tree_store, conn, calibration_data_dir,
-                                  round_id=open_round.round_id, config=calib_cfg)
+            summary = close_round(
+                tree_store,
+                conn,
+                calibration_data_dir,
+                round_id=open_round.round_id,
+                config=calib_cfg,
+            )
         assert summary["status"] == "closed"
         assert summary["period"] == "2026-W38"
         # 台账 / 快照 / 报告三类产物同轮落盘
@@ -450,8 +542,14 @@ class TestC9一轮完整收口:
 
 class TestFR011零昂贵动作审计:
     def test_校准全流程树表零写入且签名无昂贵通道(
-        self, tree_store, anchors_engine, open_round, visual_tree,
-        calibration_data_dir, calib_cfg, sqlite_engine
+        self,
+        tree_store,
+        anchors_engine,
+        open_round,
+        visual_tree,
+        calibration_data_dir,
+        calib_cfg,
+        sqlite_engine,
     ):
         """校准只读树/对象存储：全流程对 tree_nodes/discovery_trees 的写计数恒 0。"""
         writes: list[str] = []
@@ -470,8 +568,13 @@ class TestFR011零昂贵动作审计:
         with anchors_engine.begin() as conn:
             intake_anchors(conn, open_round.round_id, entries, data_dir=calibration_data_dir)
         with anchors_engine.connect() as conn:
-            close_round(tree_store, conn, calibration_data_dir,
-                        round_id=open_round.round_id, config=calib_cfg)
+            close_round(
+                tree_store,
+                conn,
+                calibration_data_dir,
+                round_id=open_round.round_id,
+                config=calib_cfg,
+            )
         assert writes == []  # 生成/投放之外，连树表写入都为 0（只读消费）
 
         # 签名审计：校准公开 API 均不接受网关/平台适配器参数（物理无通道）
@@ -479,9 +582,13 @@ class TestFR011零昂贵动作审计:
         from core.calibration import anchors, pairing, refit, rounds, selection
 
         public_api = [
-            selection.build_blind_list, anchors.intake_anchors,
-            promo_anchors.collect_platform_anchors, pairing.pair_anchors,
-            rounds.close_round, refit.maybe_propose, refit.confirm_proposal,
+            selection.build_blind_list,
+            anchors.intake_anchors,
+            promo_anchors.collect_platform_anchors,
+            pairing.pair_anchors,
+            rounds.close_round,
+            refit.maybe_propose,
+            refit.confirm_proposal,
         ]
         for func in public_api:
             params = set(inspect.signature(func).parameters)

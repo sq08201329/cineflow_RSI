@@ -313,25 +313,20 @@ def confirm_proposal(
             ledger_latest = {
                 key.split("@")[0]: snapshot
                 for key in proposal.candidate_weights
-                if (
-                    snapshot := read_latest(
-                        data_dir, proposal.agent_id, key.split("@")[0]
-                    )
-                )
+                if (snapshot := read_latest(data_dir, proposal.agent_id, key.split("@")[0]))
                 is not None
             }
             registry.register(
                 CompositeWeightsEvaluator(
-                    proposal.agent_id, proposal.candidate_weights,
+                    proposal.agent_id,
+                    proposal.candidate_weights,
                     {"ledger_latest": ledger_latest},
                 )
             )
         # ② configs 定点改写（gate 行不动，注释与其他段原样保留）
         gate_keys = gate_keys_of(config_path)
         updates = {
-            key: value
-            for key, value in proposal.candidate_weights.items()
-            if key not in gate_keys
+            key: value for key, value in proposal.candidate_weights.items() if key not in gate_keys
         }
         path = Path(config_path)
         path.write_text(

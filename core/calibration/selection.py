@@ -38,15 +38,11 @@ def round_path(data_dir: str | Path, agent_id: str, round_id: str) -> Path:
     return Path(data_dir) / "rounds" / agent_id / f"{round_id}.json"
 
 
-def save_round(
-    data_dir: str | Path, round_: CalibrationRound, blind_list: list[dict]
-) -> Path:
+def save_round(data_dir: str | Path, round_: CalibrationRound, blind_list: list[dict]) -> Path:
     """轮次 + 盲评清单落盘（条目经键白名单过滤，零泄露的最后防线）。"""
     path = round_path(data_dir, round_.agent_id, round_.round_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    entries = [
-        {key: entry[key] for key in sorted(BLIND_LIST_KEYS)} for entry in blind_list
-    ]
+    entries = [{key: entry[key] for key in sorted(BLIND_LIST_KEYS)} for entry in blind_list]
     payload = {
         "round_id": round_.round_id,
         "agent_id": round_.agent_id,

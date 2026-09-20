@@ -38,9 +38,10 @@ def _cmd_round(args) -> int:
 
     config = CalibrationConfig.from_yaml(args.config)
     period_end = args.period_end or datetime.now(UTC).date().isoformat()
-    period_start = args.period_start or (
-        datetime.now(UTC).date() - timedelta(days=config.period_days)
-    ).isoformat()
+    period_start = (
+        args.period_start
+        or (datetime.now(UTC).date() - timedelta(days=config.period_days)).isoformat()
+    )
 
     engine = create_engine(dsn)
     round_ = build_blind_list(

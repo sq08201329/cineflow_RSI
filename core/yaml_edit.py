@@ -148,9 +148,7 @@ def replace_section_entries(
     block_end = _block_end(lines, header_idx, header_indent)
     remaining = _replace_in_block(lines, header_idx, header_indent, block_end, updates)
     if remaining:
-        raise YamlEditError(
-            f"配置段 {'/'.join(section_path)} 中缺少键：{sorted(remaining)}"
-        )
+        raise YamlEditError(f"配置段 {'/'.join(section_path)} 中缺少键：{sorted(remaining)}")
     return "".join(lines)
 
 
@@ -185,8 +183,7 @@ def upsert_section_entries(
     ]
     key_indent = base_indent + 2 * (len(section_path) - missing_at)
     new_lines.extend(
-        f"{' ' * key_indent}{key}: {_format_scalar(value)}\n"
-        for key, value in updates.items()
+        f"{' ' * key_indent}{key}: {_format_scalar(value)}\n" for key, value in updates.items()
     )
     if prefix:
         insert_idx, _ = _insertion_point(lines, prefix[-1][0], prefix[-1][1])

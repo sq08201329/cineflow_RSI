@@ -33,23 +33,22 @@ class Test字符串标量:
         )
         assert "    current_policy_version: v2-abc  # 当期部署策略版本\n" in new_text
         assert "# 部署指针：仅 approved 版本可成为当期策略（SC-005 机检）" in new_text
-        assert yaml.safe_load(new_text)["deployment"]["agent-dream"][
-            "current_policy_version"
-        ] == "v2-abc"
+        assert (
+            yaml.safe_load(new_text)["deployment"]["agent-dream"]["current_policy_version"]
+            == "v2-abc"
+        )
 
     def test_易被误解析的字符串自动加引号(self):
         # "0.5" 原样输出会被 YAML 解析成浮点，必须引号化保类型
         new_text = replace_section_entries(
             _YAML, ("deployment", "agent-dream"), {"current_policy_version": "0.5"}
         )
-        assert yaml.safe_load(new_text)["deployment"]["agent-dream"][
-            "current_policy_version"
-        ] == "0.5"
+        assert (
+            yaml.safe_load(new_text)["deployment"]["agent-dream"]["current_policy_version"] == "0.5"
+        )
 
     def test_数值行为不变(self):
-        new_text = replace_section_entries(
-            _YAML, ("dreaming",), {"lambda": 0.30000000000000004}
-        )
+        new_text = replace_section_entries(_YAML, ("dreaming",), {"lambda": 0.30000000000000004})
         assert "  lambda: 0.3 # reward λ\n" in new_text
 
 
@@ -73,9 +72,10 @@ class TestUpsert定点改写:
         ) in new_text
         # 尾随注释/其他段原样保留，yaml 仍可解析
         assert "# 当期部署策略版本" in new_text
-        assert yaml.safe_load(new_text)["deployment"]["agent-dream"][
-            "rollback_policy_version"
-        ] == "v0-root"
+        assert (
+            yaml.safe_load(new_text)["deployment"]["agent-dream"]["rollback_policy_version"]
+            == "v0-root"
+        )
 
     def test_缺末级段_在父段块尾补全(self):
         new_text = upsert_section_entries(
@@ -94,15 +94,14 @@ class TestUpsert定点改写:
         )
         assert new_text.startswith(text)
         assert "deployment:\n  agent-dream:\n    current_policy_version: v1-a\n" in new_text
-        assert yaml.safe_load(new_text)["deployment"]["agent-dream"][
-            "current_policy_version"
-        ] == "v1-a"
+        assert (
+            yaml.safe_load(new_text)["deployment"]["agent-dream"]["current_policy_version"]
+            == "v1-a"
+        )
 
     def test_文件尾无换行_追加前补换行(self):
         text = "form: movie"
-        new_text = upsert_section_entries(
-            text, ("deployment",), {"current_policy_version": "v1-a"}
-        )
+        new_text = upsert_section_entries(text, ("deployment",), {"current_policy_version": "v1-a"})
         assert new_text.startswith("form: movie\n")
         assert yaml.safe_load(new_text)["deployment"]["current_policy_version"] == "v1-a"
 

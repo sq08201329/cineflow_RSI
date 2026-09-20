@@ -175,11 +175,7 @@ class BiasRecord:
     def __post_init__(self) -> None:
         _require_non_empty("evaluator_key", self.evaluator_key)
         _require_non_empty("period", self.period)
-        if (
-            not isinstance(self.samples, int)
-            or isinstance(self.samples, bool)
-            or self.samples < 0
-        ):
+        if not isinstance(self.samples, int) or isinstance(self.samples, bool) or self.samples < 0:
             raise ValidationError(f"samples 必须为 ≥ 0 的整数，实际为 {self.samples!r}")
         if self.mean_shift is not None and (
             not isinstance(self.mean_shift, (int, float)) or isinstance(self.mean_shift, bool)
@@ -216,9 +212,7 @@ class WeightProposal:
             or isinstance(self.ridge_lambda, bool)
             or self.ridge_lambda < 0
         ):
-            raise ValidationError(
-                f"ridge_lambda 必须为 ≥ 0 的数值，实际为 {self.ridge_lambda!r}"
-            )
+            raise ValidationError(f"ridge_lambda 必须为 ≥ 0 的数值，实际为 {self.ridge_lambda!r}")
         if not isinstance(self.status, ProposalStatus):
             try:
                 object.__setattr__(self, "status", ProposalStatus(self.status))

@@ -31,9 +31,7 @@ def iso_week_label(date_str: str) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 
-def compute_bias_records(
-    pairs: list, period: str, config: CalibrationConfig
-) -> list:
+def compute_bias_records(pairs: list, period: str, config: CalibrationConfig) -> list:
     """按评估器分组产偏差记录（judge 走 τ，连续走 mean_shift + Pearson r）。
 
     收口管线与 CLI propose 共用同一口径（propose 依此重建本轮偏差证据）。

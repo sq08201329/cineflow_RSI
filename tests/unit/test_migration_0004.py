@@ -80,9 +80,7 @@ class Test唯一键幂等:
             conn.execute(insert(calibration_anchors).values(**_ANCHOR))
         with pytest.raises(IntegrityError):
             with anchors_engine.begin() as conn:
-                conn.execute(
-                    insert(calibration_anchors).values(**{**_ANCHOR, "anchor_id": "a2"})
-                )
+                conn.execute(insert(calibration_anchors).values(**{**_ANCHOR, "anchor_id": "a2"}))
 
     def test_不同_reviewer_同节点可共存(self, anchors_engine):
         with anchors_engine.begin() as conn:
@@ -101,9 +99,7 @@ class TestScore域:
     def test_越界得分被_CHECK_拒绝(self, anchors_engine, bad_score):
         with pytest.raises(IntegrityError):
             with anchors_engine.begin() as conn:
-                conn.execute(
-                    insert(calibration_anchors).values(**{**_ANCHOR, "score": bad_score})
-                )
+                conn.execute(insert(calibration_anchors).values(**{**_ANCHOR, "score": bad_score}))
 
     @pytest.mark.parametrize("edge_score", [0.0, 1.0])
     def test_边界得分可入库(self, anchors_engine, edge_score):

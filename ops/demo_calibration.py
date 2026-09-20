@@ -86,20 +86,32 @@ def _seed_visual_tree(store, window_ts: float, scores: list[float]) -> None:
     root, tree_id = new_id(), new_id()
     store.create_tree(
         DiscoveryTree(
-            tree_id=tree_id, project_id="calib-demo", agent_id="visual",
-            policy_version="demo-v1", root_id=root, node_ids=[root],
+            tree_id=tree_id,
+            project_id="calib-demo",
+            agent_id="visual",
+            policy_version="demo-v1",
+            root_id=root,
+            node_ids=[root],
             config_snapshot={"evaluator_weights": {}},
         )
     )
     for i, score in enumerate(scores):
         store.append_node(
             TreeNode(
-                node_id=root if i == 0 else new_id(), tree_id=tree_id,
-                parent_id=None if i == 0 else root, depth=0 if i == 0 else 1,
-                agent_id="visual", policy_version="demo-v1", prompt="",
-                observation_context={}, artifact_hash="ab" * 32,
-                eval_breakdown=_breakdown(score), score=score, cost=CostRecord(),
-                status=NodeStatus.EVALUATED, created_at=window_ts + i,
+                node_id=root if i == 0 else new_id(),
+                tree_id=tree_id,
+                parent_id=None if i == 0 else root,
+                depth=0 if i == 0 else 1,
+                agent_id="visual",
+                policy_version="demo-v1",
+                prompt="",
+                observation_context={},
+                artifact_hash="ab" * 32,
+                eval_breakdown=_breakdown(score),
+                score=score,
+                cost=CostRecord(),
+                status=NodeStatus.EVALUATED,
+                created_at=window_ts + i,
             )
         )
 
@@ -109,8 +121,12 @@ def _seed_promo_backfill(engine, store) -> None:
     root, tree_id = new_id(), new_id()
     store.create_tree(
         DiscoveryTree(
-            tree_id=tree_id, project_id="calib-demo", agent_id="promo",
-            policy_version="demo-v1", root_id=root, node_ids=[root],
+            tree_id=tree_id,
+            project_id="calib-demo",
+            agent_id="promo",
+            policy_version="demo-v1",
+            root_id=root,
+            node_ids=[root],
             config_snapshot={"evaluator_weights": {}},
         )
     )
@@ -118,36 +134,54 @@ def _seed_promo_backfill(engine, store) -> None:
         node_id = root if i == 0 else new_id()
         store.append_node(
             TreeNode(
-                node_id=node_id, tree_id=tree_id,
-                parent_id=None if i == 0 else root, depth=0 if i == 0 else 1,
-                agent_id="promo", policy_version="demo-v1", prompt="",
-                observation_context={}, artifact_hash=f"{i + 1:064x}",
+                node_id=node_id,
+                tree_id=tree_id,
+                parent_id=None if i == 0 else root,
+                depth=0 if i == 0 else 1,
+                agent_id="promo",
+                policy_version="demo-v1",
+                prompt="",
+                observation_context={},
+                artifact_hash=f"{i + 1:064x}",
                 eval_breakdown={
                     "proxy.ctr_history@1.0.0": {"score": 0.4 + i * 0.05},
                     "human.platform_metrics@1.0.0": {"score": 0.35 + i * 0.05},
                 },
-                score=0.4 + i * 0.05, cost=CostRecord(),
-                status=NodeStatus.EVALUATED, created_at=1000.0 + i,
+                score=0.4 + i * 0.05,
+                cost=CostRecord(),
+                status=NodeStatus.EVALUATED,
+                created_at=1000.0 + i,
             )
         )
         with engine.begin() as conn:
             conn.execute(
                 insert(promo_campaigns).values(
-                    campaign_id=f"camp-demo-{i}", round_id="promo-demo", material_id=f"mat-{i}",
-                    node_id=node_id, status="ingested", spent_usd=1.0,
+                    campaign_id=f"camp-demo-{i}",
+                    round_id="promo-demo",
+                    material_id=f"mat-{i}",
+                    node_id=node_id,
+                    status="ingested",
+                    spent_usd=1.0,
                     external_id=f"ext-{i}",
                     metrics={
                         "platform_metrics": {
-                            "ctr": 0.05, "completion_rate": 0.6, "conversions": 12,
-                            "impressions": 1000, "clicks": 50,
-                            "platform_timestamp": 1000.0 + i, "data_version": "v1",
+                            "ctr": 0.05,
+                            "completion_rate": 0.6,
+                            "conversions": 12,
+                            "impressions": 1000,
+                            "clicks": 50,
+                            "platform_timestamp": 1000.0 + i,
+                            "data_version": "v1",
                         },
                         "material": {
-                            "platform": "douyin", "artifact_hash": f"{i + 1:064x}",
-                            "kind": "poster", "tags": [],
+                            "platform": "douyin",
+                            "artifact_hash": f"{i + 1:064x}",
+                            "kind": "poster",
+                            "tags": [],
                         },
                     },
-                    created_at=1000.0, updated_at=1000.0 + i,
+                    created_at=1000.0,
+                    updated_at=1000.0 + i,
                 )
             )
 
@@ -175,8 +209,12 @@ def main() -> int:
 
     # ── 步骤 1：盲评清单（top-5 降序，SC-002 零泄露递归断言）
     round1 = build_blind_list(
-        store, agent_id="visual", period_start="2026-08-31", period_end="2026-09-06",
-        top_k=calib_cfg.top_k, data_dir=data_dir,
+        store,
+        agent_id="visual",
+        period_start="2026-08-31",
+        period_end="2026-09-06",
+        top_k=calib_cfg.top_k,
+        data_dir=data_dir,
     )
     round1_payload = json.loads(
         (data_dir / "rounds" / "visual" / f"{round1.round_id}.json").read_text(encoding="utf-8")
@@ -188,8 +226,12 @@ def main() -> int:
         not (_walk_keys(round1_payload["blind_list"]) & {"score", "eval_breakdown"}),
         "SC-002：清单零泄露",
     )
-    print(json.dumps({"step": 1, "round": round1.round_id, "blind_list": 5,
-                      "zero_leak": True}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"step": 1, "round": round1.round_id, "blind_list": 5, "zero_leak": True},
+            ensure_ascii=False,
+        )
+    )
 
     # ── 步骤 2：人评录入（5 合法 + 1 重复 + 1 越界 → 入库 5、拒绝 2）
     entries = [
@@ -204,8 +246,12 @@ def main() -> int:
             conn, round1.round_id, entries, data_dir=data_dir, rejections=rejections
         )
     _assert(accepted == 5 and len(rejections) == 2, "录入应为 5 入库 2 拒绝")
-    print(json.dumps({"step": 2, "accepted": accepted,
-                      "rejected": [r["reason"] for r in rejections]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"step": 2, "accepted": accepted, "rejected": [r["reason"] for r in rejections]},
+            ensure_ascii=False,
+        )
+    )
 
     # 基线轮收口（小偏差 ≈ 自动分 + 0.02 量级，不判超阈的历史数据）
     with engine.connect() as conn:
@@ -213,19 +259,29 @@ def main() -> int:
 
     # ── 步骤 3：平台真值锚点（promo 回流 3 条入库，重复采集幂等）
     round2 = build_blind_list(
-        store, agent_id="visual", period_start="2026-09-14", period_end="2026-09-20",
-        top_k=calib_cfg.top_k, data_dir=data_dir,
+        store,
+        agent_id="visual",
+        period_start="2026-09-14",
+        period_end="2026-09-20",
+        top_k=calib_cfg.top_k,
+        data_dir=data_dir,
     )
     with engine.begin() as conn:
         platform_anchors = collect_platform_anchors(
             engine, conn, round_id=round2.round_id, config=promo_cfg
         )
-        repeat = collect_platform_anchors(
-            engine, conn, round_id=round2.round_id, config=promo_cfg
-        )
+        repeat = collect_platform_anchors(engine, conn, round_id=round2.round_id, config=promo_cfg)
     _assert(len(platform_anchors) == 3 and repeat == [], "平台锚点 3 条入库且幂等")
-    print(json.dumps({"step": 3, "platform_truth_anchors": len(platform_anchors),
-                      "reviewer": platform_anchors[0].reviewer}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "step": 3,
+                "platform_truth_anchors": len(platform_anchors),
+                "reviewer": platform_anchors[0].reviewer,
+            },
+            ensure_ascii=False,
+        )
+    )
 
     # 偏移轮录入（注入 +0.2 偏移；锚点 = 节点实际得分 + 0.2，按盲评清单逐节点取真值）
     biased = [
@@ -235,9 +291,7 @@ def main() -> int:
             "reviewer": "demo-reviewer",
         }
         for entry in json.loads(
-            (data_dir / "rounds" / "visual" / f"{round2.round_id}.json").read_text(
-                encoding="utf-8"
-            )
+            (data_dir / "rounds" / "visual" / f"{round2.round_id}.json").read_text(encoding="utf-8")
         )["blind_list"]
     ]
     with engine.begin() as conn:
@@ -251,23 +305,40 @@ def main() -> int:
     period = summary2["period"]
     ledger_line = json.loads(
         (data_dir / "ledger" / "visual" / "proxy.aesthetic.jsonl")
-        .read_text(encoding="utf-8").splitlines()[-1]
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
     )
     _assert(abs(ledger_line["mean_shift"] - 0.2) < 1e-6, "注入 +0.2 偏移应复现")
     _assert(ledger_line["period"] == period, "台账周期标签一致")
     _assert(sorted(s.key for s in registry.list_all()) == specs_before, "版本不变断言")
-    print(json.dumps({"step": 4, "period": period,
-                      "mean_shift": ledger_line["mean_shift"],
-                      "pearson_r": ledger_line["pearson_r"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "step": 4,
+                "period": period,
+                "mean_shift": ledger_line["mean_shift"],
+                "pearson_r": ledger_line["pearson_r"],
+            },
+            ensure_ascii=False,
+        )
+    )
 
     # ── 步骤 5：信度报告（四要素 + meets_target）
     report = build_report(data_dir, period, target=calib_cfg.reliability_target)
     _assert(set(report) == {"period", "agents", "target", "alerts"}, "报告 schema 四要素")
     entry = report["agents"]["visual"]["proxy.aesthetic@1.0.0"]
     _assert(entry["samples"] == 5 and entry["meets_target"] is True, "信度达标口径")
-    print(json.dumps({"step": 5, "report": f"reports/{period}.json",
-                      "meets_target": entry["meets_target"],
-                      "alerts": report["alerts"]}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "step": 5,
+                "report": f"reports/{period}.json",
+                "meets_target": entry["meets_target"],
+                "alerts": report["alerts"],
+            },
+            ensure_ascii=False,
+        )
+    )
 
     # ── 步骤 6：提案与生效（超阈 → pending → confirm → 新版本 + 定点改写 + 审计一致）
     with engine.connect() as conn:
@@ -275,9 +346,13 @@ def main() -> int:
     pairs2 = pair_anchors(anchors2, store, calib_cfg.self_pairing_exclusions)
     bias_records = compute_bias_records(pairs2, period, calib_cfg)
     proposal = maybe_propose(
-        agent_id="visual", bias_records=bias_records, pairs=pairs2,
-        current_weights=load_evaluator_weights(config_copy, "visual"), cfg=calib_cfg,
-        has_history=True, data_dir=data_dir,  # W36 台账已在 → 非首轮
+        agent_id="visual",
+        bias_records=bias_records,
+        pairs=pairs2,
+        current_weights=load_evaluator_weights(config_copy, "visual"),
+        cfg=calib_cfg,
+        has_history=True,
+        data_dir=data_dir,  # W36 台账已在 → 非首轮
         fixed_keys=frozenset(gate_keys_of(config_copy)),
     )
     _assert(proposal is not None and proposal.status is ProposalStatus.PENDING, "超阈应产提案")
@@ -285,13 +360,18 @@ def main() -> int:
     # SC-006 前置快照：生效前历史节点
     _, blind2 = load_round(data_dir, round2.round_id)
     nodes_before = {
-        e["node_id"]: (store.get_node(e["node_id"]).score,
-                       json.dumps(store.get_node(e["node_id"]).eval_breakdown, sort_keys=True))
+        e["node_id"]: (
+            store.get_node(e["node_id"]).score,
+            json.dumps(store.get_node(e["node_id"]).eval_breakdown, sort_keys=True),
+        )
         for e in blind2
     }
     new_version = confirm_proposal(
-        data_dir, config_copy, proposal_id=proposal.proposal_id,
-        by="demo-ops", registry=registry,
+        data_dir,
+        config_copy,
+        proposal_id=proposal.proposal_id,
+        by="demo-ops",
+        registry=registry,
     )
     confirmed = load_proposal(data_dir, proposal.proposal_id)
     rewritten = config_copy.read_text(encoding="utf-8")
@@ -303,13 +383,28 @@ def main() -> int:
     for node_id, (score, breakdown) in nodes_before.items():
         node = store.get_node(node_id)
         _assert(node.score == score, "SC-006：历史节点 score 不变")
-        _assert(json.dumps(node.eval_breakdown, sort_keys=True) == breakdown,
-                "SC-006：历史节点 eval_breakdown 逐字节一致")
-    print(json.dumps({"step": 6, "proposal": proposal.proposal_id, "status": "confirmed",
-                      "new_version": new_version}, ensure_ascii=False))
+        _assert(
+            json.dumps(node.eval_breakdown, sort_keys=True) == breakdown,
+            "SC-006：历史节点 eval_breakdown 逐字节一致",
+        )
+    print(
+        json.dumps(
+            {
+                "step": 6,
+                "proposal": proposal.proposal_id,
+                "status": "confirmed",
+                "new_version": new_version,
+            },
+            ensure_ascii=False,
+        )
+    )
 
-    print(json.dumps({"demo": "weekly-calibration", "verdict": "PASS",
-                      "workdir": str(workdir)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"demo": "weekly-calibration", "verdict": "PASS", "workdir": str(workdir)},
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

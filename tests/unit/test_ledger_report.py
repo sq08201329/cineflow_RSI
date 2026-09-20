@@ -77,9 +77,7 @@ class Test信度报告:
                 _record("judge.cinematic@1.0.0", "2026-W39", tau=0.5),
             ],
         )
-        append_ledger(
-            data_dir, "promo", [_record("proxy.ctr_history@1.0.0", "2026-W39", r=0.81)]
-        )
+        append_ledger(data_dir, "promo", [_record("proxy.ctr_history@1.0.0", "2026-W39", r=0.81)])
 
     def test_schema_四要素与达标口径(self, calibration_data_dir):
         self._seed(calibration_data_dir)
