@@ -94,7 +94,7 @@
 
 ### 用户故事 3 的实现
 
-- [ ] T730 [US3] champion 策略 policies/history/editing/{version}.py（手工首版：镜头库 + 分区约束 → EDL 网格贪心，OptimalPolicy.solve() 形态）+ meta.json 谱系根（parent_version=null）+ 剪辑模拟器池接线（依赖 T727）
+- [x] T730 [US3] champion 策略 policies/history/editing/{version}.py（手工首版：镜头库 + 分区约束 → EDL 网格贪心，OptimalPolicy.solve() 形态）+ meta.json 谱系根（parent_version=null）+ 剪辑模拟器池接线（依赖 T727）
 - [ ] T731 [US3] 做梦一轮接入验证（agent_id="editing" 演示档 M=8 全流程 + 首轮基线落盘；零改动预期，缺口按最小泛化注明；验证后回填 quickstart 做梦命令为实际形态）
 
 **检查点**: τ ≥ 0.95 通过 + 首轮基线落盘——里程碑验收线成立
