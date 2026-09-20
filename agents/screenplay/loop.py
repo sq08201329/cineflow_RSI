@@ -331,14 +331,9 @@ def _config_snapshot(config: ScreenplayConfig, evaluators: list[Evaluator]) -> d
     return {
         "evaluator_weights": config.evaluator_weights,
         "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in evaluators},
-        "observation_fields": [
-            "gen_params",
-            "stage",
-            "job_id",
-            "params_hash",
-            "cache_key",
-            "response_hash",
-        ],
+        # 回放投影白名单（002）：只暴露策略侧可消费的观测槽——网关核对键
+        # （cache_key/response_hash）留运营表与节点观测，不进沙箱投影（原则四）
+        "observation_fields": ["gen_params", "stage", "job_id"],
         "composite_policy": COMPOSITE_POLICY,
         "target_duration_min": config.target_duration_min,
         "page_tolerance": config.page_tolerance,
@@ -893,7 +888,11 @@ def _fail_stage(
 
 
 def _reconstruct(round_id: str, store: TreeStore, engine: Engine) -> ScreenplayRoundResult:
-    """幂等重建：二次触发撞树锚点后，从树与运营表还原首轮 ScreenplayRoundResult。"""
+    """幂等重建：二次触发撞树锚点后，从树与运营表还原首轮 ScreenplayRoundResult。
+
+    jobs/成本合计逐项还原；**对账字段留空**——评估器计费增量不在重算范围内，
+    宁可留空也不伪造"一致"（原则六：不编造证据）。
+    """
     tree_id = round_tree_id(round_id)
     root = store.get_node(_round_root_id(round_id))
     nodes = {
