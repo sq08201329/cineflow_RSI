@@ -45,7 +45,7 @@
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
 - [x] T715 [P] [US1] 渲染契约测试 tests/contract/test_editing_platform_contract.py（C10~C13：estimate ≥ actual、mp4 可探测时长/帧率符合配置、元数据键齐全、错误分型、模拟全过/真实 skip）
-- [ ] T716 [P] [US1] 执行器测试 tests/unit/test_editing_loop.py（C1/C2 全场景：非法 EDL 五类执行前拒绝 0 渲染 0 成本、一轮 3 EDL 落树、预算超界拒绝已执行入账、同 round_id 重建 0 重复、渲染失败成本照计、素材不足/总长不足预检 FAILED 注明；评估器桩注入）
+- [x] T716 [P] [US1] 执行器测试 tests/unit/test_editing_loop.py（C1/C2 全场景：非法 EDL 五类执行前拒绝 0 渲染 0 成本、一轮 3 EDL 落树、预算超界拒绝已执行入账、同 round_id 重建 0 重复、渲染失败成本照计、素材不足/总长不足预检 FAILED 注明；评估器桩注入）
 
 ### 用户故事 1 的实现
 
