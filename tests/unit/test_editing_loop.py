@@ -86,20 +86,45 @@ def _three_edls(make_edl):
     """三组哈希不同的合法 EDL。"""
     return [
         make_edl(),
-        make_edl(clips=[
-            {"shot_id": "shot-3", "in_ms": 0, "out_ms": 4000,
-             "transition": {"type": "dissolve", "duration_ms": 500}},
-            {"shot_id": "shot-4", "in_ms": 0, "out_ms": 3000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-            {"shot_id": "shot-5", "in_ms": 0, "out_ms": 5000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-        ]),
-        make_edl(clips=[
-            {"shot_id": "shot-1", "in_ms": 0, "out_ms": 3000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-            {"shot_id": "shot-6", "in_ms": 1000, "out_ms": 4000,
-             "transition": {"type": "cut", "duration_ms": 0}},
-        ], audio=[]),
+        make_edl(
+            clips=[
+                {
+                    "shot_id": "shot-3",
+                    "in_ms": 0,
+                    "out_ms": 4000,
+                    "transition": {"type": "dissolve", "duration_ms": 500},
+                },
+                {
+                    "shot_id": "shot-4",
+                    "in_ms": 0,
+                    "out_ms": 3000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
+                {
+                    "shot_id": "shot-5",
+                    "in_ms": 0,
+                    "out_ms": 5000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
+            ]
+        ),
+        make_edl(
+            clips=[
+                {
+                    "shot_id": "shot-1",
+                    "in_ms": 0,
+                    "out_ms": 3000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
+                {
+                    "shot_id": "shot-6",
+                    "in_ms": 1000,
+                    "out_ms": 4000,
+                    "transition": {"type": "cut", "duration_ms": 0},
+                },
+            ],
+            audio=[],
+        ),
     ]
 
 
@@ -119,13 +144,26 @@ def _run(round_id, policy, store, artifacts, adapter, engine, config, library, s
 
 class Test一轮剪辑落树:
     def test_三组_EDL_落树且成本入账(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         cfg = _config()
         result = _run(
-            "r1", _StubPolicy(_three_edls(make_edl)), tree_store, artifact_store,
-            adapter, editing_jobs_engine, cfg, library, structure,
+            "r1",
+            _StubPolicy(_three_edls(make_edl)),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            cfg,
+            library,
+            structure,
         )
         assert [j["status"] for j in result.jobs] == ["inserted"] * 3
         assert result.budget_cap_usd == cfg.exploration_per_round_usd
@@ -145,14 +183,27 @@ class Test一轮剪辑落树:
             assert node.cost.generation_api_cost_usd > 0
 
     def test_观测上下文带_EDL_与哈希(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """回放匹配键落观测：edl 规范化结构 + edl_hash + job_id。"""
         edls = _three_edls(make_edl)
         result = _run(
-            "r1b", _StubPolicy(edls), tree_store, artifact_store, adapter,
-            editing_jobs_engine, _config(), library, structure,
+            "r1b",
+            _StubPolicy(edls),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            _config(),
+            library,
+            structure,
         )
         nodes = [n for n in tree_store.nodes_of(result.tree_id) if n.parent_id is not None]
         by_hash = {n.observation_context["edl_hash"]: n for n in nodes}
@@ -165,13 +216,27 @@ class Test非法EDL执行前拒绝:
         ["unknown_ref", "out_of_bounds", "cross_partition", "scene_disorder", "illegal_transition"],
     )
     def test_五类非法变体零渲染零成本(
-        self, variant, make_edl, tree_store, artifact_store, adapter,
-        editing_jobs_engine, library, structure,
+        self,
+        variant,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """C1：违规一律执行前拒绝——适配器 0 调用、运营表 0 行、0 成本。"""
         result = _run(
-            f"bad-{variant}", _StubPolicy([make_edl(variant)]), tree_store, artifact_store,
-            adapter, editing_jobs_engine, _config(), library, structure,
+            f"bad-{variant}",
+            _StubPolicy([make_edl(variant)]),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            _config(),
+            library,
+            structure,
         )
         assert result.jobs[0]["status"] == "rejected"
         assert result.jobs[0]["reason"]
@@ -187,16 +252,29 @@ class Test非法EDL执行前拒绝:
 
 class Test预算门禁:
     def test_超界拒绝且已执行照常入账(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """C2 场景 2：预算只够一组——后续拒绝，已渲染的照常入账。"""
         edls = _three_edls(make_edl)
         first_estimate = adapter.estimate(edls[0], library)
-        cfg = _config(exploration_per_round_usd=first_estimate * 1.5)
+        cfg = _config(exploration_per_round_usd=first_estimate * 1.2)
         result = _run(
-            "r2", _StubPolicy(edls), tree_store, artifact_store, adapter,
-            editing_jobs_engine, cfg, library, structure,
+            "r2",
+            _StubPolicy(edls),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            cfg,
+            library,
+            structure,
         )
         assert result.jobs[0]["status"] == "inserted"
         assert [j["status"] for j in result.jobs[1:]] == ["rejected", "rejected"]
@@ -208,19 +286,39 @@ class Test预算门禁:
 
 class Test幂等重建:
     def test_同_round_id_二次触发零重复(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """C2 场景 3：唯一键 (round_id, edl_hash) + 确定性 id 派生——重建首轮结果。"""
         edls = _three_edls(make_edl)
         cfg = _config()
         first = _run(
-            "r3", _StubPolicy(edls), tree_store, artifact_store, adapter,
-            editing_jobs_engine, cfg, library, structure,
+            "r3",
+            _StubPolicy(edls),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            cfg,
+            library,
+            structure,
         )
         second = _run(
-            "r3", _StubPolicy(edls), tree_store, artifact_store, adapter,
-            editing_jobs_engine, cfg, library, structure,
+            "r3",
+            _StubPolicy(edls),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            cfg,
+            library,
+            structure,
         )
         assert second.jobs == first.jobs
         assert second.spent_usd == pytest.approx(first.spent_usd)
@@ -230,14 +328,27 @@ class Test幂等重建:
 
 class Test渲染失败:
     def test_失败条目_failed_且成本照计(
-        self, make_edl, tree_store, artifact_store, editing_jobs_engine, library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """C2 场景 4：渲染失败 → status=failed + 预估成本照常入账，轮次继续。"""
         adapter = SimulatedEditRenderer(_config().render, fail_on_shots={"shot-5"})
         edls = _three_edls(make_edl)  # 第 1/2 组引用 shot-5，第 3 组不引用
         result = _run(
-            "r4", _StubPolicy(edls), tree_store, artifact_store, adapter,
-            editing_jobs_engine, _config(), library, structure,
+            "r4",
+            _StubPolicy(edls),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            _config(),
+            library,
+            structure,
         )
         assert [j["status"] for j in result.jobs] == ["failed", "failed", "inserted"]
         assert "渲染失败" in result.jobs[0]["reason"]
@@ -255,14 +366,22 @@ class Test渲染失败:
 
 class Test素材可行性预检:
     def test_不足最小镜头数执行前拒绝(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        structure,
     ):
         """C2 场景 5：镜头数不足最小可行数 → 执行前拒绝（树都不建，0 副作用）。"""
         tiny = ShotLibrary(
             shots=[
                 ShotEntry(
-                    shot_id="shot-only", artifact_hash="ff" * 32,
-                    duration_ms=4000, scene_id="scene-a",
+                    shot_id="shot-only",
+                    artifact_hash="ff" * 32,
+                    duration_ms=4000,
+                    scene_id="scene-a",
                 )
             ]
         )
@@ -274,20 +393,40 @@ class Test素材可行性预检:
         )
         with pytest.raises(EditingLoopError, match="素材不足"):
             _run(
-                "r5", _StubPolicy([make_edl()]), tree_store, artifact_store, adapter,
-                editing_jobs_engine, cfg, tiny, structure,
+                "r5",
+                _StubPolicy([make_edl()]),
+                tree_store,
+                artifact_store,
+                adapter,
+                editing_jobs_engine,
+                cfg,
+                tiny,
+                structure,
             )
         assert tree_store.trees_by(project_id="editing", agent_id="editing") == []
 
     def test_总长不足预检_FAILED_注明(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """C2：素材总长 < 目标时长下限 → FAILED 节点如实落盘注明，0 渲染 0 成本。"""
         cfg = _config(target_duration_s=60, duration_tolerance_s=10)  # 下限 50s > 素材 31s
         result = _run(
-            "r6", _StubPolicy(_three_edls(make_edl)), tree_store, artifact_store, adapter,
-            editing_jobs_engine, cfg, library, structure,
+            "r6",
+            _StubPolicy(_three_edls(make_edl)),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            cfg,
+            library,
+            structure,
         )
         assert result.jobs == []
         assert "素材" in result.precheck
@@ -301,31 +440,64 @@ class Test素材可行性预检:
 
 class Test冻结入池门禁:
     def test_全终态可冻结(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         _run(
-            "r7", _StubPolicy(_three_edls(make_edl)), tree_store, artifact_store, adapter,
-            editing_jobs_engine, _config(), library, structure,
+            "r7",
+            _StubPolicy(_three_edls(make_edl)),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            _config(),
+            library,
+            structure,
         )
         tree = freeze_round_tree("r7", tree_store, editing_jobs_engine)
         assert tree.tree_id == round_tree_id("r7")
 
     def test_未终态拒绝冻结(
-        self, make_edl, tree_store, artifact_store, adapter, editing_jobs_engine,
-        library, structure,
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
     ):
         """004/006 同构：job 未到 inserted/failed 终态不得冻结入池。"""
         result = _run(
-            "r8", _StubPolicy(_three_edls(make_edl)), tree_store, artifact_store, adapter,
-            editing_jobs_engine, _config(), library, structure,
+            "r8",
+            _StubPolicy(_three_edls(make_edl)),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            _config(),
+            library,
+            structure,
         )
         with editing_jobs_engine.begin() as conn:  # 直接造一个 pending 中间态
             conn.execute(
                 insert(edit_render_jobs).values(
-                    job_id="r8-jx", round_id="r8", edl_json="{}", edl_hash="ab" * 32,
-                    status="pending", estimated_cost_usd=0.1, actual_cost_usd=None,
-                    artifact_hash=None, error=None, created_at="2026-09-20T00:00:00Z",
+                    job_id="r8-jx",
+                    round_id="r8",
+                    edl_json="{}",
+                    edl_hash="ab" * 32,
+                    status="pending",
+                    estimated_cost_usd=0.1,
+                    actual_cost_usd=None,
+                    artifact_hash=None,
+                    error=None,
+                    created_at="2026-09-20T00:00:00Z",
                 )
             )
         with pytest.raises(EditingLoopError, match="终态"):
