@@ -534,8 +534,7 @@ def _insert_job_guarded(
         charge_cents = round(actual * 100)
         if spent_cents + charge_cents > round(cap_usd * 100):
             raise _BudgetExceeded(
-                f"预算门禁：已耗 ${spent:.2f} + 本次 ${actual:.2f} "
-                f"> 上限 ${cap_usd:.2f}（拒绝）"
+                f"预算门禁：已耗 ${spent:.2f} + 本次 ${actual:.2f} > 上限 ${cap_usd:.2f}（拒绝）"
             )
         conn.execute(
             insert(sound_gen_jobs).values(
@@ -582,9 +581,7 @@ def _reconstruct(
     root = store.get_node(_round_root_id(round_id))
     plans = root.observation_context.get("plans", [])
     nodes = store.nodes_of(tree_id)
-    node_by_job = {
-        n.observation_context.get("job_id"): n for n in nodes if n.parent_id is not None
-    }
+    node_by_job = {n.observation_context.get("job_id"): n for n in nodes if n.parent_id is not None}
     with engine.connect() as conn:
         rows = {
             row.job_id: row
@@ -598,9 +595,13 @@ def _reconstruct(
         gen_type = plan_item["gen_type"]
         node = node_by_job.get(job_id)
         if job_id in rows and rows[job_id].status == "inserted":
-            status = "failed" if node is not None and node.status is NodeStatus.FAILED else "inserted"
+            status = (
+                "failed" if node is not None and node.status is NodeStatus.FAILED else "inserted"
+            )
             reason = "" if node is None else node.observation_context.get("reject_reason", "")
-            jobs.append({"job_id": job_id, "gen_type": gen_type, "status": status, "reason": reason})
+            jobs.append(
+                {"job_id": job_id, "gen_type": gen_type, "status": status, "reason": reason}
+            )
         elif node is not None:
             status = "failed" if node.status is NodeStatus.FAILED else "rejected"
             jobs.append(

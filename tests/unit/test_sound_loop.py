@@ -279,7 +279,11 @@ class Test场景4_失败照计入账:
 
 class Test场景5_非法输入执行前拒绝:
     def test_TimingSheet_重叠_适配器零调用(
-        self, make_sound_gen_params, tree_store, artifact_store, adapters,
+        self,
+        make_sound_gen_params,
+        tree_store,
+        artifact_store,
+        adapters,
         sound_jobs_engine,
     ):
         counting = {k: _CountingAdapter(a) for k, a in adapters.items()}
@@ -307,9 +311,7 @@ class Test场景5_非法输入执行前拒绝:
             )
         assert sum(a.generate_calls for a in counting.values()) == 0  # 0 调用
         with sound_jobs_engine.connect() as conn:
-            count = conn.execute(
-                select(func.count()).select_from(sound_gen_jobs)
-            ).scalar()
+            count = conn.execute(select(func.count()).select_from(sound_gen_jobs)).scalar()
         assert count == 0  # 0 成本
 
     def test_原始_dict_输入同样执行前校验(

@@ -20,8 +20,7 @@ class _HttpRealSoundGenBase:
     def __init__(self, base_url: str, api_key: str) -> None:
         if not base_url or not api_key:
             raise UnavailableError(
-                f"真实声音平台缺凭证：需要 {self.ENV_PREFIX}_BASE_URL / "
-                f"{self.ENV_PREFIX}_API_KEY"
+                f"真实声音平台缺凭证：需要 {self.ENV_PREFIX}_BASE_URL / {self.ENV_PREFIX}_API_KEY"
             )
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
