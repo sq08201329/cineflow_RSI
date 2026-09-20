@@ -89,13 +89,13 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T828 [P] [US3] 无偏性测试 tests/unbiasedness/test_storyboard_unbiased.py（C15：分镜夹具池回放 vs 真实重跑（模拟渲染重执行 + 五评估器重算）τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝）
-- [ ] T829 [P] [US3] 回放与交接测试 tests/unit/test_storyboard_replay.py（C14/C16/C17：双键规范化精确匹配、UNKNOWN 语义、回放全程 render + 网关调用计数 0 审计、分树最近树只做 validation、010 build_blind_list(agent_id="storyboard") 正常产出、dreaming/010 无 storyboard 特判静态证明、ShotList schema 快照断言（字段名/枚举值与文档一致））
+- [X] T828 [P] [US3] 无偏性测试 tests/unbiasedness/test_storyboard_unbiased.py（C15：分镜夹具池回放 vs 真实重跑（模拟渲染重执行 + 五评估器重算）τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝）
+- [X] T829 [P] [US3] 回放与交接测试 tests/unit/test_storyboard_replay.py（C14/C16/C17：双键规范化精确匹配、UNKNOWN 语义、回放全程 render + 网关调用计数 0 审计、分树最近树只做 validation、010 build_blind_list(agent_id="storyboard") 正常产出、dreaming/010 无 storyboard 特判静态证明、ShotList schema 快照断言（字段名/枚举值与文档一致））
 
 ### 用户故事 3 的实现
 
-- [ ] T830 [US3] champion 策略 policies/history/storyboard/{version}.py（手工首版：剧本 + 规则约束 → ShotList 网格贪心，OptimalPolicy.solve() 形态）+ meta.json 谱系根 + 分镜模拟器池接线（依赖 T827）
-- [ ] T831 [US3] 做梦一轮接入验证（agent_id="storyboard" 演示档 M=8 全流程 + 首轮基线落盘；零改动预期；验证后回填 quickstart 做梦命令）
+- [X] T830 [US3] champion 策略 policies/history/storyboard/{version}.py（手工首版：剧本 + 规则约束 → ShotList 网格贪心，OptimalPolicy.solve() 形态）+ meta.json 谱系根 + 分镜模拟器池接线（依赖 T827）
+- [X] T831 [US3] 做梦一轮接入验证（agent_id="storyboard" 演示档 M=8 全流程 + 首轮基线落盘；零改动预期；验证后回填 quickstart 做梦命令）
 
 **检查点**: τ ≥ 0.95 通过 + 首轮基线落盘——里程碑验收线成立
 
