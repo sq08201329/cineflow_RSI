@@ -284,7 +284,7 @@ def _config_snapshot(config: EditingConfig, evaluators: list[Evaluator] | dict) 
     return {
         "evaluator_weights": config.evaluator_weights,
         "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in all_evaluators},
-        "observation_fields": ["edl", "edl_hash", "job_id"],
+        "observation_fields": ["gen_params", "edl", "edl_hash", "job_id"],
         "composite_policy": COMPOSITE_POLICY,  # 合成归一口径进版本元信息（C9）
         "transition_rules": config.transition_rules,
         "shot_limits": config.shot_limits,
@@ -349,6 +349,10 @@ def _append_edl_node(
     observation = {"job_id": job_id}
     if edl_dict is not None:
         observation["edl"] = edl_dict
+        # 回放匹配槽：002 规范化精确匹配固定读 observation_context["gen_params"]
+        # （core/replay/matching.py GEN_PARAMS_KEY）——剪辑侧同一内容落双键，
+        # 换取回放/做梦/盲评全链路对 editing 零特判（原则五，006 同款取舍）
+        observation["gen_params"] = edl_dict
     if edl_hash is not None:
         observation["edl_hash"] = edl_hash
     if reason:
