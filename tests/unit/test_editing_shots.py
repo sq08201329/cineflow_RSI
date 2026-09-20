@@ -112,9 +112,11 @@ class TestSceneStructure:
 
     def test_分区接受_dict_形态(self, make_shot_library):
         structure = SceneStructure(
-            scenes=[{"scene_id": "scene-a", "shot_ids": ["shot-1", "shot-2"]},
-                    {"scene_id": "scene-b", "shot_ids": ["shot-3", "shot-4"]},
-                    {"scene_id": "scene-c", "shot_ids": ["shot-5", "shot-6"]}],
+            scenes=[
+                {"scene_id": "scene-a", "shot_ids": ["shot-1", "shot-2"]},
+                {"scene_id": "scene-b", "shot_ids": ["shot-3", "shot-4"]},
+                {"scene_id": "scene-c", "shot_ids": ["shot-5", "shot-6"]},
+            ],
             shot_library=make_shot_library(),
         )
         assert isinstance(structure.scenes[0], Scene)
