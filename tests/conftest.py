@@ -809,3 +809,323 @@ def editing_config():
 
     path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
     return EditingConfig.from_yaml(path)
+
+
+# ---------------------------------------------------------------------------
+# 功能 008（分镜闭环）夹具：剧本段落（3 场景 9 行含关键行/情绪/轴向基准）/
+# ShotList（合法 + 四类非法变体）/素材帧/运营表/临时目录/形态配置
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def make_script_segment():
+    """剧本段落工厂（功能 008）：3 场景 × 3 行，含关键行标注 + 情绪 + axis_base。
+
+    - valid（默认）：scene-1/scene-2 轴向基准 A、scene-3 基准 B（场景切换重置轴线）；
+      关键行 3 条（s1-l2 动作关键、s2-l1 台词关键、s3-l3 收尾动作关键）；
+      s1-l3 无情绪标注（情绪缺失"不适用"路径的夹具）；
+    - duplicate_line：跨场景重复行 id（行 id 唯一性违规）；
+    - duplicate_scene：scene_id 重复（场景有序性违规）；
+    - bad_emotion：情绪取值不在向量表内；
+    - empty_scenes：空场景列表（剧本不足预检路径）。
+    字段可被调用方整体覆盖（scenes）。
+    """
+    from agents.storyboard.script import ScriptSegment
+
+    _SCENES = [
+        {
+            "scene_id": "scene-1",
+            "axis_base": "A",
+            "lines": [
+                {
+                    "line_id": "s1-l1",
+                    "kind": "dialogue",
+                    "text": "夜里三点，走廊的灯一闪一闪。",
+                    "key": False,
+                    "emotion": "tense",
+                },
+                {
+                    "line_id": "s1-l2",
+                    "kind": "action",
+                    "text": "她握紧门把手，缓缓推开。",
+                    "key": True,
+                    "emotion": "tense",
+                },
+                {
+                    "line_id": "s1-l3",
+                    "kind": "dialogue",
+                    "text": "有人在吗？",
+                    "key": False,
+                    "emotion": None,
+                },
+            ],
+        },
+        {
+            "scene_id": "scene-2",
+            "axis_base": "A",
+            "lines": [
+                {
+                    "line_id": "s2-l1",
+                    "kind": "dialogue",
+                    "text": "我不该回来的。",
+                    "key": True,
+                    "emotion": "sorrow",
+                },
+                {
+                    "line_id": "s2-l2",
+                    "kind": "action",
+                    "text": "窗外的雨敲打着玻璃。",
+                    "key": False,
+                    "emotion": "sorrow",
+                },
+                {
+                    "line_id": "s2-l3",
+                    "kind": "dialogue",
+                    "text": "但你回来了。",
+                    "key": False,
+                    "emotion": "calm",
+                },
+            ],
+        },
+        {
+            "scene_id": "scene-3",
+            "axis_base": "B",
+            "lines": [
+                {
+                    "line_id": "s3-l1",
+                    "kind": "action",
+                    "text": "两人隔着长长的走廊对视。",
+                    "key": False,
+                    "emotion": "awe",
+                },
+                {
+                    "line_id": "s3-l2",
+                    "kind": "dialogue",
+                    "text": "这一次，我不会再走。",
+                    "key": False,
+                    "emotion": "joyful",
+                },
+                {
+                    "line_id": "s3-l3",
+                    "kind": "action",
+                    "text": "镜头缓缓拉远，灯光暗下。",
+                    "key": True,
+                    "emotion": "sorrow",
+                },
+            ],
+        },
+    ]
+
+    def _make(variant: str = "valid", **overrides):
+        import copy
+
+        scenes = copy.deepcopy(_SCENES)
+        if variant == "duplicate_line":
+            scenes[1]["lines"][0]["line_id"] = "s1-l1"  # 跨场景重复行 id
+        elif variant == "duplicate_scene":
+            scenes[1]["scene_id"] = "scene-1"  # 场景重复（顺序性违规）
+        elif variant == "bad_emotion":
+            scenes[0]["lines"][0]["emotion"] = "melancholic"  # 不在情绪向量表
+        elif variant == "empty_scenes":
+            scenes = []
+        fields = {"scenes": scenes}
+        fields.update(overrides)
+        return ScriptSegment(**fields)
+
+    return _make
+
+
+@pytest.fixture()
+def script_segment(make_script_segment):
+    """默认合法剧本段落（3 场景 9 行）。"""
+    return make_script_segment()
+
+
+@pytest.fixture()
+def make_shotlist(make_script_segment):
+    """ShotList 工厂（功能 008）：合法 + 四类非法变体（执行前三层校验各拒绝一类）。
+
+    - valid（默认）：3 场景 9 镜（每场景 3 镜），承接行与剧本一致、key 行逐条承接、
+      档位全部在规则库枚举内，场景内同侧（轴线基准）；
+    - unknown_line：承接剧本不存在的行 s1-l9（第①层拒绝）；
+    - scene_uncovered：scene-2 全部镜头移除（第②层场景承接拒绝）；
+    - key_line_uncovered：移除承接关键行 s2-l1 的镜头（scene-2 仍有镜头，第②层拒绝）；
+    - size_out_of_range：景别档位 extreme_wide 不在规则库枚举（第③层拒绝）。
+    """
+    from agents.storyboard.shotlist import ShotList
+
+    _VALID_SHOTS = [
+        {
+            "shot_id": "shot-01",
+            "scene_id": "scene-1",
+            "covers": ["s1-l1"],
+            "shot_size": "close_up",
+            "camera": "eye_level",
+            "side": "A",
+            "movement": "static",
+            "est_duration_ms": 1000,
+            "alternatives": 2,
+        },
+        {
+            "shot_id": "shot-02",
+            "scene_id": "scene-1",
+            "covers": ["s1-l2"],  # 关键行
+            "shot_size": "medium",
+            "camera": "over_shoulder",
+            "side": "A",
+            "movement": "dolly",
+            "est_duration_ms": 1250,
+            "alternatives": 3,
+        },
+        {
+            "shot_id": "shot-03",
+            "scene_id": "scene-1",
+            "covers": ["s1-l3"],
+            "shot_size": "full",
+            "camera": "side",
+            "side": "A",
+            "movement": "pan",
+            "est_duration_ms": 1000,
+            "alternatives": 1,
+        },
+        {
+            "shot_id": "shot-04",
+            "scene_id": "scene-2",
+            "covers": ["s2-l1"],  # 关键行
+            "shot_size": "close_up",
+            "camera": "low_angle",
+            "side": "A",
+            "movement": "static",
+            "est_duration_ms": 1000,
+            "alternatives": 2,
+        },
+        {
+            "shot_id": "shot-05",
+            "scene_id": "scene-2",
+            "covers": ["s2-l2"],
+            "shot_size": "wide",
+            "camera": "high_angle",
+            "side": "A",
+            "movement": "tilt",
+            "est_duration_ms": 1250,
+            "alternatives": 2,
+        },
+        {
+            "shot_id": "shot-06",
+            "scene_id": "scene-2",
+            "covers": ["s2-l3"],
+            "shot_size": "close_up",
+            "camera": "eye_level",
+            "side": "A",
+            "movement": "handheld",
+            "est_duration_ms": 1500,
+            "alternatives": 1,
+        },
+        {
+            "shot_id": "shot-07",
+            "scene_id": "scene-3",
+            "covers": ["s3-l1"],
+            "shot_size": "wide",
+            "camera": "high_angle",
+            "side": "B",
+            "movement": "static",
+            "est_duration_ms": 1000,
+            "alternatives": 2,
+        },
+        {
+            "shot_id": "shot-08",
+            "scene_id": "scene-3",
+            "covers": ["s3-l2"],
+            "shot_size": "medium",
+            "camera": "eye_level",
+            "side": "B",
+            "movement": "dolly",
+            "est_duration_ms": 1500,
+            "alternatives": 3,
+        },
+        {
+            "shot_id": "shot-09",
+            "scene_id": "scene-3",
+            "covers": ["s3-l3"],  # 关键行
+            "shot_size": "close_up",
+            "camera": "low_angle",
+            "side": "B",
+            "movement": "static",
+            "est_duration_ms": 750,
+            "alternatives": 1,
+        },
+    ]
+
+    def _make(variant: str = "valid", **overrides):
+        import copy
+
+        shots = copy.deepcopy(_VALID_SHOTS)
+        if variant == "unknown_line":
+            shots[1] = {**shots[1], "covers": ["s1-l9"]}
+        elif variant == "scene_uncovered":
+            shots = [s for s in shots if s["scene_id"] != "scene-2"]
+        elif variant == "key_line_uncovered":
+            shots = [s for s in shots if s["shot_id"] != "shot-04"]  # scene-2 仍有镜头
+        elif variant == "size_out_of_range":
+            shots[4] = {**shots[4], "shot_size": "extreme_wide"}
+        fields = {"shots": shots}
+        fields.update(overrides)
+        return ShotList(**fields)
+
+    return _make
+
+
+@pytest.fixture()
+def make_storyboard_frames():
+    """素材帧夹具（功能 008）：确定性小尺寸 RGB 帧序列（编码/拼接辅助测试用）。
+
+    帧内容由 seed 派生（渐变 + 移动色块），同 seed 重算逐字节一致；
+    小尺寸默认 64x48 控制单测编码耗时。
+    """
+
+    def _make(*, count: int = 4, width: int = 64, height: int = 48, seed: int = 7):
+        import numpy as np
+
+        ys, xs = np.mgrid[0:height, 0:width]
+        brightness = 40 + seed % 120
+        frames = np.zeros((count, height, width, 3), dtype=np.uint8)
+        for t in range(count):
+            gray = np.clip(brightness + (xs * 0.25 + t * 3) % 110, 0, 255)
+            block = (xs >= (t * 5) % max(1, width - 10)) & (xs < (t * 5) % max(1, width - 10) + 10)
+            gray = np.where(block & (ys >= height // 3) & (ys < height * 2 // 3), 220, gray)
+            frames[t] = np.stack([gray, np.clip(gray + 10, 0, 255), gray], axis=-1).astype(np.uint8)
+        return frames
+
+    return _make
+
+
+@pytest.fixture()
+def storyboard_jobs_engine():
+    """分镜运营表夹具：SQLite 内存库建 storyboard_render_jobs（可变表，无触发器）。"""
+    from sqlalchemy import create_engine
+
+    from agents.storyboard.db import create_render_jobs_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_render_jobs_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def storyboard_data_dir(tmp_path):
+    """分镜临时数据目录夹具：artifacts（animatic mp4 工件）/rounds（轮次收口）两层结构。"""
+    base = tmp_path / "storyboard"
+    for sub in ("artifacts", "rounds"):
+        (base / sub).mkdir(parents=True)
+    return base
+
+
+@pytest.fixture()
+def storyboard_config():
+    """分镜形态配置夹具：直接读 configs/movie.yaml 的 storyboard 段（真实配置路径）。"""
+    from pathlib import Path
+
+    from agents.storyboard.config import StoryboardConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return StoryboardConfig.from_yaml(path)
