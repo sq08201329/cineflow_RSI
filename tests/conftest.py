@@ -564,3 +564,14 @@ def sound_data_dir(tmp_path):
     for sub in ("artifacts", "rounds"):
         (base / sub).mkdir(parents=True)
     return base
+
+
+@pytest.fixture()
+def sound_config():
+    """声音形态配置夹具：直接读 configs/movie.yaml 的 sound 段（真实配置路径）。"""
+    from pathlib import Path
+
+    from agents.sound.config import SoundConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return SoundConfig.from_yaml(path)
