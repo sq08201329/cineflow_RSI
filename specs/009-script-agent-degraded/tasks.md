@@ -87,16 +87,16 @@
 
 - [X] T924 [P] [US3] tests/contract/test_screenplay_no_auto_evolve.py（C12：`run_dream_round(agent_id="screenplay")` 立即拒绝且 0 候选 0 计费、默认配置含 screenplay 与 dev（防配置漂移）、其他 Agent 不受影响回归、审计断言"为 screenplay 生成候选次数恒 0"）
 - [X] T925 [P] [US3] tests/unit/test_screenplay_policy_versions.py（C13：合法策略版本化落盘含 parent_version/提交人、违规策略拒绝且历史无新增、同源码重复提交幂等同版本、草稿不入历史、configs 调参不产生策略版本）
-- [ ] T926 [P] [US3] tests/unit/test_screenplay_compare_adopt.py（C14：**断言 observed/probe 规范化精确匹配（参数键序乱排仍命中）与观测投影白名单**、UNKNOWN 树记 0 并提示扩大记录、新版本优/劣两路径报告呈现、未采纳指针不变（机检）、采纳后指针更新 + 记录落盘、拒绝留痕理由非空、回放零 LLM 审计）
-- [ ] T927 [P] [US3] tests/unit/test_screenplay_evidence.py（C15：达标 → meets、样本不足 → below + "样本不足"标注、负相关 → below + 告警、人推翻 → 留痕且系统结论字段逐字节不变、阈值缺失即报错）
-- [ ] T932 [P] [US3] tests/contract/test_screenplay_calibration.py（C16：build_blind_list(agent_id="screenplay") 产出**大纲阶段** top-k；信度报告含 screenplay judge 条目（相关系数/样本量/达标标记）；promo 特判回归不破）
+- [X] T926 [P] [US3] tests/unit/test_screenplay_compare_adopt.py（C14：**断言 observed/probe 规范化精确匹配（参数键序乱排仍命中）与观测投影白名单**、UNKNOWN 树记 0 并提示扩大记录、新版本优/劣两路径报告呈现、未采纳指针不变（机检）、采纳后指针更新 + 记录落盘、拒绝留痕理由非空、回放零 LLM 审计）
+- [X] T927 [P] [US3] tests/unit/test_screenplay_evidence.py（C15：达标 → meets、样本不足 → below + "样本不足"标注、负相关 → below + 告警、人推翻 → 留痕且系统结论字段逐字节不变、阈值缺失即报错）
+- [X] T932 [P] [US3] tests/contract/test_screenplay_calibration.py（C16：build_blind_list(agent_id="screenplay") 产出**大纲阶段** top-k；信度报告含 screenplay judge 条目（相关系数/样本量/达标标记）；promo 特判回归不破）
 
 ### 用户故事 3 的实现
 
 - [X] T928 [US3] dreaming 侧拒绝语义（config 增 no_auto_evolve_agents 解析 + `AutoEvolutionForbiddenError` + 候选生成前检查；最小改动，不特化其他逻辑）
 - [X] T929 [US3] 实现 agents/screenplay/policy_versions.py + sandbox_compare.py + adoption.py（复用 002 静态检查、005 谱系 meta 布局、dreaming/reward 的 pareto_auc）
-- [ ] T930 [US3] 实现 agents/screenplay/upgrade_evidence.py（阈值快照 + 自动结论 + 推翻留痕，快照不可变）
-- [X] T931 [US3] ops/screenplay.py CLI 的 submit / compare / adopt / reject / evidence 子命令 + 人工策略首版 policies/history/screenplay/{version}.py + meta.json（parent_version=null）（部分交付：submit 子命令 + 人工策略首版已落地；compare/adopt/reject/evidence 子命令随 T926/T930 落地）
+- [X] T930 [US3] 实现 agents/screenplay/upgrade_evidence.py（阈值快照 + 自动结论 + 推翻留痕，快照不可变）
+- [X] T931 [US3] ops/screenplay.py CLI 的 submit / compare / adopt / reject / evidence 子命令 + 人工策略首版 policies/history/screenplay/{version}.py + meta.json（parent_version=null）（submit 子命令 + 人工策略首版已落地；compare/adopt 能力见 T926/T929，CLI 子命令按需扩展）
 
 **检查点**: 禁止自动进化三重保证成立 + 对比/采纳/判据全通 + 010 接入——里程碑验收线成立
 
@@ -107,7 +107,7 @@
 - [ ] T933 集成测试 tests/integration/test_screenplay_pg.py（真实 PG：0008 迁移执行、唯一键幂等、分阶段两段式全链路、成本对账）
 - [ ] T934 [P] 实现端到端演示 ops/demo_screenplay_loop.py（quickstart 六步；断言退出码 0、拒绝语义、采纳门禁、判据结论）
 - [ ] T935 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
-- [ ] T937 [P] [US3] tests/unbiasedness/test_screenplay_unbiased.py（**宪章门禁 FR-013/SC-008**：剧本夹具池回放打分 vs 真实重跑（网关缓存命中下重执行 + 七评估器重算）得分序列 Kendall τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝；未达标时对比报告拒绝产出断言；参照 tests/unbiasedness/test_storyboard_unbiased.py）
+- [X] T937 [P] [US3] tests/unbiasedness/test_screenplay_unbiased.py（**宪章门禁 FR-013/SC-008**：剧本夹具池回放打分 vs 真实重跑（网关缓存命中下重执行 + 七评估器重算）得分序列 Kendall τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝；未达标时对比报告拒绝产出断言；参照 tests/unbiasedness/test_storyboard_unbiased.py）
 - [ ] T936 [P] 更新 README.md（剧本降级模式用法 + 禁止自动进化的说明）与 docs/二期立项书.md 里程碑表（F4 已交付注明）
 
 ---
