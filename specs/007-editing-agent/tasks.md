@@ -90,7 +90,7 @@
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
 - [x] T728 [P] [US3] 无偏性测试 tests/unbiasedness/test_editing_unbiased.py（C15：剪辑夹具池回放 vs 真实重跑（模拟渲染器重执行 + 五评估器重算）τ ≥ 0.95；注入偏差——篡改评估器版本/judge 胜率/节奏口径——100% 拒绝）
-- [ ] T729 [P] [US3] 回放与校准接入测试 tests/unit/test_editing_replay.py（C14/C16：EDL 规范化精确匹配、UNKNOWN 语义、回放全程 render + 网关调用计数 0 审计、分树最近树只做 validation、010 build_blind_list(agent_id="editing") 正常产出 + dreaming/010 无 editing 特判静态证明）
+- [x] T729 [P] [US3] 回放与校准接入测试 tests/unit/test_editing_replay.py（C14/C16：EDL 规范化精确匹配、UNKNOWN 语义、回放全程 render + 网关调用计数 0 审计、分树最近树只做 validation、010 build_blind_list(agent_id="editing") 正常产出 + dreaming/010 无 editing 特判静态证明）
 
 ### 用户故事 3 的实现
 
