@@ -12,7 +12,7 @@ class DreamConfigError(Exception):
 
 @dataclass(frozen=True)
 class DreamConfig:
-    """dreaming 段配置（候选数/摘要窗口/λ/随机预算/塌缩检测/回放并行度）。"""
+    """dreaming 段配置（候选数/摘要窗口/λ/随机预算/塌缩检测/回放并行度/禁自动进化名单）。"""
 
     candidates_per_round: int
     demo_candidates: int
@@ -23,6 +23,8 @@ class DreamConfig:
     collapse_window: int
     collapse_threshold: float
     replay_parallelism: int
+    # 禁止自动进化的 Agent 名单（宪章原则六；命中即显式拒绝，见 pipeline.run_dream_round）
+    no_auto_evolve_agents: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, config: dict) -> "DreamConfig":
@@ -35,6 +37,18 @@ class DreamConfig:
                 raise DreamConfigError(f"dreaming 缺少配置项 {key!r}")
             return dreaming[key]
 
+        auto_evolve_off = req("no_auto_evolve_agents")
+        if not isinstance(auto_evolve_off, (list, tuple)):
+            raise DreamConfigError(
+                "dreaming.no_auto_evolve_agents 必须为字符串列表"
+                "（宪章原则六：禁止自动进化的 Agent 名单）"
+            )
+        for name in auto_evolve_off:
+            if not isinstance(name, str) or not name:
+                raise DreamConfigError(
+                    "dreaming.no_auto_evolve_agents 必须为非空字符串列表，"
+                    f"实际含 {name!r}（宪章原则六名单）"
+                )
         return cls(
             candidates_per_round=int(req("candidates_per_round")),
             demo_candidates=int(req("demo_candidates")),
@@ -45,6 +59,7 @@ class DreamConfig:
             collapse_window=int(req("collapse_window")),
             collapse_threshold=float(req("collapse_threshold")),
             replay_parallelism=int(req("replay_parallelism")),
+            no_auto_evolve_agents=tuple(auto_evolve_off),
         )
 
     @classmethod

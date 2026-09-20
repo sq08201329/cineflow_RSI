@@ -26,6 +26,14 @@ from policies.static_check import find_violations
 from policies.versioning import policy_version
 
 
+class AutoEvolutionForbiddenError(Exception):
+    """禁止自动进化（宪章原则六）：名单内的 Agent 不得由 dreaming 生成候选策略。
+
+    这是**显式拒绝**（非静默跳过）——降级模式的 Agent（评估信号过弱）策略仅由人工
+    编写、提交与采纳，升级须另立决议并修订宪章；自动进化不得在此处被"顺手开启"。
+    """
+
+
 @dataclass(frozen=True)
 class Candidate:
     """候选策略（data-model §1 Candidate）。"""
@@ -125,7 +133,17 @@ def run_dream_round(
     history_root: str | Path = DEFAULT_HISTORY_ROOT,
     m: int | None = None,
 ) -> DreamRound:
-    """执行一轮做梦（生成 → 静态检查 → 串行回放 → reward 排名 → 落盘）。"""
+    """执行一轮做梦（生成 → 静态检查 → 串行回放 → reward 排名 → 落盘）。
+
+    **候选生成前的拒绝守卫**（宪章原则六）：agent_id 命中 `no_auto_evolve_agents`
+    名单即抛 `AutoEvolutionForbiddenError`——在任何副作用（候选生成/计费/落盘）之前。
+    """
+    if agent_id in config.no_auto_evolve_agents:
+        raise AutoEvolutionForbiddenError(
+            f"agent_id={agent_id!r} 在禁止自动进化名单内（宪章原则六：评估信号过弱的环节"
+            "禁止强行自动进化，策略仅由人工提交与采纳）——本调用被显式拒绝，"
+            "未生成任何候选、未计费"
+        )
     history_root = Path(history_root)
     round_id = _next_round_id(agent_id, history_root)
     champion_version = policy_version(champion_source)
