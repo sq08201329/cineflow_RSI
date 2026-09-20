@@ -23,6 +23,7 @@ ShotList → 每镜一张分镜卡（程序化构图表达景别/机位/运动 +
 
 import io
 from dataclasses import dataclass
+from pathlib import Path
 
 import blake3
 import imageio.v3 as iio
@@ -227,6 +228,15 @@ def render_shot_card(
     _draw_movement_marker(frame, palette, entry, index, grammar_rules)
     _draw_index_code(frame, palette, index)
     return frame
+
+
+def frame_function_hash() -> str:
+    """帧产出函数哈希 = 本实现文件 BLAKE3 前 8 位（judge/对齐代理版本号的一段）。
+
+    分镜卡帧是对齐代理（proxy.emotion_alignment）的输入形成环节：实现文件任一变更
+    （含构图/色板/索引条口径）即哈希变更 → 对齐代理版本变更（宪章原则一）。
+    """
+    return blake3.blake3(Path(__file__).read_bytes()).hexdigest()[:8]
 
 
 def storyboard_cards(
