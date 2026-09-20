@@ -1,13 +1,13 @@
-"""分镜线上探索执行器（contracts/storyboard-loop.md C1~C3，US1 闭环本体）。
+"""分镜线上探索执行器（contracts/storyboard-loop.md C1~C3，闭环本体）。
 
 一轮探索：剧本预检（剧本不足/情绪取值非法 → 执行前拒绝，0 副作用）→ 策略产
 ShotList 组合 → C1 三层执行前校验（违规 0 渲染 0 成本）→ 预算门禁（申请前校验 +
 事务内复核，≤ 语义含最小货币单位）→ 预演渲染（昂贵动作仅此阶段，原则三）→
-animatic 内容寻址 → 评估器协议打分（US1 桩注入，US2 接线真实五评估器）→ 合成得分
-（quantize 定点归一）→ 节点一次性 INSERT 冻结。失败 job 成本照计入账 status=failed
-（原则二）。幂等：tree_id/job_id 由 round_id 确定性派生 + 唯一键
-(round_id, shotlist_hash)，二次触发重建首轮 StoryboardRoundResult
-（0 重复渲染、0 重复扣费）。
+animatic 内容寻址 → 真实五评估器编排打分（gate 短路不跑 judge；显式注入路径供
+US3 回放/无偏性复用）→ 合成得分（quantize 定点归一）→ 节点一次性 INSERT 冻结。
+失败 job 成本照计入账 status=failed（原则二）。幂等：tree_id/job_id 由 round_id
+确定性派生 + 唯一键 (round_id, shotlist_hash)，二次触发重建首轮
+StoryboardRoundResult（0 重复渲染、0 重复扣费）。
 
 观测落**双键**（`shotlist` + `gen_params`）——002 规范化精确匹配固定读
 observation_context["gen_params"]（core/replay/matching.GEN_PARAMS_KEY），
@@ -24,6 +24,12 @@ from sqlalchemy.engine import Engine
 
 from agents.storyboard.config import StoryboardConfig
 from agents.storyboard.db import storyboard_render_jobs
+from agents.storyboard.evaluators import build_storyboard_evaluators
+from agents.storyboard.evaluators.composite import (
+    COMPOSITE_POLICY,
+    composite_storyboard,
+    evaluate_storyboard,
+)
 from agents.storyboard.platform.base import RenderError, StoryboardRenderAdapter
 from agents.storyboard.script import ScriptSegment, validate_script
 from agents.storyboard.shotlist import ShotList, validate_shotlist
@@ -36,12 +42,6 @@ from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
 from core.tree.store import TreeStore
 
 PLACEHOLDER_HASH = "00" * 32  # 未产出工件的拒绝节点占位哈希（无工件可引）
-# US1 临时合成口径（T823/T827 提升为 agents/storyboard/evaluators/composite.py 正式编排，
-# 语义不变：gate 短路 + 适用权重归一 + quantize）
-COMPOSITE_POLICY = (
-    "三 gate 短路（任一判 0 不跑 judge）+ proxy/judge 适用权重归一 + quantize 6 位定点"
-)
-_GATE_PREFIX = "rule."
 
 
 class StoryboardLoopError(Exception):
@@ -102,39 +102,6 @@ def _validate_inputs(inputs: dict, config: StoryboardConfig) -> ScriptSegment:
     return script
 
 
-def _base_key(key: str) -> str:
-    return key.rsplit("@", 1)[0] if "@" in key else key
-
-
-def _composite_storyboard(breakdown: dict[str, dict], weights: dict) -> float:
-    """分镜节点总分合成（C9 口径）。
-
-    breakdown：{evaluator_id@version: {"score":…, "diagnostics":{…}}}；
-    weights：evaluator_weights.storyboard 原值（"gate" 字面量或数值权重）。
-    1) gate 短路：任一 rule.* 判 0 → 总分 0（不可行解，无视 proxy/judge 得分）；
-    2) 适用分量按权重归一：gate 分量恒不计入加权和，缺席分量（gate 短路时 judge
-       未跑）跳过——分母不含缺席权重，不伪造 0 分拖底；
-    3) 无适用连续分量 → 0.0（确定性退化口径）。
-    返回未定点化的合成值（定点由调用方 quantize 收口）。
-    """
-    for key, frag in breakdown.items():
-        if _base_key(key).startswith(_GATE_PREFIX) and frag["score"] == 0.0:
-            return 0.0
-    total_weight = 0.0
-    accrued = 0.0
-    for key, frag in breakdown.items():
-        base = _base_key(key)
-        if base.startswith(_GATE_PREFIX):
-            continue
-        weight = weights.get(base)
-        if weight is None or str(weight).lower() == "gate":
-            continue
-        weight = float(weight)
-        total_weight += weight
-        accrued += weight * frag["score"]
-    return accrued / total_weight if total_weight > 0 else 0.0
-
-
 def run_storyboard_round(
     round_id: str,
     policy: StoryboardPolicy,
@@ -149,15 +116,18 @@ def run_storyboard_round(
 ) -> StoryboardRoundResult:
     """执行一轮分镜线上探索（全流程幂等）。
 
-    evaluators：US1 为评估器协议桩注入路径（测试/无偏性回放）；真实五评估器接线
-    由 T827 在 evaluators/composite.py 完成（`evaluators=None` 明确报错而非静默
-    无打分——诚实边界）。
+    evaluators：None → 默认装配真实五评估器（build_storyboard_evaluators，需 gateway，
+    gate 短路不跑 judge）；dict（{"gates","alignment","judge","all"}）→ 真实编排；
+    list → 评估器桩注入路径（US3 无偏性回放重算，面向评估器协议编程）。
+    对账三方：树内成本 == 运营表扣减 + 网关增量（judge 计费，004/007 同口径）。
     """
     # 0) 剧本预检先于一切副作用（适配器 0 调用、0 成本、0 落库）
     script = _validate_inputs(inputs, config)
     gateway_before = float(gateway.total_cost_usd) if gateway is not None else 0.0
     if evaluators is None:
-        raise StoryboardLoopError("US1 需显式注入评估器（真实五评估器接线见 T827）")
+        if gateway is None:
+            raise StoryboardLoopError("装配真实五评估器必须提供 LLM 网关（judge 计费路径）")
+        evaluators = build_storyboard_evaluators(config, gateway)
 
     tree_id = round_tree_id(round_id)
     root_id = _round_root_id(round_id)
@@ -263,15 +233,17 @@ def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> Discov
     return matches[0]
 
 
-def _config_snapshot(config: StoryboardConfig, evaluators: list[Evaluator]) -> dict:
+def _config_snapshot(config: StoryboardConfig, evaluators: list[Evaluator] | dict) -> dict:
     """快照冻结：权重 + 评估器版本组合 + 观测白名单 + 分镜口径配置。"""
+    all_evaluators = evaluators["all"] if isinstance(evaluators, dict) else evaluators
     return {
         "evaluator_weights": config.evaluator_weights,
-        "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in evaluators},
+        "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in all_evaluators},
         "observation_fields": ["gen_params", "shotlist", "shotlist_hash", "job_id"],
         "composite_policy": COMPOSITE_POLICY,  # 合成归一口径进版本元信息（C9）
         "shot_grammar": config.shot_grammar,
         "axis_rules": config.axis_rules,
+        "alignment": config.alignment,
         "emotion_vectors": config.emotion_vectors,
         "render": config.render,
         "anchor_shotlists": [anchor.to_dict() for anchor in config.anchor_shotlists],
@@ -529,7 +501,7 @@ def _run_job(
             "shotlist_hash": shotlist_hash,
         }
 
-    # 6) 评估器协议打分（崩溃隔离：FAILED 成本入账轮次继续，004 SC-006 口径）
+    # 6) 评估器打分（崩溃隔离：FAILED 成本入账轮次继续，004 SC-006 口径）
     artifact_ref = ArtifactRef(artifact_hash=artifact_hash, metadata=animatic.metadata)
     ctx = {
         "shotlist": shotlist,
@@ -539,14 +511,22 @@ def _run_job(
         "config": config,
     }
     try:
-        breakdown = {}
-        for evaluator in evaluators:
-            result = evaluator.evaluate(artifact_ref, ctx)
-            breakdown[evaluator.spec.key] = {
-                "score": result.score,
-                "diagnostics": result.diagnostics,
-            }
-        score = quantize_score(_composite_storyboard(breakdown, config.evaluator_weights))
+        if isinstance(evaluators, dict):
+            # 真实五评估器编排（C9：gate 短路不跑 judge；judge 计费用量入节点成本）
+            breakdown, score, judge_usage = evaluate_storyboard(
+                evaluators, artifact_ref, ctx, config.evaluator_weights
+            )
+        else:
+            # 评估器协议注入路径（US3 无偏性回放重算）：逐评估器打分 + 正式合成口径
+            breakdown = {}
+            for evaluator in evaluators:
+                result = evaluator.evaluate(artifact_ref, ctx)
+                breakdown[evaluator.spec.key] = {
+                    "score": result.score,
+                    "diagnostics": result.diagnostics,
+                }
+            score = quantize_score(composite_storyboard(breakdown, config.evaluator_weights))
+            judge_usage = {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
         _append_board_node(
             store,
             tree_id=tree_id,
@@ -560,8 +540,10 @@ def _run_job(
             score=score,
             breakdown=breakdown,
             cost=CostRecord(
+                llm_calls=judge_usage["llm_calls"],
+                llm_tokens=judge_usage["llm_tokens"],
                 generation_api_calls=1,
-                generation_api_cost_usd=animatic.actual_cost_usd,
+                generation_api_cost_usd=animatic.actual_cost_usd + judge_usage["cost_usd"],
             ),
             reason=None,
         )
