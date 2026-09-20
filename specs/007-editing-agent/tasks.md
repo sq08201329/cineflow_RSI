@@ -49,8 +49,8 @@
 
 ### 用户故事 1 的实现
 
-- [ ] T717 [US1] 实现 agents/editing/platform/base.py（EditRenderAdapter 协议 + 错误分型 + RenderedFilm）+ simulated.py（确定性模拟渲染器，用 T710；estimated ≥ actual）
-- [ ] T718 [P] [US1] 实现 agents/editing/platform/http_real.py（真实渲染骨架，EDIT_RENDER_* 环境变量，无凭证 skip）
+- [x] T717 [US1] 实现 agents/editing/platform/base.py（EditRenderAdapter 协议 + 错误分型 + RenderedFilm）+ simulated.py（确定性模拟渲染器，用 T710；estimated ≥ actual）
+- [x] T718 [P] [US1] 实现 agents/editing/platform/http_real.py（真实渲染骨架，EDIT_RENDER_* 环境变量，无凭证 skip）
 - [ ] T719 [US1] 实现 agents/editing/loop.py（run_editing_round：EDL 校验前置 → 预算门禁 → 渲染 → 内容寻址 → 评估器协议注入（桩可换）→ quantize → 一次性 INSERT → EditingRoundResult；freeze_round_tree 终态门禁——004/006 同构；依赖 T704、T708、T712、T717）
 
 **检查点**: 一轮剪辑（模拟渲染器）成片落树 + 幂等 + 非法拒绝成立——MVP 成立

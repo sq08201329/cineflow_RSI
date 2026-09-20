@@ -78,7 +78,8 @@ class Test工件与元数据:
         assert meta["width"] == cfg["width"]
         assert meta["height"] == cfg["height"]
         assert meta["duration_seconds"] == pytest.approx(
-            film.metadata["duration_ms"] / 1000.0, abs=0.26  # 单帧时长容差
+            film.metadata["duration_ms"] / 1000.0,
+            abs=0.26,  # 单帧时长容差
         )
 
     def test_元数据键齐全且与_EDL_一致(self, adapter, edl, library):
