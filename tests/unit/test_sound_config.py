@@ -87,6 +87,18 @@ class Test缺失即报错:
         with pytest.raises(SoundConfigError, match="simulated_gen"):
             SoundConfig.from_dict(config)
 
+    @pytest.mark.parametrize("key", ["asr", "emotion"])
+    def test_缺评估口径段(self, key):
+        config = _valid_dict()
+        del config["sound"][key]
+        with pytest.raises(SoundConfigError, match=key):
+            SoundConfig.from_dict(config)
+
+    def test_评估口径段读取(self):
+        cfg = SoundConfig.from_dict(_valid_dict())
+        assert cfg.asr == {"cer_cap": 0.2}
+        assert cfg.emotion == {"calibration_band": 0.5}
+
 
 class Test价目纪律:
     def test_缺_prices_整段即报错(self):

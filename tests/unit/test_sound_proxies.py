@@ -43,7 +43,7 @@ def _asr_ctx(cer, gen_type="tts", seed=7, samples=None):
 
 
 class TestAsr转写代理:
-    def test_映射口径误差小于1e-6(self, asr_evaluator, sound_config):
+    def test_映射口径误差小于1e_6(self, asr_evaluator, sound_config):
         cer_cap = sound_config.asr["cer_cap"]
         for cer in (0.0, 0.05, 0.1, 0.19):
             result = asr_evaluator.evaluate(_ARTIFACT, _asr_ctx(cer))

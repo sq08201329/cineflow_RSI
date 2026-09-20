@@ -59,6 +59,8 @@ class SoundConfig:
     sample_rate: int
     prices: dict
     simulated_gen: dict
+    asr: dict
+    emotion: dict
     evaluator_weights: dict = field(default_factory=dict)
 
     @classmethod
@@ -77,6 +79,8 @@ class SoundConfig:
             sample_rate=int(_require(sound, "sample_rate", "sound")),
             prices=_require_price_table(_require(sound, "prices", "sound")),
             simulated_gen=dict(_require(sound, "simulated_gen", "sound")),
+            asr=dict(_require(sound, "asr", "sound")),
+            emotion=dict(_require(sound, "emotion", "sound")),
             evaluator_weights=evaluator_weights,
         )
 

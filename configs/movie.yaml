@@ -99,6 +99,10 @@ sound:
     duration_seconds: 2.0 # 默认时长（gen_params 可覆盖）
     estimated_cost_usd: 0.5 # 预估花费（实际扣费 ≤ 预估）
     cost_per_clip_usd: 0.4 # 实际扣费
+  asr: # proxy.asr_transcript 口径（决策 4：确定性代理，实现哈希即版本）
+    cer_cap: 0.2 # CER 归一化上限（score = 1 − min(1, CER / cer_cap)）
+  emotion: # proxy.emotion_music_match 口径（决策 9：余弦距离映射）
+    calibration_band: 0.5 # 校准带：余弦距离超带 → diagnostics 标低置信
 
 # 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）
