@@ -16,9 +16,8 @@ from agents.sound.loop import freeze_round_tree, run_sound_round
 from agents.sound.platform.simulated import SimulatedTTSGen
 from agents.sound.timing import TimingSheet
 from core.calibration.selection import build_blind_list
-from core.replay.errors import ValidationError as ReplayValidationError
+from core.evaluators.errors import ValidationError
 from core.replay.pool import SimulatorPool
-from core.tree.errors import ValidationError
 from core.tree.models import CostRecord, NodeStatus, new_id
 from dreaming.overfit import split_train_validation
 from policies.base import Budget
@@ -38,8 +37,18 @@ _TTS_PARAMS = {
 
 
 def _sound_tree(tree_store, make_tree, make_node, *, score=0.6, children_params=(_TTS_PARAMS,)):
-    """单棵声音夹具树：root + 指定 gen_params 子节点（得分可区分）。"""
-    tree = make_tree(agent_id="sound", project_id="sound-replay")
+    """单棵声音夹具树：root + 指定 gen_params 子节点（得分可区分）。
+
+    config_snapshot 对齐执行器落盘形态：观测白名单 gen_params/gen_type/job_id。
+    """
+    tree = make_tree(
+        agent_id="sound",
+        project_id="sound-replay",
+        config_snapshot={
+            "evaluator_weights": {"rule.x": 0.0},
+            "observation_fields": ["gen_params", "gen_type", "job_id"],
+        },
+    )
     tree_store.create_tree(tree)
     tree_store.append_node(
         make_node(
@@ -156,8 +165,9 @@ class Test周校准纳入:
         )
         assert round_.agent_id == "sound"
         assert len(round_.node_ids) >= 1
+        # 落盘形态：rounds/{agent_id}/{round_id}.json（selection.round_path 口径）
         blind_file = (
-            Path(calibration_data_dir) / "rounds" / f"{round_.round_id}" / "blind_list.json"
+            Path(calibration_data_dir) / "rounds" / "sound" / f"{round_.round_id}.json"
         )
         assert blind_file.exists()
 
@@ -271,6 +281,5 @@ class Test冻结入池接线:
     def test_不存在轮次报错(self, tree_store, sound_jobs_engine):
         from agents.sound.loop import SoundLoopError
 
-        with pytest.raises((SoundLoopError, ReplayValidationError, Exception)) as exc_info:
+        with pytest.raises(SoundLoopError, match="不存在"):
             freeze_round_tree("ghost-round", tree_store, sound_jobs_engine)
-        assert "ghost-round" in str(exc_info.value) or "不存在" in str(exc_info.value)

@@ -177,6 +177,35 @@ def run_sound_round(
     )
 
 
+def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> DiscoveryTree:
+    """轮次树显式冻结入口（C13 池接线：GenJob 全终态才允许冻结入池）。
+
+    config_snapshot 在树创建时已写全（四评估器版本组合 + 权重 + 观测白名单 +
+    合成口径）——树 immutable 不允许后补，此函数只做终态校验 + 返回树对象。
+    """
+    tree_id = round_tree_id(round_id)
+    try:
+        store.get_node(_round_root_id(round_id))
+    except Exception as exc:
+        raise SoundLoopError(f"轮次树不存在：{tree_id}（round_id={round_id}）") from exc
+    with engine.connect() as conn:
+        pending = conn.execute(
+            select(func.count())
+            .select_from(sound_gen_jobs)
+            .where(
+                sound_gen_jobs.c.round_id == round_id,
+                sound_gen_jobs.c.status.in_(["pending", "rendered", "evaluated"]),
+            )
+        ).scalar()
+    if pending:
+        raise SoundLoopError(f"轮次 {round_id} 尚有 {pending} 个生成任务未到终态，不得冻结入池")
+    trees = store.trees_by(project_id="sound", agent_id="sound")
+    matches = [t for t in trees if t.tree_id == tree_id]
+    if not matches:
+        raise SoundLoopError(f"轮次树不存在：{tree_id}")
+    return matches[0]
+
+
 def _config_snapshot(config: SoundConfig, evaluators: list[Evaluator]) -> dict:
     """快照冻结：权重 + 评估器版本组合 + 观测白名单 + 评估口径配置。"""
     return {
