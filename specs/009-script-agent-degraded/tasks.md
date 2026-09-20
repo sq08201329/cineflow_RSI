@@ -61,17 +61,17 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T916 [P] [US2] tests/unit/test_screenplay_rules.py（C4~C7：节拍缺失判 0、页数越界判 0、幽灵角色/地点不一致判 0、比例失衡判 0、合法工件全过）
-- [ ] T917 [P] [US2] tests/unit/test_screenplay_proxies.py（C8/C9：同名异写/未登记别名扣分并诊断、正确写法满分、时间线矛盾命中并逐条诊断、无冲突满分）
-- [ ] T918 [P] [US2] tests/unit/test_screenplay_judge.py（C10：**仅 outline 阶段参与**——scenes/script 阶段"不适用"且合成按适用分量归一；3 judge 投票；平局 0.5；网关计费；Mock 重跑逐位一致；版本号含提示词/锚点/摘要三段哈希）
-- [ ] T919 [P] [US2] tests/unit/test_screenplay_composite.py（C11：gate 违规短路——judge 未调用网关计数不增、适用分量归一、quantize 定点；注册元数据断言（cost_per_call/deterministic/kind）+ 与 004/006/007/008 既有评估器对比样本——宪章测试纪律三件套）
+- [X] T916 [P] [US2] tests/unit/test_screenplay_rules.py（C4~C7：节拍缺失判 0、页数越界判 0、幽灵角色/地点不一致判 0、比例失衡判 0、合法工件全过）
+- [X] T917 [P] [US2] tests/unit/test_screenplay_proxies.py（C8/C9：同名异写/未登记别名扣分并诊断、正确写法满分、时间线矛盾命中并逐条诊断、无冲突满分）
+- [X] T918 [P] [US2] tests/unit/test_screenplay_judge.py（C10：**仅 outline 阶段参与**——scenes/script 阶段"不适用"且合成按适用分量归一；3 judge 投票；平局 0.5；网关计费；Mock 重跑逐位一致；版本号含提示词/锚点/摘要三段哈希）
+- [X] T919 [P] [US2] tests/unit/test_screenplay_composite.py（C11：gate 违规短路——judge 未调用网关计数不增、适用分量归一、quantize 定点；注册元数据断言（cost_per_call/deterministic/kind）+ 与 004/006/007/008 既有评估器对比样本——宪章测试纪律三件套）
 
 ### 用户故事 2 的实现
 
-- [ ] T920 [US2] 实现 agents/screenplay/evaluators/beat_structure.py + page_minutes.py + scene_character.py + dialogue_action_ratio.py（四 gate，依赖 T906）
-- [ ] T921 [US2] 实现 agents/screenplay/evaluators/entity_consistency.py + timeline_conflict.py
-- [ ] T922 [US2] 实现 agents/screenplay/evaluators/dramatic_tension.py（judge，仅 outline；三段哈希版本号；依赖 T910）
-- [ ] T923 [US2] 实现 agents/screenplay/evaluators/composite.py + loop.py 接线真实七评估器（stage 条件适用语义；gate 短路；依赖 T914、T920~T922）
+- [X] T920 [US2] 实现 agents/screenplay/evaluators/beat_structure.py + page_minutes.py + scene_character.py + dialogue_action_ratio.py（四 gate，依赖 T906）
+- [X] T921 [US2] 实现 agents/screenplay/evaluators/entity_consistency.py + timeline_conflict.py
+- [X] T922 [US2] 实现 agents/screenplay/evaluators/dramatic_tension.py（judge，仅 outline；三段哈希版本号；依赖 T910）
+- [X] T923 [US2] 实现 agents/screenplay/evaluators/composite.py + loop.py 接线真实七评估器（stage 条件适用语义；gate 短路；依赖 T914、T920~T922）
 
 **检查点**: 七评估器全绿；judge 阶段适用范围成立；节点 eval_breakdown 分量齐全
 

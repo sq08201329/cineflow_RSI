@@ -463,7 +463,7 @@ def run_screenplay_round(
     gateway: LLMGateway,
     config: ScreenplayConfig,
     inputs: dict,
-    evaluators: list[Evaluator] | None = None,
+    evaluators: list[Evaluator] | dict | None = None,
 ) -> ScreenplayRoundResult:
     """执行一轮剧本分阶段产出（全流程幂等）。
 
@@ -570,7 +570,7 @@ def _run_stage(
     artifacts: ArtifactStore,
     engine: Engine,
     gateway: LLMGateway,
-    evaluators: list[Evaluator],
+    evaluators: list[Evaluator] | dict,
 ) -> tuple[dict, ScriptArtifact | None, float]:
     """单阶段流水线：计划预检 → 网关生成 → 工件内容寻址 → 评估 → 落盘。"""
     job_id = _job_id(round_id, stage)
