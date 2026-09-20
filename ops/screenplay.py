@@ -1,6 +1,9 @@
 #!/usr/bin/env python
-"""剧本 Agent CLI（功能 009）：produce 子命令。
+"""剧本 Agent CLI（功能 009）：produce / submit 子命令。
 
+- submit：提交人工策略版本（C13）——静态检查（002）与接口签名（plan(inputs, config)）
+  均过才落 `policies/history/screenplay/{version}.py` + meta.json；`--draft` 只校验算版本
+  不入历史；同源码重提幂等（同版本号）；
 - produce：按人工策略跑一轮分阶段产出（outline → scenes → script）——策略源码过
   002 静态检查后执行、版本 = 源码 BLAKE3 前 12 位（节点可回溯到产出它的策略版本）；
   逐阶段经 LLM 网关生成、成本入账、节点一次性落发现树；工件内容寻址入
@@ -8,9 +11,10 @@
   （四 gate + 两代理 + judge 仅大纲阶段，`build_screenplay_evaluators` 唯一装配点）。
 
 CLI 默认面向 PG 库（--dsn 或 CINEFLOW_PG_DSN，schema 由 Alembic 迁移管理，CLI 不隐式
-改 PG schema）；SQLite DSN（测试/本地）自动建表。人工策略版本核验：`--policy <version>`
-读 `<policy-dir>/{version}.py` 并校验源码哈希与版本一致（不符即拒绝）；`--policy-file`
-按源码哈希派生版本（本地验证用）。
+改 PG schema）；SQLite DSN（测试/本地）自动建表。`--policy-dir` 为**策略历史根目录**
+（默认 `policies/history`；版本源码位于 `<policy-dir>/screenplay/{version}.py`）。
+人工策略版本核验：`--policy <version>` 读该路径并校验源码哈希与版本一致（不符即拒绝）；
+`--policy-file` 按源码哈希派生版本（本地验证用）。
 
 退出码：0 成功；2 参数/依赖/策略拒绝（缺 DSN、策略未过静态检查、版本不符等）；1 运行期
 错误（输入预检拒绝、评估器装配失败等）。后续 submit/compare/adopt/reject/evidence
@@ -26,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 POLICY_VERSION_LENGTH = 12  # 版本 = 源码 BLAKE3 前 12 位（FR-009/FR-015 口径）
+AGENT_ID = "screenplay"
 
 
 def _resolve_dsn(args) -> str | None:
@@ -51,7 +56,7 @@ def _policy_source_path(args) -> tuple[Path | None, str | None, str]:
             return None, None, f"策略源码不存在：{path}"
         return path, None, ""
     if args.policy:
-        path = Path(args.policy_dir) / f"{args.policy}.py"
+        path = Path(args.policy_dir) / AGENT_ID / f"{args.policy}.py"
         if not path.is_file():
             return None, None, f"策略版本 {args.policy!r} 对应源码不存在：{path}"
         return path, args.policy, ""
@@ -186,6 +191,36 @@ def _cmd_produce(args) -> int:
     return 0
 
 
+def _cmd_submit(args) -> int:
+    from agents.screenplay.policy_versions import PolicySubmissionError, submit_policy
+    from dreaming.config import DreamConfig, DreamConfigError
+
+    source_path = Path(args.source_file)
+    if not source_path.is_file():
+        return _fail(f"策略源码不存在：{source_path}", 2)
+    if not Path(args.config).is_file():
+        return _fail(f"形态配置不存在：{args.config}", 2)
+    try:
+        cfg = DreamConfig.from_yaml(args.config)
+    except DreamConfigError as exc:
+        return _fail(f"做梦形态配置非法：{exc}", 2)
+    try:
+        record = submit_policy(
+            source_path.read_text(encoding="utf-8"),
+            args.by,
+            cfg,
+            parent_version=args.parent_version,
+            draft=args.draft,
+            history_root=Path(args.policy_dir).expanduser(),
+        )
+    except PolicySubmissionError as exc:
+        return _fail(str(exc), 2)
+    payload = record.to_dict()
+    payload["policy_dir"] = str(args.policy_dir)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _backend(args):
     """网关后端装配：默认 Mock（开发/CI 确定性）；--backend http 走真实后端（需凭证）。"""
     from core.llm_gateway.backends.http import HttpBackend
@@ -220,7 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     produce.add_argument("--policy", default=None, help="人工策略版本（读 <policy-dir>/{版本}.py）")
     produce.add_argument("--policy-file", default=None, help="人工策略源码路径（本地验证用）")
     produce.add_argument(
-        "--policy-dir", default=str(REPO_ROOT / "policies" / "history" / "screenplay")
+        "--policy-dir",
+        default=str(REPO_ROOT / "policies" / "history"),
+        help="策略历史根目录（版本源码位于 <policy-dir>/screenplay/{version}.py）",
     )
     produce.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
     produce.add_argument("--data-dir", default=str(REPO_ROOT / "screenplay"))
@@ -232,6 +269,19 @@ def main(argv: list[str] | None = None) -> int:
         help="网关后端：mock（默认，开发/CI）/ http（真实后端，需凭证）",
     )
     produce.set_defaults(func=_cmd_produce)
+
+    submit = sub.add_parser("submit", help="提交人工策略版本（静态检查 + 版本化落盘）")
+    submit.add_argument("--source-file", required=True, help="策略源码路径")
+    submit.add_argument("--by", required=True, help="提交人（谱系 provenance 必填）")
+    submit.add_argument("--parent-version", default=None, help="父版本（谱系根留空）")
+    submit.add_argument("--draft", action="store_true", help="草稿：只校验算版本，不入历史")
+    submit.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    submit.add_argument(
+        "--policy-dir",
+        default=str(REPO_ROOT / "policies" / "history"),
+        help="策略历史根目录（默认仓库 policies/history）",
+    )
+    submit.set_defaults(func=_cmd_submit)
 
     args = parser.parse_args(argv)
     return args.func(args)

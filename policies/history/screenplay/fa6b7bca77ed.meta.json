@@ -1,0 +1,22 @@
+{
+  "created_round": "manual-submit",
+  "no_auto_evolve": true,
+  "parent_version": null,
+  "reward": {
+    "lambda": 0.5,
+    "parallel_penalty": 0.0,
+    "pareto_auc": 0.0,
+    "reward": 0.0
+  },
+  "source": "manual",
+  "static_check": {
+    "checked_at": "2026-09-20T14:04:53.485388+00:00",
+    "result": "passed",
+    "violations": []
+  },
+  "submission": {
+    "at": "2026-09-20T14:04:53.485388+00:00",
+    "submitter": "sunqi"
+  },
+  "version": "fa6b7bca77ed"
+}

@@ -325,3 +325,10 @@ dreaming:
 cost_regression:
   threshold: 0.2 # 成本增幅告警阈值（同一回放任务最近一轮 vs 前一轮，严格大于才告警）
   history_root: dreaming/history # 做梦轮次落盘根目录（回放任务成本序列来源）
+
+# 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
+# （未采纳更新指针次数恒 0，SC-002 机检；值 = policies/history/screenplay/ 下的策略版本；
+#  初始值 = 人工策略首版（谱系根，见 policies/history/screenplay/fa6b7bca77ed.meta.json））
+deployment:
+  screenplay:
+    current_policy_version: fa6b7bca77ed

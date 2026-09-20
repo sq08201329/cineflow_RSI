@@ -164,6 +164,7 @@ class Test依赖与策略错误:
         assert exc.value.code == 2
 
     def test_策略源码不存在(self, cli, capsys, tmp_path, dsn):
+        """--policy-dir 是**历史根目录**：版本源码位于 <policy-dir>/screenplay/{version}.py。"""
         code, payload = _invoke(
             cli,
             capsys,
@@ -183,6 +184,27 @@ class Test依赖与策略错误:
         )
         assert code == 2
         assert "9f2c41ab77de" in payload["error"]
+        assert "screenplay" in payload["error"]  # 解析路径含 Agent 子目录
+
+    def test_按历史目录解析策略版本(self, cli, capsys, policy_file, scaled_config, tmp_path, dsn):
+        """--policy <version>（历史根目录 + Agent 子目录）可正常产出。"""
+        history = tmp_path / "history"
+        (history / "screenplay").mkdir(parents=True)
+        version = _version_of(policy_file)
+        (history / "screenplay" / f"{version}.py").write_text(
+            policy_file.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        args = list(
+            _produce_args(
+                "cli-hist", policy_file, dsn, tmp_path / "data", config_path=scaled_config
+            )
+        )
+        args[args.index("--policy-file")] = "--policy"
+        args[args.index(str(policy_file))] = version
+        args += ["--policy-dir", str(history)]
+        code, payload = _invoke(cli, capsys, *args)
+        assert code == 0
+        assert payload["policy_version"] == version
 
     def test_策略版本与源码不符被拒(self, cli, capsys, policy_file, tmp_path, dsn):
         """版本 = 源码 BLAKE3 前 12 位：版本与内容不一致即拒绝（人工版本可核验）。"""
@@ -341,3 +363,90 @@ class Test产出:
         code, payload = _invoke(cli, capsys, *args)
         assert code == 1
         assert payload["error"]
+
+
+class TestSubmit子命令:
+    """C13：CLI submit = 人工策略提交通道（静态检查 + 接口校验 + 版本化落盘）。"""
+
+    def _submit_args(self, source_path: Path, history: Path, *, extra=()):
+        return (
+            "submit",
+            "--source-file",
+            str(source_path),
+            "--by",
+            "sunqi",
+            "--policy-dir",
+            str(history),
+            "--config",
+            str(REPO_ROOT / "configs" / "movie.yaml"),
+            *extra,
+        )
+
+    def test_帮助列出参数(self, cli, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["submit", "--help"])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        for flag in ("--source-file", "--by", "--parent-version", "--draft", "--policy-dir"):
+            assert flag in out
+
+    def test_合法提交落盘并输出记录(self, cli, capsys, policy_file, tmp_path):
+        history = tmp_path / "history"
+        code, payload = _invoke(cli, capsys, *self._submit_args(policy_file, history))
+        assert code == 0
+        assert payload["version"] == _version_of(policy_file)
+        assert payload["recorded"] is True
+        assert payload["submitter"] == "sunqi"
+        assert payload["static_check"] == "passed"
+        assert Path(payload["source_path"]).is_file()
+        assert Path(payload["meta_path"]).is_file()
+        meta = json.loads(Path(payload["meta_path"]).read_text(encoding="utf-8"))
+        assert meta["source"] == "manual"
+        assert meta["no_auto_evolve"] is True  # 降级模式名单审计
+
+    def test_违规提交退出码_2_且历史无新增(self, cli, capsys, tmp_path, screenplay_policy_source):
+        bad = tmp_path / "bad.py"
+        bad.write_text(screenplay_policy_source("forbidden_import"), encoding="utf-8")
+        history = tmp_path / "history"
+        code, payload = _invoke(cli, capsys, *self._submit_args(bad, history))
+        assert code == 2
+        assert "静态检查" in payload["error"]
+        assert not history.exists() or list(history.rglob("*")) == []
+
+    def test_签名错退出码_2_且历史无新增(self, cli, capsys, tmp_path, screenplay_policy_source):
+        bad = tmp_path / "bad_signature.py"
+        bad.write_text(screenplay_policy_source("bad_signature"), encoding="utf-8")
+        history = tmp_path / "history"
+        code, payload = _invoke(cli, capsys, *self._submit_args(bad, history))
+        assert code == 2
+        assert "plan" in payload["error"]
+
+    def test_草稿不入历史(self, cli, capsys, policy_file, tmp_path):
+        history = tmp_path / "history"
+        code, payload = _invoke(
+            cli, capsys, *self._submit_args(policy_file, history, extra=("--draft",))
+        )
+        assert code == 0
+        assert payload["recorded"] is False
+        assert payload["version"] == _version_of(policy_file)
+        assert not history.exists() or list(history.rglob("*")) == []
+
+    def test_重复提交幂等(self, cli, capsys, policy_file, tmp_path):
+        history = tmp_path / "history"
+        first = _invoke(cli, capsys, *self._submit_args(policy_file, history))
+        files = sorted(path.name for path in (history / "screenplay").iterdir())
+        second = _invoke(cli, capsys, *self._submit_args(policy_file, history))
+        assert second[1]["version"] == first[1]["version"]
+        assert sorted(path.name for path in (history / "screenplay").iterdir()) == files
+
+    def test_缺提交人即报错(self, cli, policy_file, tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["submit", "--source-file", str(policy_file)])
+        assert exc.value.code == 2
+
+    def test_源码不存在退出码_2(self, cli, capsys, tmp_path):
+        code, payload = _invoke(
+            cli, capsys, *self._submit_args(tmp_path / "missing.py", tmp_path / "history")
+        )
+        assert code == 2
+        assert "源码不存在" in payload["error"]

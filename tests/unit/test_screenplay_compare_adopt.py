@@ -29,8 +29,9 @@ _REAL_CONFIG = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(e
 
 
 def _config_copy(tmp_path: Path, *, pointer: str | None = None) -> Path:
-    """配置副本（可选写入部署指针），用于指针读写与"未采纳不变"机检。"""
+    """配置副本（pointer=None → 显式移除部署指针段），用于指针读写与"未采纳不变"机检。"""
     raw = copy.deepcopy(_REAL_CONFIG)
+    raw.pop("deployment", None)  # 真实配置含首版指针：副本显式移除后再按用例写入
     if pointer is not None:
         raw["deployment"] = {"screenplay": {"current_policy_version": pointer}}
     path = tmp_path / "movie.yaml"

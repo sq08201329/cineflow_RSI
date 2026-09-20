@@ -10,6 +10,7 @@ C13：`submit_policy(source_text, submitter, cfg)` → 版本 = 源码 BLAKE3 �
 
 import ast
 import copy
+import importlib.util
 import inspect
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from agents.screenplay.artifact import ScriptArtifact
 from agents.screenplay.config import ScreenplayConfig
 from agents.screenplay.policy_versions import (
     HumanPolicyVersion,
@@ -24,9 +26,11 @@ from agents.screenplay.policy_versions import (
     submit_policy,
 )
 from dreaming.lineage import validate_meta
+from policies.static_check import find_violations
 from policies.versioning import policy_version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+POLICY_DIR = REPO_ROOT / "policies" / "history" / "screenplay"
 _REAL_CONFIG = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
 
 _PARENT = "9f2c41ab77de"
@@ -249,3 +253,101 @@ class Testconfigs调参不产生策略版本:
         functions = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
         assert "submit_policy" in functions
         assert not {name for name in functions if "auto" in name.lower()}  # 无自动进化入口
+
+
+def _seed():
+    """人工策略首版单源加载（目录内唯一 {version}.py，谱系根）。"""
+    sources = sorted(POLICY_DIR.glob("*.py"))
+    assert len(sources) == 1, "policies/history/screenplay/ 应恰有一个策略版本文件（谱系根）"
+    path = sources[0]
+    source = path.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("screenplay_seed_policy", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return path.stem, source, module.Policy
+
+
+class Test首版策略落盘纪律:
+    """T931 人工策略首版：谱系根 + 真实配置下过四门禁（可跑的部署基线）。"""
+
+    def test_版本号等于内容哈希(self):
+        version, source, _ = _seed()
+        assert version == policy_version(source)  # 文件名 = 源码 BLAKE3 前 12 位
+
+    def test_meta_谱系根合法(self):
+        version, _, _ = _seed()
+        meta = json.loads((POLICY_DIR / f"{version}.meta.json").read_text(encoding="utf-8"))
+        validate_meta(meta)  # 005 谱系 schema
+        assert meta["version"] == version
+        assert meta["parent_version"] is None  # 首版：谱系根
+        assert meta["source"] == "manual"
+        assert meta["submission"]["submitter"] == "sunqi"
+        assert meta["static_check"]["result"] == "passed"
+        assert meta["no_auto_evolve"] is True  # 降级模式名单审计（宪章原则六）
+
+    def test_源码过静态检查与接口校验(self, tmp_path, dream_config):
+        _, source, _ = _seed()
+        assert find_violations(source) == []  # 002 静态检查
+        draft = submit_policy(source, "sunqi", dream_config, history_root=tmp_path, draft=True)
+        assert draft.recorded is False and draft.static_check == "passed"  # 接口签名校验通过
+
+    def test_部署指针指向首版(self):
+        version, _, _ = _seed()
+        raw = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
+        assert raw["deployment"]["screenplay"]["current_policy_version"] == version
+
+    def test_策略产出过四门禁(self, screenplay_config):
+        """真实配置（90 分钟 × 45 行/页）下首版产出四 gate + 两 proxy 全过。"""
+        from agents.screenplay.evaluators.beat_structure import BeatStructureEvaluator
+        from agents.screenplay.evaluators.dialogue_action_ratio import DialogueActionRatioEvaluator
+        from agents.screenplay.evaluators.entity_consistency import EntityConsistencyEvaluator
+        from agents.screenplay.evaluators.page_minutes import PageMinutesEvaluator
+        from agents.screenplay.evaluators.scene_character import SceneCharacterEvaluator
+        from agents.screenplay.evaluators.timeline_conflict import TimelineConflictEvaluator
+        from core.evaluators.base import ArtifactRef
+
+        _, _, policy_class = _seed()
+        plans = policy_class().plan(
+            {
+                "topic": "病房里的三个月",
+                "target_duration_min": 90,
+                "constraints": ["单场景为主"],
+                "characters": ["林静", "陈默", "周医生"],
+            },
+            screenplay_config,
+        )
+        assert set(plans) == {"outline", "scenes", "script"}
+        evaluators = [
+            BeatStructureEvaluator(screenplay_config.beat_sheet),
+            PageMinutesEvaluator(screenplay_config.page_minutes_slice),
+            SceneCharacterEvaluator(screenplay_config.character_aliases),
+            DialogueActionRatioEvaluator(screenplay_config.dialogue_action_ratio),
+            EntityConsistencyEvaluator(screenplay_config.character_aliases),
+            TimelineConflictEvaluator(),
+        ]
+        ref = ArtifactRef(artifact_hash="ab" * 32)
+        for stage, markers in plans.items():
+            artifact = ScriptArtifact(stage=stage, text="（网关正文占位）", **markers)
+            # 页数 = 目标时长（90 页 ∈ [85, 95]）
+            assert artifact.page_count(screenplay_config.lines_per_page) == pytest.approx(90.0)
+            for evaluator in evaluators:
+                result = evaluator.evaluate(ref, {"artifact": artifact})
+                assert result.score == 1.0, (
+                    stage,
+                    evaluator.spec.evaluator_id,
+                    result.diagnostics,
+                )
+
+    def test_各阶段工艺不同(self, screenplay_config):
+        """阶段工艺由粗到细：同目标行数下场景数递进（大纲块 → 分场 → 剧本行）。"""
+        _, _, policy_class = _seed()
+        artifacts = {}
+        plans = policy_class().plan(
+            {"topic": "题材", "target_duration_min": 90, "characters": ["林静"]},
+            screenplay_config,
+        )
+        for stage, markers in plans.items():
+            artifacts[stage] = ScriptArtifact(stage=stage, text="（占位）", **markers)
+        counts = {stage: len(art.scene_ids()) for stage, art in artifacts.items()}
+        assert counts["outline"] < counts["scenes"] < counts["script"]
+        assert len({art.total_lines() for art in artifacts.values()}) == 1  # 行数一致
