@@ -21,7 +21,7 @@ uv run pytest tests/unit -k "editing_dreaming"    # 做梦一轮接入验证
 3. **预算门禁与幂等**：超界拒绝；同 round_id 重建 0 重复扣费
 4. **评估**：五评估器分量 + gate 短路（违规不跑 judge）+ 定点归一重算一致
 5. **无偏性**：回放 vs 真实重跑 τ ≥ 0.95
-6. **做梦**：剪辑策略候选一轮 → reward 排名 + 首轮基线
+6. **做梦**：剪辑策略候选一轮 → reward 排名 + 首轮基线（落盘形态 `history_root/editing/dream-editing-1.json`，演示档 M=8 见 `uv run pytest tests/unit -k "editing_dreaming"`）
 
 ## 里程碑验收（立项书周 4~6 / SC-001）
 
