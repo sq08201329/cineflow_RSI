@@ -67,7 +67,7 @@
 
 - [x] T720 [P] [US2] tests/unit/test_editing_rules.py（C4~C6：时长 130s 过/150s gate 判 0、含 300ms 镜头分布判 0、非法转场判 0、合法序列全过；gate 违规总分 0）
 - [x] T721 [P] [US2] tests/unit/test_editing_pacing.py（C7：分段统计口径、加权距离误差 <1e-6、贴近 vs 背离基准分差显著、缺基准拒绝启动）
-- [ ] T722 [P] [US2] tests/unit/test_editing_judge.py（C8：摘要成对比较、3 提示词投票胜率、平局 0.5 如实记录、网关计费入账、Mock 后端同比较重跑逐位一致、版本号含提示词/锚点/摘要三段哈希）
+- [x] T722 [P] [US2] tests/unit/test_editing_judge.py（C8：摘要成对比较、3 提示词投票胜率、平局 0.5 如实记录、网关计费入账、Mock 后端同比较重跑逐位一致、版本号含提示词/锚点/摘要三段哈希）
 - [ ] T723 [P] [US2] tests/unit/test_editing_composite.py（C9：gate 违规短路——judge 未调用网关计数不增、适用分量归一合成、quantize 定点；注册元数据断言（cost_per_call/deterministic/kind）+ 与 004/006 既有评估器对比样本——宪章测试纪律三件套）
 
 ### 用户故事 2 的实现
