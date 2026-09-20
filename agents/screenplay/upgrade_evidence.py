@@ -24,6 +24,10 @@ import blake3
 
 AGENT_ID = "screenplay"
 DEFAULT_EVIDENCE_DIR = Path("calibration/upgrade-events")
+# 010 盲评对象口径（C16 / 技术方案 §2.2 锚点）：剧本线只盲评**大纲阶段**产出
+# （judge 只作用于大纲阶段，人评与之对齐）；010 `build_blind_list` 以通用观测槽
+# 精确匹配机制消费本口径（不特化任何 Agent）。
+BLIND_REVIEW_OBSERVATION_MATCH = {"stage": "outline"}
 CONCLUSIONS = ("meets", "below")
 JUDGE_EVALUATOR_ID = "judge.dramatic_tension"
 _REQUIRED_THRESHOLDS = ("judge_r_target", "min_samples", "drift_band", "gate_violation_max")

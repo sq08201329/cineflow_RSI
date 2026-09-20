@@ -4,7 +4,9 @@
 - 零泄露：清单条目序列化键白名单 = {node_id, artifact_hash, round_id}，
   score / eval_breakdown 永不出现在清单中（FR-002，契约测试机检）；
 - 轮次落盘 calibration/rounds/{agent_id}/{round_id}.json（状态 open）；
-- promo 不盲评：其锚点为 platform_truth 回流，调用即 ValidationError（澄清决议）。
+- promo 不盲评：其锚点为 platform_truth 回流，调用即 ValidationError（澄清决议）；
+- `observation_match`（可选）：按节点观测槽精确匹配过滤候选（通用机制，不特化 Agent）
+  ——例如剧本线只盲评**大纲阶段**产出：`{"stage": "outline"}`。
 """
 
 import json
@@ -86,22 +88,34 @@ def build_blind_list(
     top_k: int,
     data_dir: str | Path,
     round_id: str | None = None,
+    observation_match: dict | None = None,
 ) -> CalibrationRound:
     """生成 top-k 盲评清单并落盘轮次（状态 open）。
 
     按周期内得分节点 score 降序取 top-k（平分按 node_id 字典序保证确定性）；
     样本不足取实际数量并在 round.note 注明。
+    observation_match：观测槽精确匹配过滤（键值全等；通用机制——如剧本线
+    `{"stage": "outline"}` 只盲评大纲阶段产出；缺省不过滤）。
     """
     if agent_id in _NO_BLIND_AGENTS:
         raise ValidationError(f"{agent_id} 的锚点为平台真值回流，不参与盲评")
     if top_k < 1:
         raise ValidationError(f"top_k 必须为 ≥ 1 的整数，实际为 {top_k!r}")
+    if observation_match is not None and not isinstance(observation_match, dict):
+        raise ValidationError(
+            f"observation_match 必须为 dict 或 None，实际为 {observation_match!r}"
+        )
     start_ts, end_ts = _period_window(period_start, period_end)
 
     candidates = []
     for tree in store.trees_by(agent_id=agent_id):
         for node in store.nodes_of(tree.tree_id):
             if node.score is None or not start_ts <= node.created_at < end_ts:
+                continue
+            if observation_match and not all(
+                node.observation_context.get(key) == value
+                for key, value in observation_match.items()
+            ):
                 continue
             candidates.append(node)
     candidates.sort(key=lambda n: (-n.score, n.node_id))

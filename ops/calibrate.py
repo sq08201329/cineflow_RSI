@@ -42,6 +42,15 @@ def _cmd_round(args) -> int:
         args.period_start
         or (datetime.now(UTC).date() - timedelta(days=config.period_days)).isoformat()
     )
+    try:
+        observation_match = json.loads(args.observation_match) if args.observation_match else None
+    except json.JSONDecodeError as exc:
+        print(
+            json.dumps(
+                {"error": f"--observation-match 必须为 JSON 对象：{exc}"}, ensure_ascii=False
+            )
+        )
+        return 2
 
     engine = create_engine(dsn)
     round_ = build_blind_list(
@@ -51,6 +60,7 @@ def _cmd_round(args) -> int:
         period_end=period_end,
         top_k=args.top_k or config.top_k,
         data_dir=args.data_dir,
+        observation_match=observation_match,
     )
     print(
         json.dumps(
@@ -258,6 +268,11 @@ def main() -> int:
     round_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
     round_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
     round_parser.add_argument("--dsn", default=None, help="PG DSN，默认读 CINEFLOW_PG_DSN")
+    round_parser.add_argument(
+        "--observation-match",
+        default=None,
+        help='观测槽精确匹配过滤（JSON，如 {"stage": "outline"}——剧本线只盲评大纲阶段）',
+    )
     round_parser.set_defaults(func=_cmd_round)
 
     intake_parser = sub.add_parser("intake", help="人评锚点录入（JSON 条目文件）")
