@@ -13,9 +13,7 @@ import yaml
 from agents.sound.config import SoundConfig, SoundConfigError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_REAL_CONFIG = yaml.safe_load(
-    (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
-)
+_REAL_CONFIG = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
 
 
 def _valid_dict() -> dict:

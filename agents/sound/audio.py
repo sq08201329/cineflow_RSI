@@ -12,9 +12,7 @@ import wave
 import numpy as np
 
 
-def synthesize_wav(
-    gen_params: dict, distribution: dict, sample_rate: int
-) -> tuple[bytes, dict]:
+def synthesize_wav(gen_params: dict, distribution: dict, sample_rate: int) -> tuple[bytes, dict]:
     """合成 PCM16 wav 字节与声学属性元数据。
 
     gen_params：声学属性可控参数（seed/duration_s/loudness_gain_db/event_times_ms/

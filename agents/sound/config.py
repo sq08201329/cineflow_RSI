@@ -70,9 +70,7 @@ class SoundConfig:
         if not isinstance(evaluator_weights, dict) or not evaluator_weights:
             raise SoundConfigError("形态配置缺少 evaluator_weights.sound 段")
         return cls(
-            exploration_per_round_usd=float(
-                _require(sound, "exploration_per_round_usd", "sound")
-            ),
+            exploration_per_round_usd=float(_require(sound, "exploration_per_round_usd", "sound")),
             clips_per_round=int(_require(sound, "clips_per_round", "sound")),
             loudness=_require_loudness_tiers(_require(sound, "loudness", "sound")),
             av_sync_threshold_ms=int(_require(sound, "av_sync_threshold_ms", "sound")),

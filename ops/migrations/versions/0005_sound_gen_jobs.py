@@ -50,9 +50,7 @@ def upgrade() -> None:
         sa.Column(
             "actual_cost_usd",
             sa.Float(),
-            sa.CheckConstraint(
-                "actual_cost_usd >= 0 AND actual_cost_usd <= estimated_cost_usd"
-            ),
+            sa.CheckConstraint("actual_cost_usd >= 0 AND actual_cost_usd <= estimated_cost_usd"),
             nullable=True,  # 渲染完成取件时才填（两段式中间态）
         ),
         sa.Column(

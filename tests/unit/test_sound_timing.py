@@ -76,31 +76,23 @@ class Test越界拒绝:
 
     def test_台词负时间戳被拒(self, make_timing_sheet):
         with pytest.raises(ValidationError, match="非负"):
-            make_timing_sheet(
-                utterances=[{"text": "甲", "start_ms": -1, "end_ms": 1000}]
-            )
+            make_timing_sheet(utterances=[{"text": "甲", "start_ms": -1, "end_ms": 1000}])
 
 
 class Test起止关系:
     def test_start_等于_end_被拒(self, make_timing_sheet):
         with pytest.raises(ValidationError, match="start_ms.*<.*end_ms"):
-            make_timing_sheet(
-                utterances=[{"text": "甲", "start_ms": 1000, "end_ms": 1000}]
-            )
+            make_timing_sheet(utterances=[{"text": "甲", "start_ms": 1000, "end_ms": 1000}])
 
     def test_start_大于_end_被拒(self, make_timing_sheet):
         with pytest.raises(ValidationError, match="start_ms.*<.*end_ms"):
-            make_timing_sheet(
-                utterances=[{"text": "甲", "start_ms": 2000, "end_ms": 1000}]
-            )
+            make_timing_sheet(utterances=[{"text": "甲", "start_ms": 2000, "end_ms": 1000}])
 
 
 class Test字段合法性:
     def test_空台词文本被拒(self, make_timing_sheet):
         with pytest.raises(ValidationError, match="text"):
-            make_timing_sheet(
-                utterances=[{"text": "", "start_ms": 0, "end_ms": 1000}]
-            )
+            make_timing_sheet(utterances=[{"text": "", "start_ms": 0, "end_ms": 1000}])
 
     def test_空音效类型被拒(self, make_timing_sheet):
         with pytest.raises(ValidationError, match="kind"):
@@ -108,6 +100,4 @@ class Test字段合法性:
 
     def test_时间戳必须为整数(self, make_timing_sheet):
         with pytest.raises(ValidationError, match="整数"):
-            make_timing_sheet(
-                utterances=[{"text": "甲", "start_ms": 0.5, "end_ms": 1000}]
-            )
+            make_timing_sheet(utterances=[{"text": "甲", "start_ms": 0.5, "end_ms": 1000}])

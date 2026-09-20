@@ -94,17 +94,13 @@ class Test唯一键幂等:
             conn.execute(insert(sound_gen_jobs).values(**_JOB))
         with pytest.raises(IntegrityError):
             with jobs_engine.begin() as conn:
-                conn.execute(
-                    insert(sound_gen_jobs).values(**{**_JOB, "job_id": "j2"})
-                )
+                conn.execute(insert(sound_gen_jobs).values(**{**_JOB, "job_id": "j2"}))
 
     def test_不同参数同轮次可共存(self, jobs_engine):
         with jobs_engine.begin() as conn:
             conn.execute(insert(sound_gen_jobs).values(**_JOB))
             conn.execute(
-                insert(sound_gen_jobs).values(
-                    **{**_JOB, "job_id": "j2", "params_hash": "ef" * 32}
-                )
+                insert(sound_gen_jobs).values(**{**_JOB, "job_id": "j2", "params_hash": "ef" * 32})
             )
         with jobs_engine.connect() as conn:
             assert conn.execute(text("SELECT COUNT(*) FROM sound_gen_jobs")).scalar() == 2
@@ -128,15 +124,11 @@ class TestGenType枚举:
 
 
 class Test状态机与成本约束:
-    @pytest.mark.parametrize(
-        "status", ["pending", "rendered", "evaluated", "inserted", "failed"]
-    )
+    @pytest.mark.parametrize("status", ["pending", "rendered", "evaluated", "inserted", "failed"])
     def test_状态机全序列可入库(self, jobs_engine, status):
         with jobs_engine.begin() as conn:
             conn.execute(
-                insert(sound_gen_jobs).values(
-                    **{**_JOB, "status": status, "job_id": f"j-{status}"}
-                )
+                insert(sound_gen_jobs).values(**{**_JOB, "status": status, "job_id": f"j-{status}"})
             )
 
     def test_非法状态被_CHECK_拒绝(self, jobs_engine):
@@ -147,17 +139,13 @@ class Test状态机与成本约束:
     def test_预估成本为负被_CHECK_拒绝(self, jobs_engine):
         with pytest.raises(IntegrityError):
             with jobs_engine.begin() as conn:
-                conn.execute(
-                    insert(sound_gen_jobs).values(**{**_JOB, "estimated_cost_usd": -0.1})
-                )
+                conn.execute(insert(sound_gen_jobs).values(**{**_JOB, "estimated_cost_usd": -0.1}))
 
     def test_实际成本超预估被_CHECK_拒绝(self, jobs_engine):
         """实际扣费 ≤ 预估（research 决策 7/视觉同款纪律）落进 schema。"""
         with pytest.raises(IntegrityError):
             with jobs_engine.begin() as conn:
-                conn.execute(
-                    insert(sound_gen_jobs).values(**{**_JOB, "actual_cost_usd": 0.6})
-                )
+                conn.execute(insert(sound_gen_jobs).values(**{**_JOB, "actual_cost_usd": 0.6}))
 
     def test_实际成本不超预估可入库(self, jobs_engine):
         with jobs_engine.begin() as conn:

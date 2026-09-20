@@ -16,9 +16,7 @@ import yaml
 from agents.sound.audio import synthesize_wav
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_SOUND = yaml.safe_load(
-    (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
-)["sound"]
+_SOUND = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))["sound"]
 _DIST = _SOUND["simulated_gen"]
 _SAMPLE_RATE = int(_SOUND["sample_rate"])
 
@@ -44,8 +42,10 @@ class Test确定性:
 
     def test_同_seed_不同注入属性波形仍一致(self, make_sound_gen_params):
         """声学属性注入是元数据标记（除响度增益），不改波形主体种子。"""
-        wav1, _ = synthesize_wav(make_sound_gen_params(seed=7, cer_injected=0.0), _DIST, _SAMPLE_RATE)
-        wav2, _ = synthesize_wav(make_sound_gen_params(seed=7, cer_injected=0.3), _DIST, _SAMPLE_RATE)
+        base = make_sound_gen_params(seed=7, cer_injected=0.0)
+        perturbed = make_sound_gen_params(seed=7, cer_injected=0.3)
+        wav1, _ = synthesize_wav(base, _DIST, _SAMPLE_RATE)
+        wav2, _ = synthesize_wav(perturbed, _DIST, _SAMPLE_RATE)
         assert wav1 == wav2
 
 
@@ -56,14 +56,10 @@ class Test容器规格:
             assert wf.getframerate() == _SAMPLE_RATE
             assert wf.getnchannels() == 1
             assert wf.getsampwidth() == 2  # PCM16
-            assert wf.getnframes() == int(
-                round(_DIST["duration_seconds"] * _SAMPLE_RATE)
-            )
+            assert wf.getnframes() == int(round(_DIST["duration_seconds"] * _SAMPLE_RATE))
 
     def test_时长由参数覆盖(self, make_sound_gen_params):
-        wav_bytes, meta = synthesize_wav(
-            make_sound_gen_params(duration_s=1.0), _DIST, _SAMPLE_RATE
-        )
+        wav_bytes, meta = synthesize_wav(make_sound_gen_params(duration_s=1.0), _DIST, _SAMPLE_RATE)
         with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
             assert wf.getnframes() == _SAMPLE_RATE
         assert meta["duration_s"] == pytest.approx(1.0)
