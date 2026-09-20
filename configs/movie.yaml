@@ -35,6 +35,15 @@ evaluator_weights:
     rule.axis_rule: gate # 轴规则：机位侧别跳变需过渡镜头（180° 线）
     proxy.emotion_alignment: 0.5 # 分镜卡帧像素特征 vs 情绪基调向量（余弦）
     judge.script_fit: 0.5 # ShotList 摘要 × 剧本段落成对比较（三段哈希版本）
+  screenplay:
+    # gate 表示硬规则门禁：score 为 0 时总分直接为 0；gate 短路不跑 judge（省 LLM 成本）
+    rule.beat_structure: gate # 三幕/序列结构 + 关键节拍存在性（节拍表配置驱动）
+    rule.page_minutes: gate # 页数（lines_per_page 换算）∈ 目标时长 ± 容差
+    rule.scene_character: gate # 场景-角色一致性（无幽灵角色/地点一致）
+    rule.dialogue_action_ratio: gate # 对白行占比 ∈ 配置区间
+    proxy.entity_consistency: 0.5 # 角色名规范化匹配 + 别名表（同名异写/未登记别名）
+    proxy.timeline_conflict: 0.5 # 场景时序 vs 剧内时间戳单调性冲突
+    judge.dramatic_tension: 0.5 # 仅 outline 阶段适用；scenes/script 阶段"不适用"跳过
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
@@ -210,6 +219,81 @@ storyboard:
           - {shot_id: shot-anchor-b1, scene_id: scene-1, covers: [s1-l1, s1-l2], shot_size: wide, camera: high_angle, side: B, movement: pan, est_duration_ms: 2000, alternatives: 1}
           - {shot_id: shot-anchor-b2, scene_id: scene-1, covers: [s1-l3], shot_size: full, camera: over_shoulder, side: B, movement: static, est_duration_ms: 1000, alternatives: 4}
 
+# 剧本（screenplay）形态参数：目标时长与页数容差、行-页换算、对白行占比区间、
+# 节拍表（rule.beat_structure 与执行前校验共用单一事实源）、角色别名表
+# （proxy.entity_consistency 规范化）、升级判据阈值（澄清 Q1：阈值配置化 + 系统自动
+# 判定）、生成与 judge 模型价目、judge 提示词与冻结锚点大纲集（三段哈希版本号）
+screenplay:
+  target_duration_min: 90 # 目标成片时长（rule.page_minutes 对照口径：1 页 ≈ 1 分钟）
+  page_tolerance: 5 # 页数容差：总页数 ∈ [85, 95] 过 gate
+  lines_per_page: 45 # 行 → 页换算口径（rule.page_minutes；缺即报错，不允许静默放过门禁）
+  dialogue_action_ratio: # 对白行占比区间（rule.dialogue_action_ratio 对照）
+    min: 0.4 # 占比下限（对白行数 / 总行数）
+    max: 0.8 # 占比上限（> 0.8 即比例失衡判 0）
+  beat_sheet: # 节拍表（缺即报错；required=true 的节拍缺一即 rule.beat_structure 判 0）
+    - {beat_id: opening_image, act: act1, required: true, description: "开场画面：主角与其世界的第一个印象"}
+    - {beat_id: theme_stated, act: act1, required: false, description: "主题陈述：片名般的价值主张（可选）"}
+    - {beat_id: inciting_incident, act: act1, required: true, description: "激励事件：打破日常的扰动"}
+    - {beat_id: act1_turn, act: act1, required: true, description: "第一幕转折：主角无法回头"}
+    - {beat_id: midpoint, act: act2, required: true, description: "中点：赌注升级，认知反转"}
+    - {beat_id: dark_night, act: act2, required: true, description: "灵魂黑夜：最低谷与自我怀疑"}
+    - {beat_id: act2_turn, act: act2, required: true, description: "第二幕转折：决意与计划"}
+    - {beat_id: climax, act: act3, required: true, description: "高潮：正面对决与代价"}
+    - {beat_id: resolution, act: act3, required: true, description: "结局：新常态与余味"}
+  character_aliases: # 角色别名表（缺即报错；同一写法禁多义——别名不得跨角色复用）
+    林静: [阿静]
+    陈默: [默哥]
+    周医生: [] # 无别名角色（空列表合法）
+  upgrade_criteria: # 升级判据阈值（缺任一项即报错，不允许静默"无判据"）
+    judge_r_target: 0.6 # judge 信度达标线（与 010 人评锚点的相关系数 ≥ 该值）
+    min_samples: 5 # 判据最小配对样本量（不足则结论 below + "样本不足"标注）
+    drift_band: 0.1 # 漂移指标容忍带（|漂移| ≤ 该值视为带内）
+    gate_violation_max: 0.2 # 门禁违规率上限（超限即不达标）
+  model: mock-copy-v1 # 三阶段产出的生成模型（走既有网关；缺价目即报错，原则三）
+  model_prices: # 生成与 judge 共用的模型价目表（美元/千 token）
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+  judge: # judge.dramatic_tension 委员会（仅 outline 阶段）：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
+    model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
+    prompts:
+      - "哪一份大纲的戏剧张力更强？"
+      - "哪一份大纲的冲突升级更清楚？"
+      - "哪一份大纲的人物动机更可信？"
+    anchor_outlines: # 冻结锚点大纲集（与候选大纲摘要成对比较；对照面不参与门禁）
+      - schema_version: "1.0.0"
+        stage: outline
+        text: "锚点大纲 A：一名外科医生在术后发现病历被人改写，必须在真相与职位之间抉择。"
+        beats:
+          - {beat_id: opening_image, act: act1, required: true, description: "手术灯下主角的第一印象"}
+          - {beat_id: act1_turn, act: act1, required: true, description: "被涂改的病历编号：他无法回头"}
+          - {beat_id: climax, act: act3, required: true, description: "手术台前的公开对质"}
+        scenes:
+          - {scene_id: anchor-a1, heading: "内景 - 手术室 - 夜", location: 手术室, time_marker: 0, characters: [林静, 陈默], axis_base: A}
+          - {scene_id: anchor-a2, heading: "内景 - 走廊 - 夜", location: 走廊, time_marker: 30, characters: [林静], axis_base: A}
+        characters:
+          - {name: 林静, aliases: [阿静]}
+          - {name: 陈默, aliases: [默哥]}
+        lines:
+          - {line_id: a1-l1, scene_id: anchor-a1, kind: dialogue, character: 林静, text: "血压在掉，别停手。", key: false, emotion: tense}
+          - {line_id: a1-l2, scene_id: anchor-a1, kind: action, character: 陈默, text: "陈默把手套按进器械盘，金属声很轻。", key: true, emotion: tense}
+          - {line_id: a1-l3, scene_id: anchor-a2, kind: dialogue, character: 林静, text: "那份病历不是我签的字。", key: true, emotion: sorrow}
+      - schema_version: "1.0.0"
+        stage: outline
+        text: "锚点大纲 B：一对夫妻在同一间病房里照顾临终的父亲，各自隐瞒了同一个决定。"
+        beats:
+          - {beat_id: opening_image, act: act1, required: true, description: "病房窗外落雪的第一印象"}
+          - {beat_id: dark_night, act: act2, required: true, description: "病危通知递到手里"}
+          - {beat_id: resolution, act: act3, required: true, description: "签字窗口前的沉默"}
+        scenes:
+          - {scene_id: anchor-b1, heading: "内景 - 病房 - 日", location: 病房, time_marker: 0, characters: [林静, 陈默], axis_base: B}
+          - {scene_id: anchor-b2, heading: "外景 - 天台 - 夜", location: 天台, time_marker: 45, characters: [陈默], axis_base: B}
+        characters:
+          - {name: 林静, aliases: [阿静]}
+          - {name: 陈默, aliases: [默哥]}
+        lines:
+          - {line_id: b1-l1, scene_id: anchor-b1, kind: dialogue, character: 陈默, text: "爸今天认得出我们吗？", key: false, emotion: sorrow}
+          - {line_id: b1-l2, scene_id: anchor-b1, kind: action, character: 林静, text: "林静把保温杯拧开又拧上。", key: true, emotion: sorrow}
+          - {line_id: b2-l1, scene_id: anchor-b2, kind: dialogue, character: 陈默, text: "字我签，你别管。", key: true, emotion: tense}
+
 # 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）
 calibration:
@@ -233,6 +317,9 @@ dreaming:
   collapse_window: 3 # 塌缩检测窗口（连续 N 轮）
   collapse_threshold: 0.7 # 塌缩阈值（首轮基线 × 0.7）
   replay_parallelism: 1 # 一期串行回放（预留并行配置项）
+  # 禁止自动进化的 Agent 名单（宪章原则六）：命中即显式拒绝（非静默跳过），
+  # 抛 AutoEvolutionForbiddenError（拒绝语义在 T928 落地；本批只写配置）
+  no_auto_evolve_agents: [screenplay, dev] # 剧本与开发 Agent 无自动进化（升级须另立决议）
 
 # 成本回归每日告警（宪章门禁：相同回放任务成本突增 >20% → 每日定时告警，ops/cost_regression.py）
 cost_regression:
