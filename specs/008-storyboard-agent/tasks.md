@@ -65,17 +65,17 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T820 [P] [US2] tests/unit/test_storyboard_rules.py（C4~C6：景别跳跃超限判 0、同景别连续超限判 0、场景无镜头判 0、key 行未承接判 0、合并台词手法通过、侧别硬跳无过渡判 0、带过渡镜头通过、必覆盖清单空降级注明；**边界两条：单场景行数超镜头数上限——ShotList 仍合法且缺口由 coverage 门禁暴露（不静默截断）；景别规则与轴规则冲突——覆盖率门禁优先且 diagnostics 含冲突说明（不自动豁免）**）
-- [ ] T821 [P] [US2] tests/unit/test_storyboard_alignment.py（C7：读预演帧像素（帧哈希与渲染元数据一致）、对齐 vs 背离分差显著、误差 <1e-6、同预演重评估逐位一致、情绪缺失"不适用"注明）
-- [ ] T822 [P] [US2] tests/unit/test_storyboard_judge.py（C8：摘要成对比较、3 提示词投票、平局 0.5 如实记录、网关计费入账、Mock 重跑逐位一致、版本号含提示词/锚点/摘要三段哈希）
-- [ ] T823 [P] [US2] tests/unit/test_storyboard_composite.py（C9：gate 违规短路——judge 未调用网关计数不增、适用分量归一合成、quantize 定点；注册元数据断言（cost_per_call/deterministic/kind）+ 与 004/006/007 既有评估器对比样本——宪章测试纪律三件套）
+- [X] T820 [P] [US2] tests/unit/test_storyboard_rules.py（C4~C6：景别跳跃超限判 0、同景别连续超限判 0、场景无镜头判 0、key 行未承接判 0、合并台词手法通过、侧别硬跳无过渡判 0、带过渡镜头通过、必覆盖清单空降级注明；**边界两条：单场景行数超镜头数上限——ShotList 仍合法且缺口由 coverage 门禁暴露（不静默截断）；景别规则与轴规则冲突——覆盖率门禁优先且 diagnostics 含冲突说明（不自动豁免）**）
+- [X] T821 [P] [US2] tests/unit/test_storyboard_alignment.py（C7：读预演帧像素（帧哈希与渲染元数据一致）、对齐 vs 背离分差显著、误差 <1e-6、同预演重评估逐位一致、情绪缺失"不适用"注明）
+- [X] T822 [P] [US2] tests/unit/test_storyboard_judge.py（C8：摘要成对比较、3 提示词投票、平局 0.5 如实记录、网关计费入账、Mock 重跑逐位一致、版本号含提示词/锚点/摘要三段哈希）
+- [X] T823 [P] [US2] tests/unit/test_storyboard_composite.py（C9：gate 违规短路——judge 未调用网关计数不增、适用分量归一合成、quantize 定点；注册元数据断言（cost_per_call/deterministic/kind）+ 与 004/006/007 既有评估器对比样本——宪章测试纪律三件套）
 
 ### 用户故事 2 的实现
 
-- [ ] T824 [US2] 实现 agents/storyboard/evaluators/shot_grammar.py + coverage.py + axis_rule.py（三 gate；规则库与校验同源）
-- [ ] T825 [US2] 实现 agents/storyboard/evaluators/alignment.py（读 T810 的帧产出函数 → 确定性特征向量 → 余弦映射）
-- [ ] T826 [US2] 实现 agents/storyboard/evaluators/script_fit.py（judge：摘要 × 3 提示词 × 锚点集；三段哈希版本号；依赖 T814）
-- [ ] T827 [US2] 执行器接线真实五评估器（evaluator_weights.storyboard + composite + quantize 替换桩，gate 短路纪律；依赖 T819、T824~T826）
+- [X] T824 [US2] 实现 agents/storyboard/evaluators/shot_grammar.py + coverage.py + axis_rule.py（三 gate；规则库与校验同源）
+- [X] T825 [US2] 实现 agents/storyboard/evaluators/alignment.py（读 T810 的帧产出函数 → 确定性特征向量 → 余弦映射）
+- [X] T826 [US2] 实现 agents/storyboard/evaluators/script_fit.py（judge：摘要 × 3 提示词 × 锚点集；三段哈希版本号；依赖 T814）
+- [X] T827 [US2] 执行器接线真实五评估器（evaluator_weights.storyboard + composite + quantize 替换桩，gate 短路纪律；依赖 T819、T824~T826）
 
 **检查点**: 五评估器全绿；节点 eval_breakdown 五分量齐全；gate 短路省 LLM 成本可断言
 

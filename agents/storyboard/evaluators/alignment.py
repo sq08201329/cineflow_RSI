@@ -75,7 +75,11 @@ class EmotionAlignmentEvaluator(Evaluator):
         emotion_vectors: dict,
     ) -> None:
         self._cos_floor = float(_require(alignment, "cos_floor", "proxy.emotion_alignment"))
-        self._render_cfg = dict(_require({"render": render_cfg}, "render", "board_render"))
+        if not isinstance(render_cfg, dict) or not {"fps", "width", "height"} <= set(render_cfg):
+            raise StoryboardConfigError(
+                "proxy.emotion_alignment 缺渲染配置（fps/width/height），无法重算分镜卡帧"
+            )
+        self._render_cfg = dict(render_cfg)
         self._grammar_rules = dict(grammar_rules or {})
         self._emotion_vectors = dict(emotion_vectors or {})
         if not self._emotion_vectors:
