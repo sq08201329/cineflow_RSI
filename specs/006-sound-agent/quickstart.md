@@ -11,7 +11,7 @@ uv run pytest tests/contract -k sound             # 适配器契约套件 + 周�
 uv run pytest tests/integration -k sound          # 真实 PG 两段式落盘
 uv run pytest tests/unbiasedness -k sound         # τ ≥ 0.95 + 注入偏差拒绝
 uv run python ops/demo_sound_loop.py              # 声音闭环演示
-uv run python ops/demo_dreaming.py --agent sound  # 声音策略一轮做梦（如支持参数化）
+uv run pytest tests/unit/test_sound_dreaming.py   # 声音策略一轮做梦（agent_id="sound"，M=8 演示档，dreaming 零改动接入）
 ```
 
 ## 端到端场景（demo 流程）

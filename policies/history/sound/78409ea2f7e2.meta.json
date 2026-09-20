@@ -1,0 +1,18 @@
+{
+  "approval": {
+    "approver": "sunqi",
+    "at": "2026-09-20T10:00:00+08:00",
+    "decision": "approved",
+    "reason": "声音 champion 手工首版部署（006 US3 谱系根，人工 approve 闸门不变）"
+  },
+  "created_round": "manual-seed",
+  "parent_version": null,
+  "reward": {
+    "lambda": 0.5,
+    "parallel_penalty": 0.0,
+    "pareto_auc": 0.0,
+    "reward": 0.0
+  },
+  "source": "manual",
+  "version": "78409ea2f7e2"
+}
