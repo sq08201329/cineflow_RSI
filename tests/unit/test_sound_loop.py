@@ -279,11 +279,21 @@ class Test场景4_失败照计入账:
 
 class Test场景5_非法输入执行前拒绝:
     def test_TimingSheet_重叠_适配器零调用(
-        self, make_sound_gen_params, make_timing_sheet, tree_store, artifact_store, adapters,
+        self, make_sound_gen_params, tree_store, artifact_store, adapters,
         sound_jobs_engine,
     ):
         counting = {k: _CountingAdapter(a) for k, a in adapters.items()}
-        bad_inputs = {"timing_sheet": make_timing_sheet(variant="overlap"), "mood": "悬疑"}
+        # 上游 dict 形态的非法时序（重叠）：执行器构造校验必须在适配器调用前拒绝
+        bad_inputs = {
+            "timing_sheet": {
+                "utterances": [
+                    {"text": "你终于来了。", "start_ms": 0, "end_ms": 1000},
+                    {"text": "我等了很久。", "start_ms": 800, "end_ms": 2000},
+                ],
+                "effects": [{"kind": "door_slam", "at_ms": 1100}],
+            },
+            "mood": "悬疑",
+        }
         with pytest.raises(ValidationError):
             _run(
                 "r5",
