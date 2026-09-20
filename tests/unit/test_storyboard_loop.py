@@ -112,6 +112,7 @@ def _run(
     engine,
     config,
     script,
+    evaluators=None,
 ):
     return run_storyboard_round(
         round_id=round_id,
@@ -122,7 +123,7 @@ def _run(
         engine=engine,
         config=config,
         inputs={"script": script},
-        evaluators=_stubs(),
+        evaluators=_stubs() if evaluators is None else evaluators,
     )
 
 
@@ -483,6 +484,55 @@ class Test渲染失败:
         rows = {row.job_id: row for row in _job_rows(storyboard_jobs_engine)}
         assert sum(1 for row in rows.values() if row.status == "failed") == 2
         assert all(row.error for row in rows.values() if row.status == "failed")
+
+
+class Test崩溃隔离:
+    def test_评估器崩溃_节点FAILED_轮次继续(
+        self,
+        make_shotlist,
+        script,
+        tree_store,
+        artifact_store,
+        adapter,
+        storyboard_jobs_engine,
+        config,
+    ):
+        """SC-006 口径：任一评估器崩溃 → 该节点 FAILED（渲染成本照常入账），轮次继续。"""
+
+        class _CrashOnThird(StubRuleEvaluator):
+            def evaluate(self, artifact, context):
+                if len(context["shotlist"].shots) == 8:  # 第三组变体
+                    raise RuntimeError("评估器崩溃模拟")
+                return super().evaluate(artifact, context)
+
+        evaluators = [
+            _CrashOnThird("rule.shot_grammar"),
+            StubProxyEvaluator("proxy.emotion_alignment", score=0.8),
+            StubJudgeEvaluator("judge.script_fit", score=0.7),
+        ]
+        result = _run(
+            "r9",
+            _StubPolicy(_three_shotlists(make_shotlist)),
+            tree_store,
+            artifact_store,
+            adapter,
+            storyboard_jobs_engine,
+            config,
+            script,
+            evaluators=evaluators,
+        )
+        assert [j["status"] for j in result.jobs] == ["inserted", "inserted", "failed"]
+        assert "评估器崩溃" in result.jobs[2]["reason"]
+        nodes = _board_nodes(tree_store, result.tree_id)
+        failed = [n for n in nodes if n.status is NodeStatus.FAILED]
+        assert len(failed) == 1
+        assert failed[0].score is None
+        assert failed[0].cost.generation_api_cost_usd > 0  # 渲染成本照常入账
+        assert "评估器崩溃" in failed[0].observation_context["reject_reason"]
+        # 渲染已成功落账：该 job 终态 inserted（节点 FAILED 不触发重复渲染）
+        rows = {row.job_id: row for row in _job_rows(storyboard_jobs_engine)}
+        assert rows["r9-j2"].status == "inserted"
+        assert result.cost_reconciliation["consistent"] is True
 
 
 class Test剧本不足预检:
