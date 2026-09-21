@@ -3,8 +3,11 @@
 只读三重机检之二 = **角色的物理保证**：即使前端代码写错，DB 也拒绝写。
 
 - 角色 cineflow_web（LOGIN，最小特权 NOSUPERUSER/NOCREATEDB/NOCREATEROLE）；
-  口令经环境变量 `CINEFLOW_WEB_PASSWORD` 注入（**绑定参数**：口令不落盘、不进语句文本、
-  不进迁移文件）；环境变量缺省即不装配口令语句（由运维另行注入，不静默用默认值）；
+  口令经环境变量 `CINEFLOW_WEB_PASSWORD` 注入：迁移文件内无任何明文口令，口令只在**运行时**
+  由环境变量拼成 ALTER ROLE 语句（单引号加倍转义，见 `password_statement`）；环境变量缺省即
+  不装配口令语句（由运维另行注入，不静默用默认值）。
+  为什么不用绑定参数：PostgreSQL 的 ALTER ROLE 是工具语句，服务端不接受占位符
+  （实测 psycopg 报 `syntax error at or near "$1"`）——故在客户端做安全转义。
 - 全表仅 SELECT：GRANT SELECT ON ALL TABLES + 显式 REVOKE 六个写动词（不依赖默认拒绝）；
 - 未来表默认只 SELECT：ALTER DEFAULT PRIVILEGES 双侧（授予 SELECT + 回收写动词）；
 - schema USAGE 显式授予、CREATE 权限回收（一期 CI 教训，同 0001/0004：不能依赖 initdb
@@ -48,7 +51,8 @@ END
 $$;
 """
 
-_PASSWORD_SQL = f"ALTER ROLE {ROLE} PASSWORD :password"
+# ALTER ROLE 是 PG 工具语句（不接受绑定参数），故口令在客户端按单引号加倍规则转义后成句
+_PASSWORD_PREFIX = f"ALTER ROLE {ROLE} PASSWORD '"
 
 _UPGRADE_STATEMENTS = (
     _CREATE_ROLE,
@@ -68,6 +72,12 @@ _DOWNGRADE_STATEMENTS = (
 )
 
 
+def password_statement(password: str) -> str:
+    """口令语句装配（PG 单引号加倍转义——注入安全由转义保证，口令不入迁移文件）。"""
+    escaped = str(password).replace("'", "''")
+    return f"{_PASSWORD_PREFIX}{escaped}'"
+
+
 def _resolved_password(password: str | None) -> str | None:
     """口令解析：显式参数优先，否则取环境变量；空串 = 未配置。"""
     if password is not None:
@@ -76,11 +86,14 @@ def _resolved_password(password: str | None) -> str | None:
 
 
 def upgrade_statements(password: str | None = None) -> list[tuple[str, dict]]:
-    """升级语句装配（SQL 文本, 绑定参数）——纯函数，便于单测机检（不连库）。"""
+    """升级语句装配（SQL 文本, 绑定参数）——纯函数，便于单测机检（不连库）。
+
+    口令语句仅在解析到口令时装配（环境变量缺省 = 交给运维另行注入）。
+    """
     statements = [(sql, {}) for sql in _UPGRADE_STATEMENTS]
     resolved = _resolved_password(password)
     if resolved:
-        statements.insert(1, (_PASSWORD_SQL, {"password": resolved}))
+        statements.insert(1, (password_statement(resolved), {}))
     return statements
 
 

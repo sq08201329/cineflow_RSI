@@ -4,8 +4,8 @@
 **SQL 文本与迁移纪律**断言：
 - 修订链（down_revision=0008）+ PG 专用语句（角色创建、全表 SELECT、写动词 REVOKE、
   默认权限只 SELECT、schema USAGE、无 DDL 权限）；
-- 口令经环境变量注入：迁移文件内**不含**任何明文口令，ALTER ROLE ... PASSWORD 走
-  绑定参数（口令不落盘、不进语句文本、不进迁移文件）。
+- 口令经环境变量注入：迁移文件内**不含**任何明文口令，ALTER ROLE 语句在运行时由环境变量
+  拼装且单引号加倍转义（PG 工具语句不接受绑定参数——实测服务端报 `syntax error ... "$1"`）。
 
 权限的**行为**断言（cineflow_web 对全部表仅 SELECT、以该角色写被 DB 拒绝）在 T1311 的真实
 PG 集成测试（tests/integration/test_web_pg.py）——单测不假装验证了 DB 权限行为。
@@ -69,19 +69,34 @@ class Test角色创建:
             assert attribute in upgrade_sql
 
     def test_口令经环境变量_不落盘(self, migration, source):
-        """口令只经环境变量与绑定参数注入：文件与语句文本均无明文口令。"""
+        """口令只经环境变量注入：迁移文件内无明文口令，语句在运行时拼装且转义。"""
+        import re
+
         assert migration.PASSWORD_ENV == "CINEFLOW_WEB_PASSWORD"
-        assert "PASSWORD '" not in source  # 无字面量口令（不复刻 0001 的 app 口令形态）
+        # 无硬编码口令常量、无内联口令字面量（口令只由环境变量在运行时拼入）
+        assert re.search(r"PASSWORD\s*=\s*['\"]", source) is None
+        assert re.search(r"PASSWORD\s+'[^'\n]+'", source) is None
+        assert "os.environ.get(PASSWORD_ENV" in source
         password_statements = [
-            (sql, params)
-            for sql, params in migration.upgrade_statements("s3cret-not-in-repo")
+            sql
+            for sql, _ in migration.upgrade_statements("s3cret-not-in-repo")
             if "PASSWORD" in sql
         ]
         assert len(password_statements) == 1
-        sql, params = password_statements[0]
-        assert f"ALTER ROLE {ROLE} PASSWORD" in sql
-        assert ":password" in sql
-        assert params == {"password": "s3cret-not-in-repo"}
+        assert f"ALTER ROLE {ROLE} PASSWORD" in password_statements[0]
+        assert "s3cret-not-in-repo" in password_statements[0]
+
+    @pytest.mark.parametrize(
+        ("raw", "escaped"),
+        [
+            ("plain-pw", "plain-pw"),
+            ("o'brien", "o''brien"),  # 单引号加倍（注入安全）
+            ("''", "''''"),
+        ],
+    )
+    def test_口令语句单引号加倍转义(self, migration, raw, escaped):
+        """PG 工具语句不吃绑定参数：注入安全由转义保证（T1311 实测教训）。"""
+        assert migration.password_statement(raw) == f"ALTER ROLE {ROLE} PASSWORD '{escaped}'"
 
     def test_未设环境变量时不装配口令语句(self, migration, monkeypatch):
         """口令缺省（环境变量未设）→ 不生成任何口令语句（由运维另行注入，不静默用默认值）。"""
@@ -89,12 +104,10 @@ class Test角色创建:
         assert not any("PASSWORD" in sql for sql, _ in migration.upgrade_statements())
         monkeypatch.setenv(migration.PASSWORD_ENV, "s3cret-not-in-repo")
         password_statements = [
-            (sql, params) for sql, params in migration.upgrade_statements() if "PASSWORD" in sql
+            sql for sql, _ in migration.upgrade_statements() if "PASSWORD" in sql
         ]
         assert len(password_statements) == 1
-        sql, params = password_statements[0]
-        assert "s3cret-not-in-repo" not in sql  # 明文不入语句文本
-        assert params == {"password": "s3cret-not-in-repo"}
+        assert "s3cret-not-in-repo" in password_statements[0]
 
 
 class Test授权纪律:
@@ -152,6 +165,12 @@ class Test语句装配:
             assert isinstance(params, dict)
             for value in params.values():
                 assert value not in sql  # 参数值不拼进 SQL 文本
+
+    def test_升级语句无绑定参数占位符(self, migration):
+        """PG 工具语句不接受占位符：装配出的语句不得留下 :name 绑定参数或 $1。"""
+        for sql, _ in migration.upgrade_statements("s3cret-not-in-repo"):
+            assert ":password" not in sql
+            assert "$1" not in sql
 
     def test_降级语句先回收再删角色(self, migration):
         sql_text = "\n".join(sql for sql, _ in migration.downgrade_statements())
