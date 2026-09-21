@@ -51,42 +51,48 @@ _COST_FIELDS = (
 # （原则四：只给键不给值；无匹配即空列表，不推断）
 _ARTIFACT_METADATA_PREFIXES = ("material_", "artifact_")
 
-_TREE_FILTER_SQL = """
- WHERE (:project_id IS NULL OR t.project_id = :project_id)
-   AND (:agent_id IS NULL OR t.agent_id = :agent_id)
-   AND (:policy_version IS NULL OR t.policy_version = :policy_version)
-"""
-
-_TREE_LIST_SQL = (
-    """
+# WHERE 子句按"实际给出的过滤条件"拼装（不写恒真式）：既让两种方言都用上索引，也避开
+# "未类型化 NULL 参数"在 PostgreSQL 上的歧义（实测 AmbiguousParameter: 无法确定参数类型）。
+# 拼入的只有本模块固定的列名，参数一律走绑定参数。
+_TREE_SELECT_SQL = """
 SELECT t.tree_id, t.project_id, t.agent_id, t.policy_version, t.node_ids, t.config_snapshot,
        r.created_at AS root_created_at
   FROM discovery_trees AS t
   LEFT JOIN tree_nodes AS r ON r.node_id = t.root_id
 """
-    + _TREE_FILTER_SQL
-    + " ORDER BY r.created_at DESC NULLS LAST, t.tree_id ASC LIMIT :limit OFFSET :offset"
-)
 
-_TREE_COUNT_SQL = "SELECT COUNT(*) AS total FROM discovery_trees AS t" + _TREE_FILTER_SQL
+_TREE_ORDER_SQL = (
+    " ORDER BY r.created_at DESC NULLS LAST, t.tree_id ASC LIMIT :limit OFFSET :offset"
+)
 
 _TREES_ALL_SQL = (
     "SELECT t.tree_id, t.project_id, t.agent_id, t.policy_version FROM discovery_trees AS t"
     " ORDER BY t.tree_id ASC"
 )
 
-_NODE_FILTER_SQL = " WHERE n.tree_id = :tree_id AND (:depth IS NULL OR n.depth = :depth)"
-
-_NODE_LIST_SQL = (
-    """
+_NODE_SELECT_SQL = """
 SELECT n.node_id, n.parent_id, n.depth, n.score, n.cost, n.status, n.created_at
   FROM tree_nodes AS n
 """
-    + _NODE_FILTER_SQL
-    + " ORDER BY n.depth ASC, n.created_at ASC, n.node_id ASC LIMIT :limit OFFSET :offset"
+
+_NODE_ORDER_SQL = (
+    " ORDER BY n.depth ASC, n.created_at ASC, n.node_id ASC LIMIT :limit OFFSET :offset"
 )
 
-_NODE_COUNT_SQL = "SELECT COUNT(*) AS total FROM tree_nodes AS n" + _NODE_FILTER_SQL
+
+def _where_clause(clauses: Sequence[tuple[str, str, Any]]) -> tuple[str, dict]:
+    """(列, 参数名, 值) 三元组 → (WHERE 子句, 参数映射)：值为 None 的条件不拼入。"""
+    conditions: list[str] = []
+    params: dict = {}
+    for column, name, value in clauses:
+        if value is None:
+            continue
+        conditions.append(f"{column} = :{name}")
+        params[name] = value
+    if not conditions:
+        return "", params
+    return " WHERE " + " AND ".join(conditions), params
+
 
 _NODE_DETAIL_SQL = """
 SELECT node_id, tree_id, parent_id, depth, prompt, observation_context, artifact_hash,
@@ -355,9 +361,21 @@ def list_trees(
 ) -> dict:
     """树清单（三维过滤 + 分页；按根节点时间戳倒序，tree_id 升序为确定性 tie-break）。"""
     page, effective, limit, offset = _page_bounds(config, page, page_size)
-    filters = {"project_id": project_id, "agent_id": agent_id, "policy_version": policy_version}
-    total = _fetch_scalar(config, _TREE_COUNT_SQL, filters)
-    rows = _fetch(config, _TREE_LIST_SQL, {**filters, "limit": limit, "offset": offset})
+    where, params = _where_clause(
+        (
+            ("t.project_id", "project_id", project_id),
+            ("t.agent_id", "agent_id", agent_id),
+            ("t.policy_version", "policy_version", policy_version),
+        )
+    )
+    total = _fetch_scalar(
+        config, "SELECT COUNT(*) AS total FROM discovery_trees AS t" + where, params
+    )
+    rows = _fetch(
+        config,
+        _TREE_SELECT_SQL + where + _TREE_ORDER_SQL,
+        {**params, "limit": limit, "offset": offset},
+    )
     items = []
     for row in rows:
         node_ids = _json_column(row["node_ids"], default=None, source="discovery_trees.node_ids")
@@ -397,9 +415,13 @@ def list_nodes(
     page, effective, limit, offset = _page_bounds(config, page, page_size)
     if not _fetch_scalar(config, _TREE_EXISTS_SQL, {"tree_id": tree_id}):
         return None
-    filters = {"tree_id": tree_id, "depth": depth}
-    total = _fetch_scalar(config, _NODE_COUNT_SQL, filters)
-    rows = _fetch(config, _NODE_LIST_SQL, {**filters, "limit": limit, "offset": offset})
+    where, params = _where_clause((("n.tree_id", "tree_id", tree_id), ("n.depth", "depth", depth)))
+    total = _fetch_scalar(config, "SELECT COUNT(*) AS total FROM tree_nodes AS n" + where, params)
+    rows = _fetch(
+        config,
+        _NODE_SELECT_SQL + where + _NODE_ORDER_SQL,
+        {**params, "limit": limit, "offset": offset},
+    )
     items = []
     for row in rows:
         cost = _cost_record(row["cost"], "tree_nodes.cost")

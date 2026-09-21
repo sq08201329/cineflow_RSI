@@ -356,17 +356,12 @@ cost_regression:
   threshold: 0.2 # 成本增幅告警阈值（同一回放任务最近一轮 vs 前一轮，严格大于才告警）
   history_root: dreaming/history # 做梦轮次落盘根目录（回放任务成本序列来源）
 
-# 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
-# （未采纳更新指针次数恒 0，SC-002 机检；值 = policies/history/screenplay/ 下的策略版本；
-#  初始值 = 人工策略首版（谱系根，见 policies/history/screenplay/fa6b7bca77ed.meta.json））
-deployment:
-  screenplay:
-    current_policy_version: fa6b7bca77ed
-
 # 前端可视化（功能 013）：只读视图（宪章 v1.1.0 原则五新条款）。
 # web/ 为 monorepo 唯一目录例外——零 import core/agents/dreaming，取数只经只读 SQL
 # （只读角色 cineflow_web，迁移 0009；口令经环境变量不落盘）与文件化产物的只读读取；
 # 端口/数据源路径/导出目录/单页容量/访问控制全部配置化（原则五 + FR-012）。
+# 位置约定：本段放在 deployment 段**之前**——deployment 指针段按既有约定位于文件尾
+# （core/yaml_edit.py 的定点补全不会穿越其后段；挪走会改变既有改写的插入位点）。
 web:
   host: 127.0.0.1 # 默认仅回环（FR-011 保守部署：内部工具，不做公网暴露假设）
   port: 8080
@@ -379,3 +374,10 @@ web:
     calibration: calibration # 010 信度报告 + 012 漂移状态与报表
     pools: replay/pools # 011 合并池构建快照（跨项目归属）
   export_dir: web/dist # 静态导出目录（同一查询层预生成 JSON + 资产拷贝）
+
+# 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
+# （未采纳更新指针次数恒 0，SC-002 机检；值 = policies/history/screenplay/ 下的策略版本；
+#  初始值 = 人工策略首版（谱系根，见 policies/history/screenplay/fa6b7bca77ed.meta.json））
+deployment:
+  screenplay:
+    current_policy_version: fa6b7bca77ed
