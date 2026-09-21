@@ -256,6 +256,160 @@ def _cmd_shelve(args) -> int:
     return 0
 
 
+def _latest_version_for(versions: dict, period: str) -> str | None:
+    """周期 → 该周期的 evaluator_key（优先本周期台账记录；否则取最近一条早于本周期者）。
+
+    台账缺该周期记录时不猜测版本（返回 None，调用方如实跳过并注明）。
+    """
+    if period in versions:
+        return versions[period]
+    earlier = sorted(key for key in versions if key <= period)
+    return versions[earlier[-1]] if earlier else None
+
+
+def _cmd_drift(args) -> int:
+    """漂移检测 / 报表 / 人工处置（功能 012；节奏：close → drift → report）。
+
+    - 默认：对数据目录内全部 (agent, evaluator) 做一轮检测（范围外类别显式跳过并注明），
+      超阈自动登记 suspect，随后生成周期报表；
+    - `--dispose <evaluator_key>`：人工处置入口（需 --conclusion/--by/--reason；
+      --action 缺省按结论：confirmed_drift → deactivate、false_alarm → restore），
+      处置后重建报表（留痕后状态即时可见）；
+    - 全程只读 010 产物、零生成/零 LLM 调用；退出码 0 = 全部成功，1 = 存在错误。
+    """
+    from core.calibration.drift_config import DriftConfig
+    from core.calibration.drift_metrics import (
+        detect_drift,
+        detector_version,
+        in_scope,
+        period_versions,
+    )
+    from core.calibration.drift_models import DriftAction, DriftConclusion, DriftVerdict
+    from core.calibration.drift_report import build_report
+    from core.calibration.drift_status import dispose, register_suspect
+
+    config = DriftConfig.from_yaml(args.config)
+    data_dir = Path(args.data_dir)
+    errors: list[str] = []
+
+    def _dispose() -> int:
+        if not (args.conclusion and args.by and args.reason):
+            print(
+                json.dumps(
+                    {"error": "--dispose 需同时提供 --conclusion / --by / --reason"},
+                    ensure_ascii=False,
+                )
+            )
+            return 2
+        action = args.action or (
+            "deactivate" if args.conclusion == "confirmed_drift" else "restore"
+        )
+        try:
+            disposition = dispose(
+                data_dir,
+                args.dispose,
+                DriftConclusion(args.conclusion),
+                by=args.by,
+                reason=args.reason,
+                action=DriftAction(action),
+            )
+        except Exception as exc:  # noqa: BLE001 - CLI 边界：如实报错并计数
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return 1
+        return 0 if disposition else 1
+
+    if args.dispose:
+        code = _dispose()
+        if code:
+            return code
+
+    detected: list[dict] = []
+    registered: list[str] = []
+    skipped: list[dict] = []
+    if not args.dispose:
+        snapshots_root = data_dir / "snapshots"
+        agents = (
+            [args.agent]
+            if args.agent
+            else (
+                sorted(path.name for path in snapshots_root.iterdir() if path.is_dir())
+                if snapshots_root.is_dir()
+                else []
+            )
+        )
+        for agent_id in agents:
+            agent_dir = snapshots_root / agent_id
+            if not agent_dir.is_dir():
+                skipped.append({"agent_id": agent_id, "reason": "无快照目录"})
+                continue
+            evaluators = (
+                [args.evaluator]
+                if args.evaluator
+                else sorted(path.name for path in agent_dir.iterdir() if path.is_dir())
+            )
+            for evaluator_id in evaluators:
+                if not in_scope(evaluator_id, config):
+                    skipped.append(
+                        {
+                            "agent_id": agent_id,
+                            "evaluator_id": evaluator_id,
+                            "reason": "非 judge 类未纳入（scope_kinds 默认仅 judge）",
+                        }
+                    )
+                    continue
+                versions = period_versions(data_dir, agent_id, evaluator_id)
+                evaluator_key = _latest_version_for(versions, args.period)
+                if evaluator_key is None:
+                    skipped.append(
+                        {
+                            "agent_id": agent_id,
+                            "evaluator_id": evaluator_id,
+                            "reason": "台账无版本记录，无法确定评估器版本（不猜测）",
+                        }
+                    )
+                    continue
+                try:
+                    metrics = detect_drift(agent_id, evaluator_key, args.period, config, data_dir)
+                except Exception as exc:  # noqa: BLE001 - CLI 边界：如实报错并计数
+                    errors.append(f"{agent_id}/{evaluator_key}: {exc}")
+                    continue
+                detected.append(
+                    {
+                        "agent_id": agent_id,
+                        "evaluator_key": evaluator_key,
+                        "verdict": metrics.verdict.value,
+                        "psi": metrics.psi,
+                        "samples": metrics.samples,
+                        "note": metrics.note,
+                    }
+                )
+                if metrics.verdict is DriftVerdict.DRIFT:
+                    status = register_suspect(data_dir, evaluator_key, metrics)
+                    registered.append(f"{evaluator_key}（{status.status.value}）")
+
+    report = build_report(args.period, config, data_dir)
+    summary = {
+        "period": args.period,
+        "detector_version": detector_version(config),
+        "detected": detected,
+        "registered_suspect": registered,
+        "skipped": skipped,
+        "alerts": [
+            {
+                "evaluator_key": alert["evaluator_key"],
+                "level": alert["level"],
+                "double_signal": alert["double_signal"],
+                "note": alert["note"],
+            }
+            for alert in report.alerts
+        ],
+        "report_path": str(data_dir / "drift" / "reports" / f"{args.period}.json"),
+        "errors": errors,
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0 if not errors else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="外环周校准：盲评清单/录入/收口/信度报告")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -316,6 +470,24 @@ def main() -> int:
     shelve_parser.add_argument("--by", required=True, help="操作人")
     shelve_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
     shelve_parser.set_defaults(func=_cmd_shelve)
+
+    # 漂移检测（功能 012）：检测 + 登记 suspect + 报表；--dispose 为人工处置入口
+    drift_parser = sub.add_parser("drift", help="judge 漂移检测 / 报表 / 人工处置")
+    drift_parser.add_argument("--period", required=True, help="周期标签（如 2026-W39）")
+    drift_parser.add_argument("--agent", default=None, help="限定 Agent（缺省全部）")
+    drift_parser.add_argument("--evaluator", default=None, help="限定 evaluator_id（缺省全部）")
+    drift_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
+    drift_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
+    drift_parser.add_argument("--dispose", default=None, help="人工处置：evaluator_id@version")
+    drift_parser.add_argument(
+        "--conclusion", default=None, choices=["confirmed_drift", "false_alarm"]
+    )
+    drift_parser.add_argument(
+        "--action", default=None, choices=["deactivate", "reanchor", "restore"]
+    )
+    drift_parser.add_argument("--by", default=None, help="处置人（留痕必填）")
+    drift_parser.add_argument("--reason", default=None, help="处置理由（留痕必填）")
+    drift_parser.set_defaults(func=_cmd_drift)
 
     args = parser.parse_args()
     return args.func(args)
