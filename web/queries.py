@@ -27,6 +27,7 @@ import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,8 @@ _TREES_ALL_SQL = (
     "SELECT t.tree_id, t.project_id, t.agent_id, t.policy_version FROM discovery_trees AS t"
     " ORDER BY t.tree_id ASC"
 )
+
+_COST_SQL = "SELECT n.agent_id, n.created_at, n.cost FROM tree_nodes AS n"
 
 _FACETS_SQL = (
     "SELECT t.project_id, t.agent_id, t.policy_version, t.config_snapshot"
@@ -732,6 +735,72 @@ def get_evolution(config: WebConfig, agent_id: str) -> dict:
             "window": window,
         },
         "plateau_note": plateau_note,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 成本汇总（读树库聚合，不重算口径）
+# ---------------------------------------------------------------------------
+
+
+def _iso_period(created_at: Any) -> str:
+    """周期口径：节点时间戳（001 的 Float）→ ISO 周标签（%G-W%V，UTC）——与 010/012 同形。"""
+    try:
+        moment = datetime.fromtimestamp(float(created_at), UTC)
+    except (TypeError, ValueError, OSError) as exc:
+        raise DataSourceError(f"节点时间戳无法解析：{created_at!r}") from exc
+    return moment.strftime("%G-W%V")
+
+
+def get_costs(config: WebConfig, *, agent_id: str | None = None) -> dict:
+    """成本汇总（按 Agent / 周期）：读树库聚合 `generation_api_cost_usd`，不重算任何口径。
+
+    - 成本口径 = 成本记录的 `generation_api_cost_usd`（各 Agent 的 `tree_total` 同字段）；
+    - 周期口径 = 节点 `created_at` 换算的 ISO 周（与 010 信度报告/012 漂移报表的周期同形）；
+    - 与 CostRecord 聚合的对账一致性由 tests/unit/test_web_board.py 独立聚合机检。
+    """
+    where, params = _where_clause((("n.agent_id", "agent_id", agent_id),))
+    rows = _fetch(config, _COST_SQL + where, params)
+    buckets: dict[tuple[str, str], dict] = {}
+    agent_totals: dict[str, dict] = {}
+    periods: set[str] = set()
+    total_usd = 0.0
+    node_count = 0
+    for row in rows:
+        cost = _cost_record(row["cost"], "tree_nodes.cost")
+        value = float(cost["generation_api_cost_usd"])
+        period = _iso_period(row["created_at"])
+        key = (row["agent_id"], period)
+        bucket = buckets.setdefault(key, {"cost_usd": 0.0, "node_count": 0})
+        bucket["cost_usd"] += value
+        bucket["node_count"] += 1
+        subtotal = agent_totals.setdefault(row["agent_id"], {"cost_usd": 0.0, "node_count": 0})
+        subtotal["cost_usd"] += value
+        subtotal["node_count"] += 1
+        periods.add(period)
+        total_usd += value
+        node_count += 1
+    return {
+        "items": [
+            {
+                "agent_id": key[0],
+                "period": key[1],
+                "cost_usd": bucket["cost_usd"],
+                "node_count": bucket["node_count"],
+            }
+            for key, bucket in sorted(buckets.items())
+        ],
+        "agents": [
+            {
+                "agent_id": key,
+                "cost_usd": value["cost_usd"],
+                "node_count": value["node_count"],
+            }
+            for key, value in sorted(agent_totals.items())
+        ],
+        "periods": sorted(periods),
+        "total_usd": total_usd,
+        "node_count": node_count,
     }
 
 
