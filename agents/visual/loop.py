@@ -31,6 +31,7 @@ from agents.visual.platform.base import (
     VideoGenError,
 )
 from agents.visual.platform.simulated import encode_mp4, render_frames
+from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, EvalResult
 from core.evaluators.composite import composite_score_versioned
 from core.evaluators.quantize import quantize_score
@@ -112,8 +113,13 @@ def run_round(
     gateway: LLMGateway,
     engine: Engine,
     config: VisualConfig,
+    drift_gate: DriftGate | None = None,
 ) -> RoundResult:
-    """执行一轮视觉线上探索（全流程幂等）。"""
+    """执行一轮视觉线上探索（全流程幂等）。
+
+    drift_gate：漂移合成门禁（功能 012）——合成前按 judge 漂移状态降权/排除
+    （None = 未接线，权重原样）；权重变化 → composite 版本哈希变化 → 自然升版。
+    """
     tree_id = round_tree_id(round_id)
     root_id = _round_root_id(round_id)
     policy_version = getattr(policy, "policy_version", "unknown")
@@ -161,6 +167,7 @@ def run_round(
                 compliance=compliance,
                 proxies=proxies,
                 judge=judge,
+                drift_gate=drift_gate,
             )
         )
 
@@ -342,6 +349,7 @@ def _run_clip(
     compliance,
     proxies,
     judge,
+    drift_gate=None,
 ) -> dict:
     """单片段流水线：预算门禁 → 生成 → 探测 → 五评估器 → 合成 → 落盘。"""
     clip_id = _clip_id(round_id, index)
@@ -445,10 +453,11 @@ def _run_clip(
             for evaluator in [*proxies, judge]:
                 breakdown[evaluator.spec.key] = _fragment(evaluator.evaluate(artifact_ref, ctx))
             judge_cost = judge.last_usage
+            weights = apply_gate(_weights(config), drift_gate)  # 漂移门禁（合成前一处，012）
             score = quantize_score(
                 composite_score_versioned(
                     {k: EvalResult(score=v["score"]) for k, v in breakdown.items()},
-                    _weights(config),
+                    weights,
                 )
             )
         cost = CostRecord(

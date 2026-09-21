@@ -42,6 +42,7 @@ from agents.screenplay.evaluators.composite import (
     composite_screenplay,
     evaluate_screenplay,
 )
+from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import GatewayError, LLMGateway
@@ -491,8 +492,12 @@ def run_screenplay_round(
     config: ScreenplayConfig,
     inputs: dict,
     evaluators: list[Evaluator] | dict | None = None,
+    drift_gate: DriftGate | None = None,
 ) -> ScreenplayRoundResult:
     """执行一轮剧本分阶段产出（全流程幂等）。
+
+    drift_gate：漂移合成门禁（功能 012）——合成前按 judge 漂移状态降权/排除
+    （None = 未接线，权重原样）；权重变化 → composite 版本哈希变化 → 自然升版。
 
     evaluators：None → 默认装配真实七评估器（需 gateway）；dict → 真实七评估器编排；
     list → 评估器协议注入路径（桩/回放重算）。
@@ -566,6 +571,7 @@ def run_screenplay_round(
             engine=engine,
             gateway=gateway,
             evaluators=evaluators,
+            drift_gate=drift_gate,
         )
         jobs.append(job)
         judge_cost += stage_judge_cost
@@ -598,6 +604,7 @@ def _run_stage(
     engine: Engine,
     gateway: LLMGateway,
     evaluators: list[Evaluator] | dict,
+    drift_gate: DriftGate | None = None,
 ) -> tuple[dict, ScriptArtifact | None, float]:
     """单阶段流水线：计划预检 → 网关生成 → 工件内容寻址 → 评估 → 落盘。"""
     job_id = _job_id(round_id, stage)
@@ -754,10 +761,9 @@ def _run_stage(
         "round_id": round_id,
         "previous_artifact": previous,
     }
+    weights = apply_gate(config.evaluator_weights, drift_gate)  # 漂移门禁（合成前一处，012）
     try:
-        breakdown, score, usage = _score(
-            evaluators, artifact_ref, context, config.evaluator_weights
-        )
+        breakdown, score, usage = _score(evaluators, artifact_ref, context, weights)
     except Exception as exc:  # noqa: BLE001 - 崩溃隔离：FAILED 成本入账轮次继续
         _mark_inserted(engine, job_id)
         return _fail_stage(

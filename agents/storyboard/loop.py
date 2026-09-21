@@ -33,6 +33,7 @@ from agents.storyboard.evaluators.composite import (
 from agents.storyboard.platform.base import RenderError, StoryboardRenderAdapter
 from agents.storyboard.script import ScriptSegment, validate_script
 from agents.storyboard.shotlist import ShotList, validate_shotlist
+from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import LLMGateway
@@ -113,8 +114,12 @@ def run_storyboard_round(
     inputs: dict,
     evaluators: list[Evaluator] | None = None,
     gateway: LLMGateway | None = None,
+    drift_gate: DriftGate | None = None,
 ) -> StoryboardRoundResult:
     """执行一轮分镜线上探索（全流程幂等）。
+
+    drift_gate：漂移合成门禁（功能 012）——合成前按 judge 漂移状态降权/排除
+    （None = 未接线，权重原样）；权重变化 → composite 版本哈希变化 → 自然升版。
 
     evaluators：None → 默认装配真实五评估器（build_storyboard_evaluators，需 gateway，
     gate 短路不跑 judge）；dict（{"gates","alignment","judge","all"}）→ 真实编排；
@@ -183,6 +188,7 @@ def run_storyboard_round(
                 config=config,
                 evaluators=evaluators,
                 script=script,
+                drift_gate=drift_gate,
             )
         )
 
@@ -357,6 +363,7 @@ def _run_job(
     config,
     evaluators,
     script,
+    drift_gate=None,
 ) -> dict:
     """单 ShotList 流水线：C1 校验 → 预算门禁 → 渲染 → 内容寻址 → 评估 → 落盘。"""
     job_id = _job_id(round_id, index)
@@ -510,11 +517,12 @@ def _run_job(
         "metadata": animatic.metadata,
         "config": config,
     }
+    weights = apply_gate(config.evaluator_weights, drift_gate)  # 漂移门禁（合成前一处，012）
     try:
         if isinstance(evaluators, dict):
             # 真实五评估器编排（C9：gate 短路不跑 judge；judge 计费用量入节点成本）
             breakdown, score, judge_usage = evaluate_storyboard(
-                evaluators, artifact_ref, ctx, config.evaluator_weights
+                evaluators, artifact_ref, ctx, weights
             )
         else:
             # 评估器协议注入路径（US3 无偏性回放重算）：逐评估器打分 + 正式合成口径
@@ -525,7 +533,7 @@ def _run_job(
                     "score": result.score,
                     "diagnostics": result.diagnostics,
                 }
-            score = quantize_score(composite_storyboard(breakdown, config.evaluator_weights))
+            score = quantize_score(composite_storyboard(breakdown, weights))
             judge_usage = {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
         _append_board_node(
             store,
