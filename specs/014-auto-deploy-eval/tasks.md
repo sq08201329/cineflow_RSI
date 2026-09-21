@@ -80,16 +80,16 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T1419 [P] [US3] tests/unit/test_auto_deploy.py（C7：正常部署（指针更新 + 事件留痕 + 历史节点零修改）、**指针与留痕不一致 → 拒绝 + 告警**、同周期多候选按 reward 择一、非 eligible 不部署）
-- [ ] T1420 [P] [US3] tests/unit/test_spot_check_rollback.py（C8/C9：前 first_n 次全量产任务、之后按比例、长期未复核告警（不自动通过）、**否决三件事同时生效（机检三断言）**、回滚目标缺失 → 显式报错 + 保持人工、清标记后仍需影子期满足）
-- [ ] T1421 [P] [US3] tests/unit/test_deploy_drift_assessment.py（C10：部署后漂移 → 回滚评估记录落盘、指针不动）
-- [ ] T1425 [P] [US3] tests/contract/test_deployment_contracts.py 的 auto-deploy-spotcheck 部分（C6~C10 聚合）
+- [x] T1419 [P] [US3] tests/unit/test_auto_deploy.py（C7：正常部署（指针更新 + 事件留痕 + 历史节点零修改）、**指针与留痕不一致 → 拒绝 + 告警**、同周期多候选按 reward 择一、非 eligible 不部署）
+- [x] T1420 [P] [US3] tests/unit/test_spot_check_rollback.py（C8/C9：前 first_n 次全量产任务、之后按比例、长期未复核告警（不自动通过）、**否决三件事同时生效（机检三断言）**、回滚目标缺失 → 显式报错 + 保持人工、清标记后仍需影子期满足）
+- [x] T1421 [P] [US3] tests/unit/test_deploy_drift_assessment.py（C10：部署后漂移 → 回滚评估记录落盘、指针不动）
+- [x] T1425 [P] [US3] tests/contract/test_deployment_contracts.py 的 auto-deploy-spotcheck 部分（C6~C10 聚合）
 
 ### 用户故事 3 的实现
 
-- [ ] T1422 [US3] 实现 core/deployment/auto_deploy.py 的 auto_deploy（指针一致性检测 + 定点改写 core/yaml_edit + 留痕；**谱系 `source=auto` 的落点 = 部署事件留痕引用候选版本（`deployment/deploys/`），不重写 005 的 meta.json**（其只增不改，与 009/011 的采纳留痕同款口径）；依赖 T1415、T1416）
-- [ ] T1423 [US3] 实现 core/deployment/spot_check.py（渐进抽检 + veto_and_rollback 三件事逻辑事务 + 漂移回滚评估）
-- [ ] T1424 [US3] 实现 ops/deploy.py CLI（mode / evaluate / shadow-report / spot-check / veto / assess-drift；风格对齐 ops/calibrate.py）
+- [x] T1422 [US3] 实现 core/deployment/auto_deploy.py 的 auto_deploy（指针一致性检测 + 定点改写 core/yaml_edit + 留痕；**谱系 `source=auto` 的落点 = 部署事件留痕引用候选版本（`deployment/deploys/`），不重写 005 的 meta.json**（其只增不改，与 009/011 的采纳留痕同款口径）；依赖 T1415、T1416）
+- [x] T1423 [US3] 实现 core/deployment/spot_check.py（渐进抽检 + veto_and_rollback 三件事逻辑事务 + 漂移回滚评估）
+- [x] T1424 [US3] 实现 ops/deploy.py CLI（mode / evaluate / shadow-report / spot-check / veto / assess-drift；风格对齐 ops/calibrate.py）
 
 **检查点**: 自动部署 + 抽检 + 回滚全通——里程碑验收线成立
 
@@ -97,9 +97,9 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T1426 端到端演示 ops/demo_deploy_gate.py（quickstart 六步：判定矩阵 → 影子（指针不变）→ 影子门禁拒绝 → auto 部署 → 渐进抽检 + 否决回滚三件事 → 误入率重算；退出码 0，确定性夹具 + 临时目录）
-- [ ] T1427 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
-- [ ] T1428 [P] 更新 README.md（部署自动化用法：模式切换/影子报告/抽检/回滚；**明确真实 2 周影子期属运营**）与 docs/二期立项书.md 里程碑表（F9 已交付注明）
+- [x] T1426 端到端演示 ops/demo_deploy_gate.py（quickstart 六步：判定矩阵 → 影子（指针不变）→ 影子门禁拒绝 → auto 部署 → 渐进抽检 + 否决回滚三件事 → 误入率重算；退出码 0，确定性夹具 + 临时目录）
+- [x] T1427 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
+- [x] T1428 [P] 更新 README.md（部署自动化用法：模式切换/影子报告/抽检/回滚；**明确真实 2 周影子期属运营**）与 docs/二期立项书.md 里程碑表（F9 已交付注明）
 
 ---
 

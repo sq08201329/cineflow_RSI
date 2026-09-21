@@ -556,6 +556,86 @@ uv run python ops/demo_web.py          # 端到端演示（quickstart 六步，�
 超大库请用在线服务；页面自动化覆盖"能取数、能渲染"（node + DOM 桩真实执行两视图），
 视觉观感与交互细节需人工打开页面查看。
 
+## 策略部署自动化（功能 014）
+
+达到证据门槛的候选策略**自动接班**，人工 approve 转为**事后抽检**；抽检否决立即回滚并恢复
+全人工审批（宪章 v1.1.0 原则六新条款）。机制全在 `core/deployment/`（业务无关，dreaming 侧
+只在轮次收口处调用一次），产物文件化在 `deployment/`（git 版本化、只增不改），唯一"写"
+是部署指针的定点改写。
+
+**证据门槛（三要件 + 前置，"缺证据即拦截"）**
+
+| 要件 | 口径来源 | 判定 |
+| --- | --- | --- |
+| 前置：无偏性验收 | 002 `verify_unbiasedness` 结论 | 未通过/缺失 → 整体**证据不足** |
+| ① 回放 reward 对比 | 011 池化回放产物（同池同口径） | 候选必须**严格高于**现部署 |
+| ② validation 排名 | 005 防过拟合口径（并列取最劣名次） | 不跌出前 20%（`gate.validation_top_ratio`） |
+| ③ judge 漂移 verdict | 012 `deploy_evidence_verdict`（全部相关版本） | 任一 suspect/confirmed_drift → 拦截 |
+
+判定优先级：`forbidden_agent`（009 名单 screenplay/dev）> `insufficient_evidence` >
+`blocked` > `eligible`；**只有 `eligible` 会部署**。无 judge 层的 Agent（promo/sound）
+漂移要件标 `not_applicable` 且**默认保守拦截**（`allow_without_judge=false`）。
+
+**模式状态机与影子模式**：`manual`（默认，现状不变）→ `shadow` → `auto`；
+**`manual → auto` 禁止直连**，`shadow → auto` 需影子期**双下限**（时长 + 覆盖候选数）满足，
+`recalibration_required` 存在时 auto 一律拒绝。影子期判定照跑、**部署指针零变更**，产对照报告
+（放行/拦截、拦截理由分布、与人工决策的**差异分类四类**、误入率分子分母与口径）；
+误入率可从事件留痕重算 == 报告值（SC-007）。
+
+**渐进抽检与否决回滚**：前 `spot_check.first_n` 次（默认 5）自动部署**全量复核**，之后按
+`ratio`（默认 0.2，即每 5 次抽 1 次）；长期未复核**只告警、不自动视为通过**。
+**抽检否决 = 一个逻辑事务三件事**：①指针回滚到前一部署版本 ②模式回 `manual`
+③标记"门槛需重新标定"——回滚目标工件缺失时显式报错且**模式已回全人工**（绝不停留在不确定
+状态）；重新开 auto 必须重新标定 + **重跑影子期**。部署后漂移（F7 转
+suspect/confirmed_drift）→ 产**回滚评估记录**（`trigger=drift_assessment`），**不自动回滚**，
+处置权在 012 的人工流程。
+
+```bash
+# 模式：查看 / 切换（切换需 --by/--reason；门禁在 core 内判定，拒绝会打印缺口）
+uv run python ops/deploy.py mode --data-dir deployment
+uv run python ops/deploy.py mode --set shadow --by ops --reason "开启影子期" --data-dir deployment
+
+# 评估（唯一入口；模式从 deployment/mode.json 读真实状态；证据由命令行注入）
+uv run python ops/deploy.py evaluate --agent visual --candidate <版本> \
+  --unbiasedness att.json --validation val.json --judges judge.cinematic@1.0.0 \
+  --drift-dir calibration --reward-candidate 0.62 --reward-deployed 0.55 \
+  --reward-source replay/pools/pool-x.json --data-dir deployment
+
+# 影子对照报告（含误入率与机检重算）
+uv run python ops/deploy.py shadow-report --period 2026-W39 --agent visual --data-dir deployment
+
+# 抽检：产任务 / 列待复核与逾期告警；否决回滚（三件事）；部署后漂移的回滚评估
+uv run python ops/deploy.py spot-check --deploy-event deployment/deploys/<ts>-visual.json --data-dir deployment
+uv run python ops/deploy.py spot-check --list --pending-alert-days 14 --data-dir deployment
+uv run python ops/deploy.py veto --record deployment/spot_checks/<ts>-visual-seq1.json \
+  --by reviewer --reason "产出质量不达线" --data-dir deployment
+uv run python ops/deploy.py assess-drift --agent visual --drift-dir calibration --data-dir deployment
+
+# 测试与演示
+uv run pytest tests/unit tests/contract -k "deployment or deploy_ or shadow or gate or mode"
+uv run python ops/demo_deploy_gate.py    # 端到端六步演示（退出码 0）
+```
+
+配置（`configs/movie.yaml` 的 `deployment` 段，全部配置化；缺项即报错）：
+
+| 配置项 | 默认 | 含义 |
+| --- | --- | --- |
+| `mode_default` | `manual` | 模式默认值（manual/shadow/auto），未切换时不落盘 |
+| `gate.validation_top_ratio` | 0.2 | validation 排名容许线（005 口径） |
+| `gate.require_unbiasedness` | `true` | 无偏性是否作前置（显式 false 才豁免） |
+| `gate.allow_without_judge` | `false` | 无 judge 的 Agent 是否放宽（默认保守拦截） |
+| `shadow.min_days` / `min_candidates` | 14 / 20 | 影子期双下限（**立项书要求的 ≥2 周**） |
+| `spot_check.first_n` / `ratio` | 5 / 0.2 | 渐进抽检：前 N 次全量，之后按比例 |
+| 禁止名单 | 复用 `dreaming.no_auto_evolve_agents` | 不另立名单（缺项即报错，空名单等于放行一切） |
+
+**诚实边界（原则六）**：
+- **真实 2 周影子期的运行属运营**——本特性交付机制、计时门禁与对照报告，长期数据由运营积累；
+- "部署" = 更新部署指针（005 语义）：**真实发布系统对接不在本特性**；
+- 池化回放对比等**证据产物由既有路径（005/011/012）产出**，本特性只读取与判定（不重跑回放）；
+- 同周期多候选按 reward 择一并如实记录（**不批量连推**）；影子报告按 (周期, Agent) 分档，
+  同周期多 Agent 需错开周期档；
+- 无偏性/漂移证据缺失一律判"证据不足"（宁可拦截，不推测放行）。
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
