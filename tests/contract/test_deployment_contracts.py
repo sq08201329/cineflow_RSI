@@ -16,9 +16,22 @@
 import json
 from dataclasses import replace
 
+import pytest
+
+from core.deployment import mode as deploy_mode
+from core.deployment import shadow as shadow_module
+from core.deployment.auto_deploy import DeployAction, evaluate_candidate
+from core.deployment.config import ShadowConfig
+from core.deployment.errors import DeploymentRecordConflictError, ModeTransitionError
 from core.deployment.evidence import collect_evidence
 from core.deployment.gate import fingerprint_of, gate, gate_and_record, load_snapshots
-from core.deployment.models import DECISION_PRIORITY, GateDecision, RequirementState
+from core.deployment.models import (
+    DECISION_PRIORITY,
+    DeployMode,
+    GateDecision,
+    HumanDecision,
+    RequirementState,
+)
 
 AGENT = "visual"
 CANDIDATE = "cand-001"
@@ -184,3 +197,254 @@ def test_c3_snapshot_records_prerequisite_and_threshold_sources(
         "drift_verdict",
     }
     assert all(value for value in sources.values())
+
+
+# ---------------------------------------------------------------------------
+# shadows-mode 段（功能 014 US2 / T1418）：契约 C4（模式状态机与影子期门禁）
+# 与 C5（影子事件 / 对照报告 / 误入率可重算）端到端聚合。
+#
+# 机检口径：①影子期部署指针变更次数 0（configs 副本逐字节 + deploys 零留痕）；
+# ②影子期未满开启 auto 100% 被拒（含缺口说明，拒绝零副作用）；
+# ③误入率从事件留痕重算 == 报告值（SC-007）；④拦截候选同样留痕（差异分类取得到
+# human_pass_sys_block）。影子期运行统一走唯一入口 evaluate_candidate，避免旁路口径。
+# ---------------------------------------------------------------------------
+
+SHADOW_PERIOD = "2026-W39"
+SHADOW_T0 = "2026-09-21T00:00:00+00:00"
+SHADOW_AT = "2026-10-05T00:00:00+00:00"  # +14 天（影子期时长下限）
+JUDGE_KEY = "judge.cinematic@1.0.0"
+
+
+def _shadow_cfg(deployment_config, *, min_days=0, min_candidates=0):
+    """宽松影子下限档（门禁行为另有真实下限用例覆盖）。"""
+    return replace(
+        deployment_config, shadow=ShadowConfig(min_days=min_days, min_candidates=min_candidates)
+    )
+
+
+def _passing_evidence(registry, candidate, deployed):
+    return {
+        "deployed_version": deployed,
+        "unbiasedness": {"verdict": "pass", "tau": 0.82, "threshold": 0.6},
+        "reward_compare": {
+            "candidate": 0.62,
+            "deployed": 0.55,
+            "source": "replay/pools/pool-a.json",
+        },
+        "validation_rewards": {candidate: 0.8, deployed: 0.5},
+        "judge_keys": (JUDGE_KEY,),
+        "drift_registry": registry,
+    }
+
+
+def test_c4_mode_machine_refuses_direct_auto_and_short_window(
+    deployment_data_dir, deployment_config
+):
+    """C4：manual → auto 禁止直连；影子期未满拒绝并注明缺口；拒绝零副作用。"""
+    with pytest.raises(ModeTransitionError, match="manual"):
+        deploy_mode.set_mode(
+            DeployMode.AUTO,
+            by="ops",
+            reason="直接开自动",
+            cfg=deployment_config,
+            data_dir=deployment_data_dir,
+            at=SHADOW_T0,
+        )
+    assert not deploy_mode.mode_path(deployment_data_dir).exists()
+
+    deploy_mode.set_mode(
+        DeployMode.SHADOW,
+        by="ops",
+        reason="开影子期",
+        cfg=deployment_config,
+        data_dir=deployment_data_dir,
+        at=SHADOW_T0,
+    )
+    before = deploy_mode.mode_path(deployment_data_dir).read_bytes()
+    with pytest.raises(ModeTransitionError) as excinfo:
+        deploy_mode.set_mode(
+            DeployMode.AUTO,
+            by="ops",
+            reason="影子期未满即申请",
+            cfg=deployment_config,
+            data_dir=deployment_data_dir,
+            at=SHADOW_T0,
+        )
+    assert "14" in str(excinfo.value) and "20" in str(excinfo.value)
+    assert deploy_mode.mode_path(deployment_data_dir).read_bytes() == before
+
+
+def test_c4_auto_allowed_only_with_both_limits_and_no_recalibration(
+    deployment_data_dir, deployment_config
+):
+    """C4：双下限满足才允许 auto；重标定标记存在时一律拒绝（FR-009）。"""
+    cfg = _shadow_cfg(deployment_config, min_days=1, min_candidates=2)
+    deploy_mode.set_mode(
+        DeployMode.SHADOW,
+        by="ops",
+        reason="开影子期",
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        at=SHADOW_T0,
+    )
+    for _ in range(2):
+        deploy_mode.record_shadow_candidate(deployment_data_dir, at=SHADOW_T0)
+    deploy_mode.set_recalibration(
+        deployment_data_dir, required=True, reason="抽检否决：门槛需重新标定", at=SHADOW_T0
+    )
+    with pytest.raises(ModeTransitionError, match="重标定"):
+        deploy_mode.set_mode(
+            DeployMode.AUTO,
+            by="ops",
+            reason="重标定期间申请",
+            cfg=cfg,
+            data_dir=deployment_data_dir,
+            at="2026-09-22T00:00:00+00:00",
+        )
+    deploy_mode.clear_recalibration(
+        deployment_data_dir, by="ops", reason="新阈值已重标定", at="2026-09-22T00:00:00+00:00"
+    )
+    with pytest.raises(ModeTransitionError, match="影子期"):
+        deploy_mode.set_mode(
+            DeployMode.AUTO,
+            by="ops",
+            reason="清标记后直接开自动",
+            cfg=cfg,
+            data_dir=deployment_data_dir,
+            at="2026-09-22T00:00:00+00:00",
+        )
+    # 清标记后仍在影子期，但计时已清零 → 重跑影子期（重新累计时长与候选数）
+    for _ in range(2):
+        deploy_mode.record_shadow_candidate(deployment_data_dir, at="2026-09-22T00:00:00+00:00")
+    state = deploy_mode.set_mode(
+        DeployMode.AUTO,
+        by="ops",
+        reason="影子期重跑达标",
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        at="2026-09-23T00:00:00+00:00",
+    )
+    assert state.current is DeployMode.AUTO
+
+
+def test_c5_shadow_run_records_events_and_keeps_pointer_byte_identical(
+    deployment_data_dir, deployment_config, deployment_drift_registry, deployment_pointer_files
+):
+    """C5 + SC-003 机检：影子期跑 N 个候选（含拦截）→ 事件留痕齐全、指针变更 0。"""
+    pointer = deployment_pointer_files()
+    before = pointer["config"].read_bytes()
+    cfg = _shadow_cfg(deployment_config)
+    deploy_mode.set_mode(
+        DeployMode.SHADOW,
+        by="ops",
+        reason="开影子期",
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        at=SHADOW_T0,
+    )
+    registry = deployment_drift_registry("normal")
+    for candidate, human in (
+        ("cand-pass", HumanDecision.ADOPT),
+        ("cand-rejected", HumanDecision.REJECT),
+        ("cand-blocked", HumanDecision.ADOPT),
+    ):
+        evidence = _passing_evidence(registry, candidate, "dep-000")
+        if candidate == "cand-blocked":
+            evidence["reward_compare"] = {
+                "candidate": 0.5,
+                "deployed": 0.55,
+                "source": "replay/pools/pool-a.json",
+            }
+        outcome = evaluate_candidate(
+            "visual",
+            candidate,
+            cfg=cfg,
+            data_dir=deployment_data_dir,
+            period=SHADOW_PERIOD,
+            human_decision=human,
+            at=SHADOW_T0,
+            **evidence,
+        )
+        assert outcome.action is DeployAction.SHADOW_RECORDED
+        assert outcome.deploy_event is None
+    assert pointer["config"].read_bytes() == before
+    assert not list((deployment_data_dir / "deploys").glob("*.json"))
+    report = shadow_module.build_shadow_report(
+        SHADOW_PERIOD, cfg, data_dir=deployment_data_dir, agent_id="visual", at=SHADOW_AT
+    )
+    assert report.candidate_count == 3
+    assert report.passes == 2 and report.blocks == 1
+    assert report.diff_counts["sys_pass_human_reject"] == 1
+    assert report.diff_counts["agree"] == 1
+    assert report.diff_counts["human_pass_sys_block"] == 1
+    assert report.reason_distribution == {"blocked": 1}
+    assert report.note  # 口径说明与缺口/达标说明
+    state = deploy_mode.load_mode_state(deployment_data_dir)
+    assert state.shadow_candidate_count == 3
+    assert state.shadow_days_accumulated == pytest.approx(0.0)  # 仍在影子期（切出才结算）
+
+
+def test_c5_misadmission_recompute_equals_report(deployment_data_dir, deployment_config):
+    """SC-007 机检：误入率可从事件留痕重算，且与报告值逐字段一致。"""
+    cfg = _shadow_cfg(deployment_config)
+    for candidate, human, unacceptable in (
+        ("cand-a", HumanDecision.REJECT, False),
+        ("cand-b", HumanDecision.ADOPT, True),
+        ("cand-c", HumanDecision.ADOPT, False),
+    ):
+        shadow_module.record_shadow_event(
+            "visual",
+            candidate,
+            "eligible",
+            data_dir=deployment_data_dir,
+            period=SHADOW_PERIOD,
+            reason="判定 eligible",
+            human_decision=human,
+            unacceptable=unacceptable,
+            at=SHADOW_T0,
+        )
+    report = shadow_module.build_shadow_report(
+        SHADOW_PERIOD, cfg, data_dir=deployment_data_dir, agent_id="visual", at=SHADOW_T0
+    )
+    recomputed = shadow_module.recompute_misadmission_rate(
+        deployment_data_dir, SHADOW_PERIOD, agent_id="visual"
+    )
+    assert report.misadmission_numerator == 2
+    assert report.misadmission_denominator == 3
+    assert recomputed["numerator"] == report.misadmission_numerator
+    assert recomputed["denominator"] == report.misadmission_denominator
+    assert recomputed["rate"] == pytest.approx(report.misadmission_rate)
+    assert recomputed["definition"] == shadow_module.MISADMISSION_DEFINITION
+
+
+def test_c5_report_is_append_only(deployment_data_dir, deployment_config):
+    """C5：对照报告不可改写（内容变化即拒绝覆盖，旧报告逐字节保留）。"""
+    cfg = _shadow_cfg(deployment_config)
+    shadow_module.record_shadow_event(
+        "visual",
+        "cand-a",
+        "eligible",
+        data_dir=deployment_data_dir,
+        period=SHADOW_PERIOD,
+        reason="判定 eligible",
+        at=SHADOW_T0,
+    )
+    shadow_module.build_shadow_report(
+        SHADOW_PERIOD, cfg, data_dir=deployment_data_dir, agent_id="visual", at=SHADOW_T0
+    )
+    path = shadow_module.report_path(deployment_data_dir, SHADOW_PERIOD)
+    original = path.read_bytes()
+    shadow_module.record_shadow_event(
+        "visual",
+        "cand-b",
+        "blocked",
+        data_dir=deployment_data_dir,
+        period=SHADOW_PERIOD,
+        reason="要件不满足",
+        at=SHADOW_T0,
+    )
+    with pytest.raises(DeploymentRecordConflictError):
+        shadow_module.build_shadow_report(
+            SHADOW_PERIOD, cfg, data_dir=deployment_data_dir, agent_id="visual", at=SHADOW_AT
+        )
+    assert path.read_bytes() == original

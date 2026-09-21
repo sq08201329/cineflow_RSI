@@ -59,14 +59,14 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T1413 [P] [US2] tests/unit/test_deployment_shadow.py（C5：影子事件差异分类四类、对照报告字段齐全、**误入率重算 == 报告值**、影子期指针变更次数 0）
-- [ ] T1414 [P] [US2] tests/unit/test_deploy_gate_shadow_window.py（C4 门禁：影子期时长不足拒绝、候选数不足拒绝、双满足才允许 auto、recalibration_required 时即使影子期满足也拒绝）
-- [ ] T1418 [P] [US2] tests/contract/test_deployment_contracts.py 的 shadow-mode 部分（C4~C5 聚合）
+- [x] T1413 [P] [US2] tests/unit/test_deployment_shadow.py（C5：影子事件差异分类四类、对照报告字段齐全、**误入率重算 == 报告值**、影子期指针变更次数 0）
+- [x] T1414 [P] [US2] tests/unit/test_deploy_gate_shadow_window.py（C4 门禁：影子期时长不足拒绝、候选数不足拒绝、双满足才允许 auto、recalibration_required 时即使影子期满足也拒绝）
+- [x] T1418 [P] [US2] tests/contract/test_deployment_contracts.py 的 shadow-mode 部分（C4~C5 聚合）
 
 ### 用户故事 2 的实现
 
-- [ ] T1415 [US2] 实现 core/deployment/shadow.py（ShadowEvent/ShadowReport/误入率 recompute；依赖 T1404、T1408）
-- [ ] T1416 [US2] 实现唯一入口 evaluate_candidate（core/deployment/auto_deploy.py 的入口部分：manual 只落快照 / shadow 落快照 + 影子事件 / auto 交判定后路径）+ dreaming 轮次收口接线（一处）+ CLI 雏形（manual/shadow 行为可演示）
+- [x] T1415 [US2] 实现 core/deployment/shadow.py（ShadowEvent/ShadowReport/误入率 recompute；依赖 T1404、T1408）
+- [x] T1416 [US2] 实现唯一入口 evaluate_candidate（core/deployment/auto_deploy.py 的入口部分：manual 只落快照 / shadow 落快照 + 影子事件 / auto 交判定后路径）+ dreaming 轮次收口接线（一处）+ CLI 雏形（manual/shadow 行为可演示）
 
 **检查点**: 影子模式成立（判定照跑、指针不动、报告可读）——门禁前置成立
 
