@@ -117,6 +117,15 @@ class TestDriftBaseline:
             with pytest.raises(ValidationError, match="samples"):
                 _baseline(samples=bad)
 
+    def test_升版切分周期如实记录(self):
+        assert _baseline().dropped_periods == ()
+        baseline = _baseline(dropped_periods=("2026-W33",))
+        assert baseline.dropped_periods == ("2026-W33",)
+        with pytest.raises(ValidationError, match="dropped_periods"):
+            _baseline(dropped_periods="2026-W33")  # 必须为元组
+        with pytest.raises(ValidationError, match="dropped_periods"):
+            _baseline(dropped_periods=("",))
+
     def test_分位数四键齐备且域内(self):
         with pytest.raises(ValidationError, match="quantiles"):
             _baseline(quantiles={"p25": 0.4})  # 缺键

@@ -1863,6 +1863,17 @@ def drift_data_dir(tmp_path):
 
 
 @pytest.fixture()
+def drift_config():
+    """漂移检测配置夹具：直接读 configs/movie.yaml 的 calibration.drift 段（真实配置路径）。"""
+    from pathlib import Path
+
+    from core.calibration.drift_config import DriftConfig
+
+    path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+    return DriftConfig.from_yaml(path)
+
+
+@pytest.fixture()
 def write_drift_snapshots(drift_data_dir):
     """分布快照序列落盘工厂（功能 012）：与 010 同源写入器，schema 逐字段一致。
 
@@ -1894,6 +1905,32 @@ def write_drift_snapshots(drift_data_dir):
             ]
             paths += write_anchor_snapshots(base, agent_id, period, pairs)
         return paths
+
+    return _write
+
+
+@pytest.fixture()
+def drift_sequence_writer(drift_score_sequences, write_drift_snapshots):
+    """形态序列落盘工厂（功能 012）：按命名形态落盘（可限定周期子集）。
+
+    variant ∈ drift_score_sequences 的键（stable/mean_shift/variance_widen/bimodal/
+    insufficient_*/gap/first_period）；periods 给定时只落这些周期（补写单周期用）。
+    """
+
+    def _write(
+        variant: str,
+        *,
+        agent_id: str = "visual",
+        evaluator_key: str = "judge.cinematic@1.0.0",
+        periods=None,
+        data_dir=None,
+    ):
+        sequence = drift_score_sequences[variant]
+        if periods is not None:
+            sequence = {period: sequence[period] for period in periods}
+        return write_drift_snapshots(
+            sequence, agent_id=agent_id, evaluator_key=evaluator_key, data_dir=data_dir
+        )
 
     return _write
 

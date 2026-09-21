@@ -118,7 +118,9 @@ class DriftBaseline:
     - periods：窗口内周期标签（升序，全部有快照；缺口周期跳过不插值）；
     - buckets：窗口内分桶合并分布（占比 ∈ [0,1]，非空窗口占比和 = 1）；
     - quantiles：p25/p50/p75/p90（[0,1]）；
-    - detector_version：构成该基线的口径版本（口径升级即新基线）。
+    - detector_version：构成该基线的口径版本（口径升级即新基线）；
+    - dropped_periods：窗口内**因评估器升版被切分**的周期（台账记录版本与当前版本不同，
+      不计入合并——版本冻结；仅作如实标注，不影响合并口径）。
     """
 
     evaluator_key: str
@@ -128,6 +130,7 @@ class DriftBaseline:
     quantiles: dict = field(default_factory=dict)
     samples: int = 0
     detector_version: str = ""
+    dropped_periods: tuple = ()
 
     def __post_init__(self) -> None:
         _require_non_empty("evaluator_key", self.evaluator_key)
@@ -139,6 +142,12 @@ class DriftBaseline:
         for period in self.periods:
             _require_non_empty("periods", period)
         object.__setattr__(self, "periods", tuple(self.periods))
+
+        if not isinstance(self.dropped_periods, (tuple, list)):
+            raise ValidationError("dropped_periods 必须为周期标签元组（可为空）")
+        for period in self.dropped_periods:
+            _require_non_empty("dropped_periods", period)
+        object.__setattr__(self, "dropped_periods", tuple(self.dropped_periods))
 
         if not isinstance(self.buckets, (tuple, list)) or not self.buckets:
             raise ValidationError("buckets 必须为非空分桶占比序列")

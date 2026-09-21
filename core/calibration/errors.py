@@ -11,3 +11,11 @@ class CalibrationError(Exception):
 
 class CalibrationConfigError(CalibrationError):
     """形态配置 calibration 段读取失败：文件缺失、缺段、缺字段、非法值。"""
+
+
+class DriftOutOfScopeError(CalibrationError):
+    """检测范围外：评估器类别不在 calibration.drift.scope_kinds（显式拒绝，非静默跳过）。"""
+
+
+class DriftRecordConflictError(CalibrationError):
+    """漂移记录已存在且内容不同：只增不改（历史判定不回溯改写）。"""
