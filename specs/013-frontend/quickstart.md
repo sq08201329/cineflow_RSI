@@ -47,6 +47,10 @@ node v24（页面 DOM 冒烟用；缺失则相关用例跳过）。命令与 `.g
 | 覆盖率（CI 口径） | `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov-report=term --cov-fail-under=85` | **93.55%**（TOTAL 9772 行） |
 | 覆盖率（含 web 口径，T1322） | `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term --cov-fail-under=85` | **92.22%** ≥85%；`web/` 分模块：queries 91% / server 89% / export 83% / parity 0%（parity 由契约测试与 demo 覆盖） |
 | 覆盖率（unit+contract，含 web） | `uv run pytest tests/unit tests/contract --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term` | **94%**（TOTAL 10691 行）；`web/` 分模块：queries 91% / parity 93% / server 89% / export 85% |
+| 收官复核（接手复跑） | 同上游命令 | `unit+contract -k web` **267 passed**；`tests/unit` 全量 **2419 passed**；`integration -k web` **14 passed**；demo 退出码 0（1.78s）；覆盖率（含 web）**TOTAL 92%** gate 通过 |
+| CI 口径同步（T1322 补） | `.github/workflows/ci.yml` | 覆盖率命令补 `--cov=web`（与 `pyproject [tool.coverage.run].source` 一致——否则"web 计入覆盖率"只在本地成立） |
+
+**已知 flake（非本特性）**：`test_visual_consistency` / `test_visual_flicker` 在覆盖率插桩 + 高负载下偶发失败，隔离复跑必过（004 视觉线既有问题，010/006 记录同源）。
 
 ### SC 机检口径摘要
 

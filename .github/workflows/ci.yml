@@ -19,9 +19,9 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
-      - name: 单元测试 + 覆盖率门禁（core + agents + dreaming ≥85%）
+      - name: 单元测试 + 覆盖率门禁（core + agents + dreaming + web ≥85%）
         run: >-
-          uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming
+          uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web
           --cov-report=term-missing --cov-fail-under=85
 
   # 适配器契约套件（SC-007）：模拟实现全过，真实实现无凭证按用例跳过
