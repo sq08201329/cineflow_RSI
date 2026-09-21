@@ -278,3 +278,51 @@ def build_merged_pool(
         tree_count=tree_count,
         note="；".join(notes),
     )
+
+
+def pool_trees_in_time_order(pool: MergedPool) -> tuple[PoolTreeRef, ...]:
+    """池内全部树引用按 (created_at, project_id, tree_id) **全局**排序。
+
+    跨版本组需先合并各组再排序（组内序 ≠ 全局序）——分树与"最近树只做 validation"
+    的可重现前提（C5）。
+    """
+    if not isinstance(pool, MergedPool):
+        raise ValidationError(f"pool 必须为 MergedPool，实际为 {type(pool).__name__}")
+    return tuple(sorted(pool.trees, key=_stable_key))
+
+
+def split_train_validation(
+    pool: MergedPool,
+) -> tuple[tuple[PoolTreeRef, ...], tuple[PoolTreeRef, ...]]:
+    """按全局时间分树（C5，005 口径）：**最近一棵树永远只做 validation**。
+
+    不足两棵 → 无 validation（跳过判定而非编造）；返回 (train, validation)。
+    """
+    ordered = pool_trees_in_time_order(pool)
+    if len(ordered) < 2:
+        return ordered, ()
+    return ordered[:-1], (ordered[-1],)
+
+
+def select_version_group(pool: MergedPool, version_hash: str | None) -> VersionGroup:
+    """选取回放所用的版本分组（research 决策 2：回放选与当前部署评估器版本集一致的一组）。
+
+    pool：合并池；version_hash：部署评估器版本集哈希（None = 池内仅一个版本组时缺省取之；
+    多版本组必须显式指定——跨版本不混池，不得猜）。
+    """
+    if not isinstance(pool, MergedPool):
+        raise ValidationError(f"pool 必须为 MergedPool，实际为 {type(pool).__name__}")
+    if version_hash is None:
+        if len(pool.version_groups) != 1:
+            raise ValidationError(
+                f"池含 {len(pool.version_groups)} 个版本分组：必须显式指定 version_hash"
+                "（跨版本不混池，research 决策 2）"
+            )
+        return pool.version_groups[0]
+    if not isinstance(version_hash, str) or not version_hash:
+        raise ValidationError(f"version_hash 必须为非空字符串或 None，实际为 {version_hash!r}")
+    for group in pool.version_groups:
+        if group.evaluator_versions_hash == version_hash:
+            return group
+    available = [group.evaluator_versions_hash for group in pool.version_groups]
+    raise ValidationError(f"版本分组不存在：{version_hash}（池内版本集：{available}）")

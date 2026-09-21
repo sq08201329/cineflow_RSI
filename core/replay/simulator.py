@@ -145,6 +145,18 @@ class ReplaySimulator:
         if scores:
             self._best_curve.append(max(scores))
 
+    def _match_candidates(self, parent_id: str, gen_params: dict) -> list[TreeNode]:
+        """已揭示父节点的候选选择（002 口径：同参子节点，规范化精确匹配）。
+
+        扩展点：跨项目池化回放（功能 011）覆写本方法改为**池级结构键匹配**
+        （候选集跨项目扩充），probe 的揭示/计费/预算/时延量子语义全部复用。
+        """
+        return [
+            node
+            for node in self._latent.get(parent_id, [])
+            if params_match(node_gen_params(node), gen_params)
+        ]
+
     def observed(self) -> dict:
         """策略唯一的信息入口之一：仅已揭示节点的白名单投影；决策轮 +1。"""
         start = time.perf_counter()
@@ -167,11 +179,7 @@ class ReplaySimulator:
         candidates: list[TreeNode] = []
         # 未揭示的父节点对策略不可见：探测它按 UNKNOWN 处理，不泄漏存在性
         if parent_id in self._revealed:
-            candidates = [
-                node
-                for node in self._latent.get(parent_id, [])
-                if params_match(node_gen_params(node), gen_params)
-            ]
+            candidates = self._match_candidates(parent_id, gen_params)
 
         if not candidates:
             self._record_best()

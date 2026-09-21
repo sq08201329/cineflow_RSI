@@ -44,6 +44,7 @@ class IndexedNode:
 class PoolIndex:
     """池内匹配索引：按版本集 hash 收集候选节点（池序：(created_at, project_id, tree_id)）。
 
+    by_version：版本集 → 候选节点（匹配用）；by_node：节点 id → 索引条目（揭示用）；
     version_hash_by_tree / project_by_tree 为归属查询表（UNKNOWN 结果的探测树归属用）。
     """
 
@@ -51,18 +52,11 @@ class PoolIndex:
     version_hash_by_tree: dict
     project_by_tree: dict
     by_version: dict
+    by_node: dict
 
     def nodes_for(self, version_hash: str) -> tuple[IndexedNode, ...]:
         """该版本集的候选节点（池序；版本集不在池内 → 空——不命中）。"""
         return tuple(self.by_version.get(version_hash, ()))
-
-    def node(self, node_id: str) -> IndexedNode | None:
-        """按节点 id 取索引条目（回放揭示用；不在索引内 → None）。"""
-        for entries in self.by_version.values():
-            for entry in entries:
-                if entry.node.node_id == node_id:
-                    return entry
-        return None
 
 
 @dataclass(frozen=True)
@@ -170,6 +164,7 @@ def build_pool_index(
     version_hash_by_tree: dict[str, str] = {}
     project_by_tree: dict[str, str] = {}
     by_version: dict[str, list[IndexedNode]] = {}
+    by_node: dict[str, IndexedNode] = {}
     for group in pool.version_groups:
         for ref in group.trees:  # 池内树序已按 (created_at, project_id, tree_id) 稳定排序
             if ref.tree_id in excluded:
@@ -178,14 +173,15 @@ def build_pool_index(
             project_by_tree[ref.tree_id] = ref.project_id
             entries = by_version.setdefault(group.evaluator_versions_hash, [])
             for node in store.nodes_of(ref.tree_id):
-                entries.append(
-                    IndexedNode(tree_id=ref.tree_id, project_id=ref.project_id, node=node)
-                )
+                entry = IndexedNode(tree_id=ref.tree_id, project_id=ref.project_id, node=node)
+                entries.append(entry)
+                by_node[node.node_id] = entry
     return PoolIndex(
         pool_id=pool.pool_id,
         version_hash_by_tree=version_hash_by_tree,
         project_by_tree=project_by_tree,
         by_version={key: tuple(value) for key, value in by_version.items()},
+        by_node=by_node,
     )
 
 

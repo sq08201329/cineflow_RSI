@@ -58,13 +58,13 @@
 
 - [x] T1011 [P] [US2] tests/unit/test_cross_match.py（C3 场景 1~4：A 有 B 无 → 跨项目命中、A/B 同分 → 命中、**A/B 不同分 → UNKNOWN + ScoreConflict（树清单/得分/归属齐全）**、版本集不同不命中）
 - [x] T1012 [P] [US2] tests/unit/test_hit_stats.py（C4 场景 1~3：A 命中 8/B 命中 2 → 双报告 + A 占比 0.8>0.7 告警（命中占比判定、树数占比参考同报告）、单项目构成 → 占比 1.0 告警 + 标注、conflicts 字段含 ScoreConflict）
-- [ ] T1013 [P] [US2] tests/unit/test_pooling_replay.py（C5：回放全程生成/渲染/网关调用计数 0 审计、跨项目分树全局时间排序（tie-break project_id）、最近树只做 validation）
+- [x] T1013 [P] [US2] tests/unit/test_pooling_replay.py（C5：回放全程生成/渲染/网关调用计数 0 审计、跨项目分树全局时间排序（tie-break project_id）、最近树只做 validation）
 
 ### 用户故事 2 的实现
 
 - [x] T1014 [US2] 实现 core/replay/cross_match.py（规范化精确匹配跨项目；冲突 → UNKNOWN + ScoreConflict；不取均值/不取最新/不终止）
 - [x] T1015 [US2] 实现 core/replay/hit_stats.py（per-project 与合并口径统计、命中占比判定 + 树数占比参考、稀释告警）
-- [ ] T1016 [US2] 池化回放接线（merged_pool × 002 SimulatorPool 集成：probe/observed 走 cross_match；分树全局排序；依赖 T1009、T1014、T1015）
+- [x] T1016 [US2] 池化回放接线（merged_pool × 002 SimulatorPool 集成：probe/observed 走 cross_match；分树全局排序；依赖 T1009、T1014、T1015）
 
 **检查点**: 跨项目命中 + 冲突 UNKNOWN + 稀释告警成立
 
