@@ -239,9 +239,26 @@ def _round_candidates(runtime: PilotRuntime, tree_id: str, *, expected: int) -> 
     return candidate_set(nodes, expected=expected)
 
 
-def _require_ok(label: str, outcome: CandidateSet) -> None:
-    if not outcome.all_ok:
-        raise StageFailedError(f"{label}：{outcome.failure_reason}", candidates=outcome.candidates)
+def _job_label(job: Mapping) -> str:
+    """环节明细项标识（各 Agent 的 job/clip/material 命名不同，统一取第一个可用键）。"""
+    for key in ("clip_id", "job_id", "material_id"):
+        if job.get(key):
+            return str(job[key])
+    return "?"
+
+
+def _require_ok(label: str, outcome: CandidateSet, *, jobs: Sequence[Mapping] = ()) -> None:
+    if outcome.all_ok:
+        return
+    detail = "；".join(
+        f"{_job_label(job)}: {job.get('reason')}"
+        for job in jobs
+        if job.get("status") in {"failed", "rejected"} and job.get("reason")
+    )
+    suffix = f"（环节明细：{detail}）" if detail else ""
+    raise StageFailedError(
+        f"{label}：{outcome.failure_reason}{suffix}", candidates=outcome.candidates
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +316,7 @@ def _script_entry(stage_input: StageInput) -> StageOutcome:
         for job in script_jobs
     )
     outcome = CandidateSet(candidates=candidates, expected=1)
-    _require_ok("剧本阶段", outcome)
+    _require_ok("剧本阶段", outcome, jobs=script_jobs)
     # 剧本工件 → 008 段落（复用 009 导出 + 双向字段锁定）
     artifact_hash = script_jobs[-1]["artifact_hash"]
     artifact = _load_script_artifact(runtime, artifact_hash)
@@ -343,7 +360,7 @@ def _storyboard_entry(stage_input: StageInput) -> StageOutcome:
         gateway=runtime.gateway,
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=1)
-    _require_ok("分镜阶段", outcome)
+    _require_ok("分镜阶段", outcome, jobs=result.jobs)
     node = _winner_node(runtime, result.tree_id)
     shotlist_payload = shotlist.to_dict()
     return StageOutcome(
@@ -411,7 +428,7 @@ def _visual_entry(stage_input: StageInput) -> StageOutcome:
         config=config,
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=len(params_list))
-    _require_ok("视觉阶段", outcome)
+    _require_ok("视觉阶段", outcome, jobs=result.clips)
     clips = []
     for node in _nodes_by_shot(runtime, result.tree_id):
         params = (node.observation_context or {}).get("gen_params", {})
@@ -464,7 +481,7 @@ def _sound_entry(stage_input: StageInput) -> StageOutcome:
         inputs={"timing_sheet": timing_sheet},
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=len(plans))
-    _require_ok("声音阶段", outcome)
+    _require_ok("声音阶段", outcome, jobs=result.jobs)
     tracks = []
     for node in _nodes_by_artifact(runtime, result.tree_id):
         gen_type = str((node.observation_context or {}).get("gen_type", "music"))
@@ -564,7 +581,7 @@ def _editing_entry(stage_input: StageInput) -> StageOutcome:
         gateway=runtime.gateway,
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=1)
-    _require_ok("剪辑阶段", outcome)
+    _require_ok("剪辑阶段", outcome, jobs=result.jobs)
     node = _winner_node(runtime, result.tree_id)
     reel = {
         "artifact_hash": node.artifact_hash,
@@ -625,8 +642,13 @@ def _promo_entry(stage_input: StageInput) -> StageOutcome:
         engine=runtime.engine,
         sleep=lambda _: None,
     )
+    # 宣发是**两段式**落树（既有语义）：投递成功节点待指标回流后一次性冻结落盘——
+    # 复用既有的回流入口（`ops/ingest_metrics.ingest_round`），不在编排层另造回流逻辑。
+    from ops.ingest_metrics import ingest_round
+
+    ingest_report = ingest_round(round_id, runtime.store, adapter, runtime.engine, config)
     outcome = _round_candidates(runtime, result.tree_id, expected=len(briefs))
-    _require_ok("宣发阶段", outcome)
+    _require_ok("宣发阶段", outcome, jobs=result.materials)
     materials = [
         {
             "material_id": node.node_id,
@@ -643,6 +665,7 @@ def _promo_entry(stage_input: StageInput) -> StageOutcome:
         candidates=outcome.candidates,
         detail={
             "materials": materials,
+            "ingest": dict(ingest_report),
             "reel_ref": material_specs.reel_ref,
             "reel_hash": material_specs.reel_hash,
             "spent_usd": result.spent_usd,
@@ -909,12 +932,17 @@ def build_timing_sheet(
 ) -> TimingSheet:
     """台词 → 时序表：按镜头时间轴顺序给每句对白排 start/end（不超镜头时长）。"""
     clip_ms = int(runtime.configs.visual.clip_spec["duration_seconds"] * 1000)
+    shot_count = len(clips)  # 时间轴以实际镜头数为界（每镜一句台词，不越过成片素材）
     utterances: list[dict] = []
-    for index, line_id in enumerate(segment.line_ids()):
+    slot = 0
+    for line_id in segment.line_ids():
         line = segment.line(line_id)
         if line.kind != "dialogue":
             continue
-        start = index * clip_ms
+        if slot >= shot_count:
+            break
+        start = slot * clip_ms
+        slot += 1
         utterances.append(
             {
                 "text": line.text,

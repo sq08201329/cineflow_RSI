@@ -69,7 +69,7 @@ replay:
 # 宣发（promo）形态参数：预算门禁、物料规格、敏感词库、模型价目表、模拟平台分布
 # 短剧差异：预算下调、单轮物料数下调、竖屏短视频物料规格（时长更短、文案更短）
 promo:
-  exploration_per_round_usd: 60
+  exploration_per_round_usd: 120 # 单轮总预算（投放上限 = 本值 × promo_pilot_ratio）
   promo_pilot_ratio: 0.02 # 单轮 ≤ 总预算 2%（预算门禁，FR-002）
   default_model: mock-copy-v1
   materials_per_round: 2

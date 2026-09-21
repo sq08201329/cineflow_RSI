@@ -55,6 +55,23 @@ class Test阶段定义:
             assert getattr(runtime.configs, agent) is not None
         assert runtime.config_fingerprint
 
+    def test_镜头计划在分镜渲染器上限内(self, pilot_form_config_path, pilot_dirs, tmp_path):
+        """边界断言：短剧真实配置的镜头计划 ≤ 16（分镜渲染器位编码索引上限）。
+
+        镜头数 = ceil(成片目标时长 / 单镜时长)：真实配置 120s / 7.5s = 16 恰在上限；
+        演示档（30s）压到 4 镜是为了避开本机 ffmpeg 长连编码抖动，**上限本身**由本用例守住。
+        """
+        real = build_runtime(
+            form=FORM,
+            config_path=pilot_form_config_path(FORM),
+            data_dir=pilot_dirs,
+            artifacts_root=tmp_path / "artifacts",
+        )
+        shots = len(real.shot_plan)
+        assert 1 <= shots <= 16
+        assert shots >= 4  # 至少每场景一镜（试水体量四场景档）
+        assert shots == 16  # 真实短剧配置恰在上限（= 120s / 7.5s）
+
     def test_剪辑目标时长来自配置(self, runtime):
         # 试水体量 = 形态配置：分镜镜头数与成片目标时长都从配置派生（代码零硬编码）
         assert runtime.configs.editing.target_duration_s > 0

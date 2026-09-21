@@ -31,10 +31,10 @@ def _inputs() -> PilotInputs:
 
 
 @pytest.fixture()
-def package_dir(pilot_form_config_path, pilot_dirs, tmp_path):
+def package_dir(pilot_demo_config_path, pilot_dirs, tmp_path):
     result = run_pilot(
         form=FORM,
-        config_path=pilot_form_config_path(FORM),
+        config_path=pilot_demo_config_path,
         inputs=_inputs(),
         data_dir=pilot_dirs,
         artifacts_root=tmp_path / "artifacts",

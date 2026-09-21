@@ -72,10 +72,15 @@ def run(
 ) -> RunRecord:
     """执行（或续跑）依赖图，返回运行记录。`resume_from` 给出既有记录即进入续跑语义。"""
     tick = clock or _default_clock
-    if resume_from is not None and resume_from.status is RunStatus.DONE:
-        return resume_from  # 幂等：全部完成后再次续跑零副作用（不重跑、不落盘）
-
-    if resume_from is None:
+    if resume_from is not None:
+        # 续跑前**先**校验（指纹/阶段集合/运行标识）：不合格即拒绝（零副作用），
+        # 即便原运行已完成——输入或配置已变的记录不得被当作"幂等成功"悄悄返回。
+        base = _resume_base(dag, ctx, resume_from)
+        if resume_from.status is RunStatus.DONE:
+            return resume_from  # 幂等：全部完成后再次续跑零副作用（不重跑、不落盘）
+        record = base
+        states = {state.stage_id: state for state in record.stages}
+    else:
         order = dag.topological_order()
         states = {stage_id: StageState(stage_id=stage_id) for stage_id in order}
         record = RunRecord(
@@ -86,9 +91,6 @@ def run(
             stages=tuple(states[stage_id] for stage_id in order),
             started_at=tick(),
         )
-    else:
-        record = _resume_base(dag, ctx, resume_from)
-        states = {state.stage_id: state for state in record.stages}
 
     outcomes: dict[str, StageOutcome] = {
         state.stage_id: _outcome_of(state)

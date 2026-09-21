@@ -3054,6 +3054,25 @@ def pilot_form_config_path(tmp_path):
 
 
 @pytest.fixture()
+def pilot_demo_config_path(tmp_path):
+    """pilot 演示档形态配置：真实短剧配置的**等值派生**（成片目标时长 120s → 60s）。
+
+    用途：把端到端试水运行的镜头数压到 4（`镜头数 = 目标时长 / 单镜时长`），避开
+    连续 16 次 ffmpeg 编码在本机负载下的偶发抖动（单片段编码失败 → 视觉阶段如实 failed）。
+    **形态配置的边界不受影响**：短剧真实配置（16 镜）在上限内的断言由
+    `tests/unit/test_pilot_stages.py` 的"16 镜上限"边界用例守住。
+    """
+    source = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
+    assert "target_duration_s: 120" in source
+    target = tmp_path / "configs" / "shortdrama-demo.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        source.replace("target_duration_s: 120", "target_duration_s: 30"), encoding="utf-8"
+    )
+    return target
+
+
+@pytest.fixture()
 def pilot_dirs(tmp_path):
     """pilot 临时目录夹具：runs/ 与 packages/（对应仓库 `pilot/` 数据目录结构）。"""
     base = tmp_path / "pilot"

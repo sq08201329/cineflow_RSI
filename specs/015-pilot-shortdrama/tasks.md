@@ -79,14 +79,14 @@
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
 - [x] T1517 [P] [US3] tests/unit/test_pilot_stages.py（六阶段 StageSpec：依赖 script→storyboard→visual→sound→editing→promo、执行入口接线、候选重试语义（环节内换候选、全败才 failed 并记录全部判 0 理由））
-- [ ] T1519 [P] [US3] tests/unit/test_pilot_run.py（C10：启动前预检拒绝（输入不足/配置缺项 → 零成本零落树）；一次运行六阶段 done；**同输入同配置两次运行逐字节一致**；断点续跑不重跑；输入/配置变更后拒绝续跑）
-- [ ] T1521 [P] [US3] tests/unit/test_pilot_package.py（C11/C12：五件套齐备 + manifest 含**"模拟生成"标注** + 配置指纹；缺件即装配失败；账目对账零差异、篡改即报错）
+- [x] T1519 [P] [US3] tests/unit/test_pilot_run.py（C10：启动前预检拒绝（输入不足/配置缺项 → 零成本零落树）；一次运行六阶段 done；**同输入同配置两次运行逐字节一致**；断点续跑不重跑；输入/配置变更后拒绝续跑）
+- [x] T1521 [P] [US3] tests/unit/test_pilot_package.py（C11/C12：五件套齐备 + manifest 含**"模拟生成"标注** + 配置指纹；缺件即装配失败；账目对账零差异、篡改即报错）
 
 ### 用户故事 3 的实现
 
 - [x] T1518 [US3] 实现 agents/pilot/stages.py（六阶段定义 + 各 Agent 既有 loop 入口接线）
-- [ ] T1520 [US3] 实现 agents/pilot/pilot.py（预检 → build_dag → executor.run → 样片包；run/resume 两入口；依赖 T1504~T1510、T1515、T1518）
-- [ ] T1522 [US3] 实现 agents/pilot/package.py（manifest + reel + products + cost + state 五件套装配）
+- [x] T1520 [US3] 实现 agents/pilot/pilot.py（预检 → build_dag → executor.run → 样片包；run/resume 两入口；依赖 T1504~T1510、T1515、T1518）
+- [x] T1522 [US3] 实现 agents/pilot/package.py（manifest + reel + products + cost + state 五件套装配）
 - [ ] T1523 [US3] 实现 ops/pilot.py CLI（run / resume / inspect）+ docs 升级路径文档（B/C 凭证清单、预算口径、切换方式）+ 结构化清单（凭证环境变量名/适配器类/切换命令，字段可机检）
 
 **检查点**: 一次运行产出可复现样片包 + 账目对账——里程碑验收线成立
