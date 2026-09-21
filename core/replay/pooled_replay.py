@@ -232,6 +232,7 @@ def select_replay_pool(
     cfg: PoolingConfig,
     *,
     single_project_trees,
+    version_hash: str | None = None,
 ) -> PoolSelection:
     """按 `replay.pooling.enabled_for_dreaming` 选择回放池（C9；通用机制，不特化 Agent）。
 
@@ -240,6 +241,8 @@ def select_replay_pool(
     - 开启且前置条件满足（树数 ≥ min_trees）→ 合并池 + 快照（开关状态与前置判定入快照）；
     - 开启但前置不足 → 单项目池 + note「未启用：前置条件不足」+ 快照（conditions_met=False）；
     - 合并池构建被拒（跨形态/缺版本集等）→ 单项目池 + note 如实转述拒绝理由（不静默吞错）。
+
+    version_hash：部署评估器版本集哈希（回放作用域；多版本池必须显式给出——跨版本不混池）。
     """
     if not isinstance(cfg, PoolingConfig):
         raise ValidationError(f"cfg 必须为 PoolingConfig，实际为 {type(cfg).__name__}")
@@ -274,8 +277,11 @@ def select_replay_pool(
             merged_pool=merged_pool,
             snapshot=snapshot,
         )
+    successful_group = select_version_group(merged_pool, version_hash)
     return PoolSelection(
-        pool=MergedSimulatorPool(merged_pool, store),
+        pool=MergedSimulatorPool(
+            merged_pool, store, version_hash=successful_group.evaluator_versions_hash
+        ),
         merged=True,
         note="合并池已启用（跨项目）；构建快照已落盘",
         merged_pool=merged_pool,

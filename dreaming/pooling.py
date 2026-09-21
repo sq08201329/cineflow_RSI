@@ -27,10 +27,12 @@ def select_dreaming_pool(
     form: str,
     project_id: str,
     cfg: PoolingConfig,
+    version_hash: str | None = None,
 ) -> PoolSelection:
     """做梦回放池选择（C9）：开关开 → 合并池；关闭/前置不足 → 单项目池并注明。
 
     返回值池对象的 `build(...)` 接口与 002 `SimulatorPool` 一致——做梦回放路径无改动。
+    version_hash：部署评估器版本集哈希（多版本池必须显式给出，跨版本不混池）。
     """
     return select_replay_pool(
         store,
@@ -38,4 +40,5 @@ def select_dreaming_pool(
         form,
         cfg,
         single_project_trees=single_project_trees(store, agent_id=agent_id, project_id=project_id),
+        version_hash=version_hash,
     )
