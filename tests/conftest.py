@@ -2182,7 +2182,8 @@ def web_data_dir(tmp_path):
 def web_config(monkeypatch, tmp_path, web_data_dir, web_tree_dsn):
     """web 配置夹具：以真实 configs/movie.yaml 的 web 段为基准，数据目录/DSN 指向临时夹具。
 
-    page_size=3（小于夹具节点总数）便于分页边界断言；dsn_env 指向临时环境变量。
+    page_size 保持真实配置值（50）；分页边界用请求参数 page/page_size 构造，
+    上限封顶由 requests 侧的 page_size=1000 机检。dsn_env 指向临时环境变量。
     """
     from dataclasses import replace
 
@@ -2192,7 +2193,6 @@ def web_config(monkeypatch, tmp_path, web_data_dir, web_tree_dsn):
     config = replace(
         base,
         dsn_env="CINEFLOW_WEB_TEST_DSN",
-        page_size=3,
         data_dirs={key: str(value) for key, value in web_data_dir.items()},
         export_dir=str(tmp_path / "web-dist"),
     )
