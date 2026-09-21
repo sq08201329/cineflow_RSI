@@ -11,7 +11,7 @@ pipeline 自身不更新部署指针（胜出者进审批流程，US2）。
 """
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from core.replay.pool import SimulatorPool
@@ -132,11 +132,17 @@ def run_dream_round(
     replay_fn=in_process_replay,
     history_root: str | Path = DEFAULT_HISTORY_ROOT,
     m: int | None = None,
+    deploy_hook=None,
 ) -> DreamRound:
     """执行一轮做梦（生成 → 静态检查 → 串行回放 → reward 排名 → 落盘）。
 
     **候选生成前的拒绝守卫**（宪章原则六）：agent_id 命中 `no_auto_evolve_agents`
     名单即抛 `AutoEvolutionForbiddenError`——在任何副作用（候选生成/计费/落盘）之前。
+
+    `deploy_hook`（可选）：**轮次收口后的唯一部署评估接线点**（功能 014 T1416）——
+    收到已完成的 `DreamRound`，返回评估摘要并记入 `diagnostics["deployment"]`。
+    部署逻辑一律在 core（dreaming 侧只调用，原则五单向依赖）；钩子失败如实记录、
+    不阻断做梦主流程（评估失败绝不能吞掉一轮已有的回放成果）。
     """
     if agent_id in config.no_auto_evolve_agents:
         raise AutoEvolutionForbiddenError(
@@ -257,6 +263,13 @@ def run_dream_round(
         status=status,
         diagnostics=diagnostics,
     )
+    if deploy_hook is not None:
+        # 轮次收口后调用部署评估唯一入口（一处接线）：钩子自带上下文，返回摘要
+        try:
+            outcome = deploy_hook(result)
+        except Exception as exc:  # noqa: BLE001 - 部署评估失败不阻断做梦（如实记录不静默）
+            outcome = {"status": "error", "note": f"部署评估失败：{exc}"}
+        result = replace(result, diagnostics={**result.diagnostics, "deployment": outcome})
     _persist(result, history_root)
     return result
 
