@@ -2457,3 +2457,335 @@ def web_drift_report(web_data_dir, drift_config, drift_sequence_writer):
         return build_report(period, drift_config, base)
 
     return _make
+
+
+# ---------------------------------------------------------------------------
+# 功能 014（策略部署评估自动化）夹具：deployment 临时数据目录（契约六子目录）、
+# 部署形态配置（真实 configs/movie.yaml）、候选与证据组合矩阵（全满足/单要件不满足/
+# 证据缺失/禁止名单）、池化回放对比结果（011 口径）、漂移状态（012 verdict）、
+# 指针与部署留痕（configs 副本 + deploys 留痕）。全部为新增夹具，既有夹具行为不变。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def deployment_data_dir(tmp_path):
+    """deployment 数据目录夹具：契约六子目录
+
+    （mode/evidence/shadow/deploys/spot_checks/rollbacks）。
+    """
+    base = tmp_path / "deployment"
+    for sub in ("mode", "evidence", "shadow", "deploys", "spot_checks", "rollbacks"):
+        (base / sub).mkdir(parents=True)
+    return base
+
+
+@pytest.fixture()
+def deployment_config():
+    """部署形态配置夹具：直接读 configs/movie.yaml 的 deployment 段（真实配置路径）。"""
+    from core.deployment.config import DeploymentConfig
+
+    return DeploymentConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+
+
+@pytest.fixture()
+def pooled_replay_comparison():
+    """011 池化回放对比结果夹具工厂：候选 vs 现部署同池 reward + 来源引用。
+
+    构造走 `core.deployment.evidence.reward_compare_payload`——生产者（池化回放对比）
+    与消费方同口径，夹具不另造 schema。
+    """
+
+    def _make(candidate=0.62, deployed=0.55, *, source="replay/pools/pool-visual-2026W39.json"):
+        from core.deployment.evidence import reward_compare_payload
+
+        return reward_compare_payload(candidate, deployed, source=source)
+
+    return _make
+
+
+@pytest.fixture()
+def deployment_drift_registry(tmp_path):
+    """012 漂移状态夹具工厂：normal/suspect/confirmed_drift/false_alarm → DriftRegistry。
+
+    真实登记写入（`register_suspect` + `dispose`，非伪造映射），状态来自 system/人工
+    两条既有通路；normal 即"无任何登记"（012 口径：无登记 = normal = 允许）。
+    """
+
+    def _make(
+        state="normal",
+        *,
+        evaluator_key="judge.cinematic@1.0.0",
+        agent_id="visual",
+        data_dir=None,
+    ):
+        from core.calibration.drift_models import (
+            DriftAction,
+            DriftConclusion,
+            DriftMetrics,
+            DriftVerdict,
+        )
+        from core.calibration.drift_status import DriftRegistry, dispose, register_suspect
+
+        base = tmp_path / f"deployment-drift-{state}" if data_dir is None else data_dir
+        if state == "normal":
+            return DriftRegistry.load(base)
+        if state not in ("suspect", "confirmed_drift", "false_alarm"):
+            raise ValueError(f"未知漂移状态夹具档位：{state!r}")
+        metrics = DriftMetrics(
+            evaluator_key=evaluator_key,
+            agent_id=agent_id,
+            period="2026-W39",
+            verdict=DriftVerdict.DRIFT,
+            samples=24,
+            detector_version="drift_detector@1.0.0+014d3f10a2b7",
+            psi=0.31,
+            quantile_shifts={"p25": 0.2, "p50": 0.2, "p75": 0.2, "p90": 0.2},
+            baseline_ref="2026-W33..2026-W38",
+            thresholds={"psi": 0.2, "quantile": 0.1, "min_samples": 3, "window": 5},
+            note="PSI 0.3100 > 0.2（014 夹具）",
+        )
+        register_suspect(base, evaluator_key, metrics, at="2026-09-21T10:00:00+00:00")
+        if state == "suspect":
+            return DriftRegistry.load(base)
+        if state == "confirmed_drift":
+            dispose(
+                base,
+                evaluator_key,
+                DriftConclusion.CONFIRMED_DRIFT,
+                by="ops",
+                reason="人工确认漂移（014 夹具）",
+                action=DriftAction.DEACTIVATE,
+                at="2026-09-21T11:00:00+00:00",
+            )
+        else:
+            dispose(
+                base,
+                evaluator_key,
+                DriftConclusion.FALSE_ALARM,
+                by="ops",
+                reason="人工判为误报（014 夹具）",
+                action=DriftAction.RESTORE,
+                at="2026-09-21T11:00:00+00:00",
+            )
+        return DriftRegistry.load(base)
+
+    return _make
+
+
+@pytest.fixture()
+def deployment_evidence_matrix(deployment_drift_registry, pooled_replay_comparison):
+    """候选与证据组合矩阵夹具（US1 判定矩阵的唯一构造来源）。
+
+    每档 = `{"kwargs": collect_evidence 关键字参数, "expected_decision": 期望判定,
+    "expected_states": 逐要件状态，可选}`；判定矩阵的"双向断言"（满足即放行、不满足即
+    拦截）在同一夹具上取数，避免测试各自拼证据导致口径分叉。
+    """
+    ok_registry = deployment_drift_registry("normal")
+    suspect_registry = deployment_drift_registry("suspect")
+    judge_keys = ("judge.cinematic@1.0.0",)
+    pass_attestation = {"verdict": "pass", "tau": 0.82, "threshold": 0.6}
+    fail_attestation = {"verdict": "fail", "tau": 0.2, "threshold": 0.6}
+    wider_validation = {
+        "cand-001": 0.1,
+        "sibling-a": 0.9,
+        "sibling-b": 0.8,
+        "sibling-c": 0.7,
+        "sibling-d": 0.6,
+    }
+    base = {
+        "agent_id": "visual",
+        "candidate_version": "cand-001",
+        "deployed_version": "dep-000",
+    }
+    return {
+        "all_satisfied": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "eligible",
+            "expected_states": {
+                "unbiasedness": "satisfied",
+                "reward_compare": "satisfied",
+                "validation_rank": "satisfied",
+                "drift_verdict": "satisfied",
+            },
+        },
+        "reward_unsatisfied": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.55, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "blocked",
+            "expected_states": {"reward_compare": "unsatisfied"},
+        },
+        "validation_unsatisfied": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": wider_validation,
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "blocked",
+            "expected_states": {"validation_rank": "unsatisfied"},
+        },
+        "drift_unsatisfied": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": suspect_registry,
+            },
+            "expected_decision": "blocked",
+            "expected_states": {"drift_verdict": "unsatisfied"},
+        },
+        "unbiasedness_missing": {
+            "kwargs": {
+                **base,
+                "unbiasedness": None,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "insufficient_evidence",
+            "expected_states": {"unbiasedness": "missing"},
+        },
+        "unbiasedness_failed": {
+            "kwargs": {
+                **base,
+                "unbiasedness": fail_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "insufficient_evidence",
+            "expected_states": {"unbiasedness": "unsatisfied"},
+        },
+        "missing_reward": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": None,
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "insufficient_evidence",
+            "expected_states": {"reward_compare": "missing"},
+        },
+        "missing_validation": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": None,
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "insufficient_evidence",
+            "expected_states": {"validation_rank": "missing"},
+        },
+        "missing_drift": {
+            "kwargs": {
+                **base,
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": None,
+            },
+            "expected_decision": "insufficient_evidence",
+            "expected_states": {"drift_verdict": "missing"},
+        },
+        "no_judge": {
+            "kwargs": {
+                **base,
+                "agent_id": "promo",
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": (),
+                "drift_registry": None,
+            },
+            "expected_decision": "blocked",
+            "expected_states": {"drift_verdict": "not_applicable"},
+        },
+        "forbidden_agent": {
+            "kwargs": {
+                **base,
+                "agent_id": "screenplay",
+                "unbiasedness": pass_attestation,
+                "reward_compare": pooled_replay_comparison(0.62, 0.55),
+                "validation_rewards": {"cand-001": 0.8, "dep-000": 0.5},
+                "judge_keys": judge_keys,
+                "drift_registry": ok_registry,
+            },
+            "expected_decision": "forbidden_agent",
+            "expected_states": {},
+        },
+    }
+
+
+@pytest.fixture()
+def deployment_pointer_files(tmp_path, deployment_data_dir):
+    """指针与部署留痕夹具：configs 副本（可定点改写）+ deployment 数据目录。
+
+    返回 dict：config = 仓库配置的临时副本（定点改写不触仓库工作树）、
+    data_dir = deployment 数据目录、agent_id = screenplay、
+    current_version = 副本内的当前部署指针值。
+    """
+
+    def _make(agent_id="screenplay", current_version="fa6b7bca77ed"):
+        import yaml
+
+        source = (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
+        config = tmp_path / f"movie-{agent_id}.yaml"
+        config.write_text(source, encoding="utf-8")
+        payload = yaml.safe_load(source)
+        return {
+            "config": config,
+            "data_dir": deployment_data_dir,
+            "agent_id": agent_id,
+            "current_version": payload["deployment"][agent_id]["current_policy_version"],
+        }
+
+    return _make
+
+
+@pytest.fixture()
+def write_deploy_events(deployment_data_dir):
+    """部署事件留痕工厂：deploys/{ts}-{agent}.json（只增不改，已存在即拒绝覆盖）。"""
+
+    def _write(events, *, data_dir=None):
+        from datetime import UTC, datetime
+
+        base = deployment_data_dir if data_dir is None else data_dir
+        target_dir = base / "deploys"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for index, event in enumerate(events):
+            stamp = event.get("deployed_at") or datetime.now(UTC).isoformat()
+            token = stamp.replace(":", "").replace("-", "").replace("+00:00", "Z")
+            path = target_dir / f"{token}-{event['agent_id']}-{index}.json"
+            path.write_text(
+                json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            paths.append(path)
+        return paths
+
+    return _write

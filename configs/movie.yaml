@@ -378,6 +378,24 @@ web:
 # 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
 # （未采纳更新指针次数恒 0，SC-002 机检；值 = policies/history/screenplay/ 下的策略版本；
 #  初始值 = 人工策略首版（谱系根，见 policies/history/screenplay/fa6b7bca77ed.meta.json））
+# 部署自动化（功能 014）：模式状态机 + 证据门槛（三要件）+ 影子期下限 + 渐进抽检策略。
+# 位置约定：新增键写在 deployment 段**内**、指针子段（screenplay:）**之前**——指针定点
+# 补全（core/yaml_edit.upsert_section_entries）要求指针子段是该段末个条目，挪动会改变
+# 既有改写的插入位点（013 同款教训）。
 deployment:
+  mode_default: manual # 部署模式默认值（manual/shadow/auto；宪章：默认全人工）
+  # 证据门槛（宪章原则六三要件；缺证据即拦截，宁可拦截）
+  gate:
+    validation_top_ratio: 0.2 # validation 排名不跌出前 20%（005 口径，逐字同款 cutoff）
+    require_unbiasedness: true # 无偏性验收为前置（未通过 → 整体证据不足）
+    allow_without_judge: false # 无 judge 层的 Agent 默认保守（not_applicable 不构成满足）
+  # 影子期硬门禁（立项书：影子模式 ≥2 周；未满禁开 auto）
+  shadow:
+    min_days: 14 # 影子期累计时长下限（天；按模式区间累计）
+    min_candidates: 20 # 影子期覆盖候选数下限
+  # 人工事后抽检（渐进：前 N 次全量复核，之后按比例）
+  spot_check:
+    first_n: 5 # 前 N 次自动部署全量复核
+    ratio: 0.2 # 之后按比例抽检（1/5）
   screenplay:
     current_policy_version: fa6b7bca77ed
