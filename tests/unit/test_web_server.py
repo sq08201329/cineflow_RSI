@@ -261,13 +261,28 @@ class Test绑定与配置:
         assert web_config.host == "127.0.0.1"
 
     def test_端口取配置值(self, web_config, web_static_root):
-        httpd = web_server.create_server(replace(web_config, port=0), static_root=web_static_root)
+        """配置端口生效（测试夹具一律用临时端口，故这里显式先找一个空闲端口）。"""
+        import socket
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            free_port = probe.getsockname()[1]
+        httpd = web_server.create_server(
+            replace(web_config, port=free_port), static_root=web_static_root
+        )
         try:
             assert httpd.server_address[0] == "127.0.0.1"
-            assert httpd.server_address[1] > 0
+            assert httpd.server_address[1] == free_port
         finally:
             httpd.server_close()
         assert web_config.port == 8080  # 真实配置端口未被就地改写
+
+    def test_临时端口为零时由系统分配(self, web_config, web_static_root):
+        httpd = web_server.create_server(replace(web_config, port=0), static_root=web_static_root)
+        try:
+            assert httpd.server_address[1] > 0
+        finally:
+            httpd.server_close()
 
     def test_server_main_可调用(self):
         assert callable(web_server.main)

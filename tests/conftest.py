@@ -2222,12 +2222,18 @@ def web_static_root(tmp_path):
 
 
 class _LiveServer:
-    """真实 socket 上的只读服务（端口 0 = 临时端口）：比直调处理函数更接近部署形态。"""
+    """真实 socket 上的只读服务（**临时端口**）：比直调处理函数更接近部署形态。
+
+    端口强制取 0（临时端口）而非配置值：测试不得与本地正在运行的服务（默认 8080）
+    抢占端口——"配置端口生效"由 tests/unit/test_web_server.py 的专项用例单独断言。
+    """
 
     def __init__(self, config, static_root):
+        from dataclasses import replace
+
         from web import server as web_server
 
-        self.httpd = web_server.create_server(config, static_root=static_root)
+        self.httpd = web_server.create_server(replace(config, port=0), static_root=static_root)
         self.host = self.httpd.server_address[0]
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
