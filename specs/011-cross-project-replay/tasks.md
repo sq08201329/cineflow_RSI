@@ -21,8 +21,8 @@
 
 - [x] T1003 版本分组键测试 tests/unit/test_version_group_key.py（先写：config_snapshot → evaluator_versions_hash 确定性、同语义同 hash、版本差异不同 hash、config 微调同 hash（如实标注不影响分组））
 - [x] T1004 [P] 实现版本分组键计算（core/replay/merged_pool.py 内的 evaluator_versions_hash；同输入同 hash）
-- [ ] T1005 [P] 领域模型测试 tests/unit/test_pooling_models.py（MergedPool/VersionGroup/ScoreConflict/HitDistribution/DilutionAlert/PoolSnapshot/CrossProjectLineage frozen 与校验）
-- [ ] T1006 [P] 实现 core/replay/pooling_models.py（frozen dataclass：MergedPool/VersionGroup/ScoreConflict/HitDistribution/DilutionAlert/PoolSnapshot/CrossProjectLineage；独立模块，与 core/tree/models.py、core/calibration/models.py 惯例一致）
+- [x] T1005 [P] 领域模型测试 tests/unit/test_pooling_models.py（MergedPool/VersionGroup/ScoreConflict/HitDistribution/DilutionAlert/PoolSnapshot/CrossProjectLineage frozen 与校验）
+- [x] T1006 [P] 实现 core/replay/pooling_models.py（frozen dataclass：MergedPool/VersionGroup/ScoreConflict/HitDistribution/DilutionAlert/PoolSnapshot/CrossProjectLineage；独立模块，与 core/tree/models.py、core/calibration/models.py 惯例一致）
 
 **检查点**: 版本分组键与模型就绪——用户故事可开始
 
