@@ -165,25 +165,65 @@ def _snapshot_lineage(config: WebConfig) -> dict:
     return {"versions": versions}
 
 
-def _snapshot_evolution(config: WebConfig) -> dict:
-    """曲线快照：分线全集（dreaming/history 目录 ∪ 树上 Agent）的逐 Agent 曲线。"""
-    agents: dict[str, dict] = {}
-    for agent_id in queries.list_dreaming_agents(config):
-        agents[agent_id] = queries.get_evolution(config, agent_id)
-    return {"agents": agents}
+def _file_only_agents(config: WebConfig) -> list[str]:
+    """仅按文件枚举分线（dreaming/history 目录）——DB 不可用时的降级口径（不触碰 DB）。"""
+    history_root = config.data_dir("dreaming")
+    if not history_root.is_dir():
+        return []
+    return sorted(path.name for path in history_root.iterdir() if path.is_dir())
 
 
-def _data_payloads(config: WebConfig, max_nodes: int) -> tuple[dict[str, dict], dict, list[str]]:
-    trees = _snapshot_trees(config)
-    nodes, truncated = _snapshot_nodes(config, trees, max_nodes)
+def _snapshot_evolution(config: WebConfig, *, agents: list[str] | None = None) -> dict:
+    """曲线快照：分线全集（dreaming/history 目录 ∪ 树上 Agent）的逐 Agent 曲线。
+
+    曲线本身读文件（不依赖 DB）；`agents` 给定时按该清单取（DB 不可用时的降级路径）。
+    """
+    payload: dict[str, dict] = {}
+    for agent_id in queries.list_dreaming_agents(config) if agents is None else agents:
+        payload[agent_id] = queries.get_evolution(config, agent_id)
+    return {"agents": payload}
+
+
+def _data_payloads(
+    config: WebConfig, max_nodes: int
+) -> tuple[dict[str, dict], dict, list[str], str, str | None]:
+    """组装全部数据快照；DB 不可用时**降级**（树相关快照为空 + 如实标注，文件面板照常）。"""
+    db_state = "up"
+    db_note = None
+    truncated: list[str] = []
+    try:
+        trees = _snapshot_trees(config)
+        nodes, truncated = _snapshot_nodes(config, trees, max_nodes)
+        facets = queries.list_facets(config)
+        lineage = _snapshot_lineage(config)
+        costs = queries.get_costs(config)
+        node_details = _snapshot_node_details(config, nodes)
+        evolution = _snapshot_evolution(config)
+    except queries.DatabaseUnavailableError as exc:
+        # 与只读服务同款韧性：DB 不可用时服务照常起（树接口 503），导出照常完成（树快照为空）
+        db_state = "down"
+        db_note = f"只读库不可用，树相关快照为空（如实标注，非静默）：{exc}"
+        trees = {
+            "items": [],
+            "total": 0,
+            "page": 1,
+            "page_size": 0,
+            "note": db_note,
+        }
+        nodes = {"trees": {}, "node_count": 0}
+        facets = {"projects": [], "agents": [], "policy_versions": [], "forms": []}
+        lineage = {"versions": {}}
+        costs = {"items": [], "agents": [], "periods": [], "total_usd": 0.0, "node_count": 0}
+        node_details = {"nodes": {}}
+        evolution = _snapshot_evolution(config, agents=_file_only_agents(config))
     payloads = {
-        "facets.json": queries.list_facets(config),
+        "facets.json": facets,
         "trees.json": trees,
         "nodes.json": nodes,
-        "node_details.json": _snapshot_node_details(config, nodes),
-        "lineage.json": _snapshot_lineage(config),
-        "evolution.json": _snapshot_evolution(config),
-        "costs.json": queries.get_costs(config),
+        "node_details.json": node_details,
+        "lineage.json": lineage,
+        "evolution.json": evolution,
+        "costs.json": costs,
         "summary.json": queries.get_summary(config),
     }
     counts = {
@@ -192,7 +232,7 @@ def _data_payloads(config: WebConfig, max_nodes: int) -> tuple[dict[str, dict], 
         "agents": len(payloads["evolution.json"]["agents"]),
         "versions": len(payloads["lineage.json"]["versions"]),
     }
-    return payloads, counts, truncated
+    return payloads, counts, truncated, db_state, db_note
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +256,7 @@ def export_all(
     root = Path(config.export_dir) if dest is None else Path(dest)
     default_static = Path(__file__).resolve().parent / "static"
     static = default_static if static_root is None else Path(static_root)
-    payloads, counts, truncated = _data_payloads(config, max_nodes)
+    payloads, counts, truncated, db_state, db_note = _data_payloads(config, max_nodes)
 
     written: dict[str, Path] = {}
     for page in PAGE_FILES:
@@ -240,12 +280,16 @@ def export_all(
         "counts": counts,
         "max_nodes": max_nodes,
         "truncated": sorted(truncated),
+        "db": db_state,
+        "db_note": db_note,
         "note": (
             "只读快照（web/export.py 产出）：静态资产 + 同一查询层预生成 JSON；"
             "用任意静态服务器挂载本目录即可离线浏览两视图（file:// 下浏览器禁止 fetch）"
         ),
     }
     written[f"data/{MANIFEST_NAME}"] = _write_json(root, f"data/{MANIFEST_NAME}", manifest)
+    if db_state != "up":
+        sys.stderr.write(f"[export] 注意：{db_note}\n")
     return written
 
 

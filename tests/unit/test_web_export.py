@@ -15,6 +15,7 @@ import http.server
 import json
 import threading
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,8 @@ class Test导出目录形态:
         assert manifest["counts"]["nodes"] == 8
         assert manifest["truncated"] == []
         assert manifest["max_nodes"] == web_export.DEFAULT_MAX_NODES
+        assert manifest["db"] == "up"
+        assert manifest["db_note"] is None
         assert "只读快照" in manifest["note"]
 
 
@@ -292,6 +295,26 @@ class Test边界与只读:
         assert manifest["counts"]["nodes"] == 3
         assert manifest["truncated"], "被截断的树必须如实列出"
         assert set(manifest["truncated"]) <= set(web_fixture_trees)
+
+    def test_DB_不可用时导出仍完成并如实标注(
+        self, web_config, tmp_path, web_data_dir, monkeypatch, web_fixture_rounds
+    ):
+        """与只读服务同款韧性：DB 不可用 → 树快照为空但导出完成，manifest 如实标注 db=down。"""
+        broken = replace(web_config, dsn_env="CINEFLOW_WEB_EXPORT_BROKEN_DSN")
+        monkeypatch.setenv(
+            "CINEFLOW_WEB_EXPORT_BROKEN_DSN",
+            "postgresql+psycopg://cineflow:cineflow@127.0.0.1:1/none",
+        )
+        dest = tmp_path / "web-dist-no-db"
+        written = web_export.export_all(broken, dest=dest, static_root=STATIC_ROOT)
+        assert written  # 导出照常完成
+        manifest = _read(dest, "data/manifest.json")
+        assert manifest["db"] == "down"
+        assert manifest["db_note"] and "只读库不可用" in manifest["db_note"]
+        assert manifest["counts"]["trees"] == 0
+        assert _read(dest, "data/trees.json")["items"] == []
+        # 文件面板不受影响：曲线仍按文件枚举的分线导出（分线来自 dreaming/history 目录）
+        assert "visual" in _read(dest, "data/evolution.json")["agents"]
 
     def test_空态导出(self, web_config, tmp_path, web_data_dir):
         dest = tmp_path / "web-dist-empty"
