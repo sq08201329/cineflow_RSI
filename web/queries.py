@@ -504,30 +504,32 @@ def _lineage_rows(
     trees_by_version: Mapping[str, list[dict]],
     metas: Mapping[str, dict],
 ) -> list[dict]:
-    """版本清单 → (version, project_id, agent_id) 行：跨项目按项目展开，无树按空归属标注。"""
+    """版本清单 → (version, project_id, agent_id) 行：跨项目按项目展开，无树按空归属标注。
+
+    **输入顺序即输出顺序**（父链保持"直接父 → 更早"的世代顺序，子版本按版本号升序），
+    同一版本内部按 (project_id, agent_id) 排序——顺序是页面呈现与同源比对的语义之一。
+    """
     rows: list[dict] = []
     for version in versions:
         trees = trees_by_version.get(version, [])
-        if trees:
-            for tree in trees:
-                rows.append(
-                    {
-                        "version": version,
-                        "project_id": tree["project_id"],
-                        "agent_id": tree["agent_id"],
-                    }
-                )
-        else:
-            rows.append(
-                {
-                    "version": version,
-                    "project_id": None,
-                    "agent_id": metas.get(version, {}).get("agent_id"),
-                }
-            )
-    return sorted(
-        rows, key=lambda row: (row["version"], row["project_id"] or "", row["agent_id"] or "")
-    )
+        version_rows = [
+            {
+                "version": version,
+                "project_id": tree["project_id"],
+                "agent_id": tree["agent_id"],
+            }
+            for tree in trees
+        ] or [
+            {
+                "version": version,
+                "project_id": None,
+                "agent_id": metas.get(version, {}).get("agent_id"),
+            }
+        ]
+        rows += sorted(
+            version_rows, key=lambda row: (row["project_id"] or "", row["agent_id"] or "")
+        )
+    return rows
 
 
 def _ancestor_versions(version: str, metas: Mapping[str, dict]) -> list[str]:
