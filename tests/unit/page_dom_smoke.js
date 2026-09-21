@@ -12,6 +12,8 @@
  */
 
 const fs = require("fs");
+const http = require("http");
+const https = require("https");
 const vm = require("vm");
 
 const [, , htmlPath, appPath, baseUrl, mode, ...rest] = process.argv;
@@ -84,6 +86,44 @@ function collectIds(html, prefix) {
 
 const elements = collectIds(fs.readFileSync(htmlPath, "utf8"), "");
 
+/**
+ * fetch 桩：用 node 的 http 模块直发 GET（Connection: close，每次一条连接）。
+ * 为什么不用全局 fetch（undici）：其连接池/异步机制在密集测试下偶发让事件循环长时间不
+ * 回到定时器阶段（实测 waitFor 只轮询到 1 次、34s 后才继续），导致冒烟假失败；
+ * http.request + 一次性连接完全可预测，且页面本来只发 GET。
+ */
+function httpFetch(url) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url, baseUrl);
+    const transport = target.protocol === "https:" ? https : http;
+    const request = transport.request(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "GET",
+        agent: false,
+        headers: { Connection: "close", Accept: "application/json" },
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf-8");
+          resolve({
+            ok: response.statusCode >= 200 && response.statusCode < 300,
+            status: response.statusCode,
+            json: () => Promise.resolve(JSON.parse(body)),
+            text: () => Promise.resolve(body),
+          });
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 const sandbox = {
   console,
   URLSearchParams,
@@ -115,13 +155,7 @@ const sandbox = {
     },
   },
   window: { location: { search: "" }, CINEFLOW_STATIC: STATIC_MODE },
-  fetch: (url, options) =>
-    fetch(new URL(url, baseUrl), options).then((response) => ({
-      ok: response.ok,
-      status: response.status,
-      json: () => response.json(),
-      text: () => response.text(),
-    })),
+  fetch: (url) => httpFetch(url),
 };
 
 vm.createContext(sandbox);
@@ -131,15 +165,41 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor(predicate, { timeout = 4000, label = "" } = {}) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
+const seenErrors = [];
+const timings = [];
+let traceStarted = monotonicMs();
+
+/**
+ * 单调时钟（process.hrtime）：超时判定必须用单调时间。
+ * 为什么不能用 Date.now()：WSL2 的墙钟会因宿主休眠/校时跳变（实测跳 ~34s），
+ * 一跳就让"已超时"判据成立——出现"页面明明在正常渲染却被判超时"的假失败。
+ */
+function monotonicMs() {
+  return Number(process.hrtime.bigint() / 1000000n);
+}
+
+function rememberError() {
+  const box = elements["error-box"];
+  if (box && !box.hidden && box.textContent && !seenErrors.includes(box.textContent)) {
+    seenErrors.push(box.textContent); // 页面报错可能被后续 clearError 清掉：留痕供断言/排障
+  }
+}
+
+async function waitFor(predicate, { timeout = 30000, label = "" } = {}) {
+  const started = monotonicMs();
+  const deadline = started + timeout;
+  let polls = 0;
+  while (monotonicMs() < deadline) {
+    rememberError();
+    polls += 1;
     if (predicate()) {
+      timings.push({ label, ms: monotonicMs() - started, polls });
       return true;
     }
     await sleep(20);
   }
-  throw new Error(`等待超时：${label}`);
+  timings.push({ label, ms: monotonicMs() - started, polls, timeout: true });
+  throw new Error(`等待超时：${label}（轮询 ${polls} 次 / ${monotonicMs() - started}ms）`);
 }
 
 function clickFirstRow(tbody) {
@@ -177,6 +237,9 @@ function dump() {
     drift_panel: body("drift-panel").text(),
     agent_options: body("agent-picker").children.length,
     mode_hint: body("mode-hint").textContent,
+    errors_seen: seenErrors,
+    timings,
+    total_ms: monotonicMs() - traceStarted,
   };
   return summary;
 }
@@ -185,6 +248,14 @@ function dump() {
   if (!sandbox.__domReady) {
     throw new Error("app.js 未注册 DOMContentLoaded 处理器");
   }
+  traceStarted = monotonicMs();
+  const watchdog = setInterval(() => {
+    process.stderr.write(
+      `[dom-smoke] ${monotonicMs() - traceStarted}ms 树${elements["tree-table-body"].children.length}` +
+        ` 节点${elements["node-table-body"].children.length} 选项${elements["agent-picker"].children.length}\n`,
+    );
+  }, 2000);
+  watchdog.unref?.();
   sandbox.__domReady();
   if (mode === "tree") {
     await waitFor(() => elements["tree-table-body"].children.length > 0, {
@@ -224,6 +295,7 @@ function dump() {
     });
   }
   await sleep(50); // 让尾部异步渲染收口
+  clearInterval(watchdog);
   process.stdout.write(JSON.stringify(dump()));
 })().catch((error) => {
   // 失败也打出当前 DOM 快照：便于定位"哪一步没渲染出来"

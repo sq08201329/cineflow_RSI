@@ -506,6 +506,56 @@ composite 版本哈希变化 → 自然升版，历史节点不受影响。promo
 样本不足/首周期/缺口周期/无数据一律如实标注不硬判；F6 的 ScoreConflict 只作报表附注
 （无持久化来源即注明"无持久化来源"），**不参与阈值判定**。
 
+## 前端可视化（功能 013）
+
+只读视图：**发现树浏览器**（三维过滤 + 节点详情 + 谱系链路）与**进化曲线看板**
+（逐轮 reward + 塌缩标注 + 成本汇总 + 010 信度/012 漂移徽标）。`web/` 是宪章 v1.1.0
+原则五新条款下的 monorepo **唯一目录例外**，只读纪律由**三重机检**证明：
+
+| 机检 | 落点 | 命令 |
+| --- | --- | --- |
+| ① 路由表无写动词 | `web/server.py` 的 `ROUTES`（仅 GET；写请求 405/404 零副作用） | `uv run pytest tests/contract -k web` |
+| ② 只读角色无写权限 | 迁移 `0009_web_readonly_role` 建角色 `cineflow_web`（全表仅 SELECT、写动词 REVOKE、未来表默认只 SELECT） | `uv run pytest tests/integration -m integration -k web`（真实 PG） |
+| ③ 源码无写调用与写 SQL | `web/` 零 import `core/agents/dreaming`；无写 SQL；唯一写盘模块 `web/export.py`（写入仅限配置的导出目录，经 `_target()` 包含性校验） | `uv run pytest tests/contract -k web` |
+
+```bash
+# 起只读服务（默认 127.0.0.1:8080；仅 GET；无写端点）
+export CINEFLOW_WEB_DSN="postgresql+psycopg://cineflow_web:<口令>@localhost:5432/cineflow"
+uv run python -m web.server --config configs/movie.yaml
+#   浏览器打开 http://127.0.0.1:8080/（树浏览器）与 http://127.0.0.1:8080/board（看板）
+
+# 静态导出（同一查询层预生成 JSON + 资产拷贝 → web/dist/，可离线浏览）
+uv run python -m web.export            # 需要 DSN：树相关面板读只读库；文件面板不依赖 DB
+python -m http.server -d web/dist 8081 # 任意静态服务器挂载导出目录即可离线看两视图
+
+# 测试与演示
+uv run pytest tests/unit -k web        # 查询层/页面/导出/门禁/同源
+uv run pytest tests/contract -k web    # 路由表/静态断言/同源分层校验契约
+uv run python ops/demo_web.py          # 端到端演示（quickstart 六步，退出码 0）
+```
+
+配置（`configs/movie.yaml` 的 `web` 段，全部配置化；缺项即报错）：
+
+| 配置项 | 默认 | 含义 |
+| --- | --- | --- |
+| `host` / `port` | `127.0.0.1` / `8080` | 仅回环默认（内部工具，不做公网暴露假设；端口 0 = 临时端口，测试用） |
+| `dsn_env` | `CINEFLOW_WEB_DSN` | **只读角色** DSN 的环境变量名（口令不落盘；DSN 缺失时服务照常起，树接口 503） |
+| `token` | `""`（空） | 非空则 `/api/*` 需 `Authorization: Bearer <token>` 或 `?token=`（静态资产不含数据，不受约束） |
+| `page_size` | 50 | 单页容量上限（请求参数不得超过该值） |
+| `data_dirs` | `policies/dreaming/calibration/pools` | 文件化产物只读根目录（与 CLI/JSON 报告同源） |
+| `export_dir` | `web/dist` | 静态导出目录 |
+
+**数据同源（分层校验，机检）**：有既有 JSON 报告产物的面板逐字段比对——进化曲线 ↔ 005
+`build_curve`、信度 ↔ 010 报告、漂移 ↔ 012 报表、谱系 ↔ 005 `build_lineage`；树/节点接口
+以 DB 为权威源（字段语义与 001 落库口径一致）。取数不重算：成本汇总 = 节点成本记录的
+`generation_api_cost_usd` 按 (Agent, ISO 周) 合计。
+
+**诚实边界**：看板不承载任何操作入口（录入/审批/部署永远走 CLI，页面无表单无写请求）；
+无登录/多租户/HTTPS（内部工具，默认回环）；工件只给哈希与元信息，**不做媒体播放**；
+缺失数据一律如实空态（不伪造）；导出快照有节点详情上限（默认 2000，超出在 manifest 如实标注），
+超大库请用在线服务；页面自动化覆盖"能取数、能渲染"（node + DOM 桩真实执行两视图），
+视觉观感与交互细节需人工打开页面查看。
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：

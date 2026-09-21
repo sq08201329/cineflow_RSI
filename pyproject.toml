@@ -37,7 +37,8 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["core", "agents", "dreaming"]
+# web/ 为宪章唯一目录例外（只读前端）：其接口层同口径计入覆盖率（功能 013 T1322）
+source = ["core", "agents", "dreaming", "web"]
 
 [tool.ruff]
 target-version = "py311"

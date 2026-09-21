@@ -222,6 +222,8 @@ def _run_page_smoke(server, page: str, mode: str, agent: str | None = None) -> d
     )
     assert result.stdout, f"node 无输出：stderr={result.stderr[-500:]}"
     payload = json.loads(result.stdout)
+    # 排障用：node 侧看门狗/报错痕迹随 payload 一起带出（失败时打印）
+    payload["stderr_tail"] = result.stderr[-4000:]
     assert "harness_error" not in payload, json.dumps(payload, ensure_ascii=False, indent=2)
     assert payload["error"] == "", f"页面报错：{payload['error']}"
     return payload
