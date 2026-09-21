@@ -84,9 +84,13 @@ def missing_periods(periods: tuple[str, ...] | list[str]) -> tuple[str, ...]:
 
 
 def kind_of(evaluator_key: str) -> str:
-    """评估器类别（evaluator_id 前缀口径，与 010 composite 的 `judge.`/`rule.` 惯例一致）。"""
-    evaluator_id, _, version = _split_key(evaluator_key)
-    del version
+    """评估器类别（evaluator_id 前缀口径，与 010 composite 的 `judge.`/`rule.` 惯例一致）。
+
+    接受 `evaluator_id@version` 或裸 `evaluator_id`（报表按快照目录枚举时只有裸键）。
+    """
+    if not isinstance(evaluator_key, str) or not evaluator_key:
+        raise ValidationError(f"evaluator_key 必须为非空字符串，实际为 {evaluator_key!r}")
+    evaluator_id = evaluator_key.partition("@")[0]
     return evaluator_id.split(".")[0] if "." in evaluator_id else ""
 
 

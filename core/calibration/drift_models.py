@@ -370,7 +370,10 @@ class DriftReport:
     """周期漂移监控报表：per (agent, evaluator) 的指标序列/基线/阈值/状态/处置 + 告警。
 
     items 为不可变元组（每项含 agent_id / evaluator_key / status 等，US3 落地字段），
-    double_signal_rules 记录本次报表使用的双信号联动规则（配置快照，报表自描述）。
+    double_signal_rules 记录本次报表使用的双信号联动规则（配置快照，报表自描述）；
+    alerts 为报表级告警清单（强化告警含 `double_signal: true` 与级别升级）；
+    residual_signals 为**残余信号附注**（F6 ScoreConflict 等）——**不参与阈值判定**，
+    无持久化来源时字段为空并如实注明（不伪造冲突数据）。
     """
 
     period: str
@@ -378,6 +381,8 @@ class DriftReport:
     generated_at: str
     items: tuple = ()
     double_signal_rules: dict = field(default_factory=dict)
+    alerts: tuple = ()
+    residual_signals: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_non_empty("period", self.period)
@@ -390,6 +395,18 @@ class DriftReport:
                 raise ValidationError("items 的每项必须为非空映射")
         if not isinstance(self.double_signal_rules, dict):
             raise ValidationError("double_signal_rules 必须为映射（双信号联动规则快照）")
+        if not isinstance(self.alerts, tuple):
+            raise ValidationError("alerts 必须为元组（报表级告警清单）")
+        for index, alert in enumerate(self.alerts):
+            if not isinstance(alert, dict) or not alert:
+                raise ValidationError(f"alerts[{index}] 必须为非空映射")
+            for key in ("agent_id", "evaluator_key", "level"):
+                if not isinstance(alert.get(key), str) or not alert[key]:
+                    raise ValidationError(f"alerts[{index}].{key} 必须为非空字符串（告警字段齐全）")
+            if not isinstance(alert.get("double_signal"), bool):
+                raise ValidationError(f"alerts[{index}].double_signal 必须为布尔值")
+        if not isinstance(self.residual_signals, dict):
+            raise ValidationError("residual_signals 必须为映射（残余信号附注，不参与阈值判定）")
 
 
 @dataclass(frozen=True)

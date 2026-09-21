@@ -369,6 +369,41 @@ class TestDriftReport:
         with pytest.raises(ValidationError, match="items"):
             _report(items=({},))
 
+    def test_alerts_字段齐全与类型(self):
+        assert _report().alerts == ()  # 默认无告警
+        alert = {
+            "agent_id": "visual",
+            "evaluator_key": "judge.cinematic@1.0.0",
+            "level": "critical",
+            "double_signal": True,
+        }
+        assert _report(alerts=(alert,)).alerts == (alert,)
+        with pytest.raises(ValidationError, match="alerts"):
+            _report(alerts=[alert])  # 必须为元组
+        with pytest.raises(ValidationError, match="alerts"):
+            _report(alerts=(alert, {}))  # 空映射
+        for missing in ("agent_id", "evaluator_key", "level"):
+            with pytest.raises(ValidationError, match=missing):
+                _report(alerts=({**alert, missing: ""},))
+        with pytest.raises(ValidationError, match="double_signal"):
+            _report(alerts=({**alert, "double_signal": "yes"},))
+
+    def test_残余信号附注字段(self):
+        assert _report().residual_signals == {}
+        report = _report(
+            residual_signals={
+                "score_conflict": {
+                    "available": False,
+                    "source": None,
+                    "conflicts": [],
+                    "note": "无持久化来源（F6 未落盘命中分布）",
+                }
+            }
+        )
+        assert report.residual_signals["score_conflict"]["available"] is False
+        with pytest.raises(ValidationError, match="residual_signals"):
+            _report(residual_signals=[])
+
 
 class TestDeployEvidenceVerdict:
     def test_拒绝必带理由(self):
