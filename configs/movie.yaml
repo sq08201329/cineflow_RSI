@@ -53,6 +53,18 @@ replay:
   latency_quantum_ms: 50
   validation_split: latest_tree
   unbiasedness_tau_threshold: 0.95
+  # 跨项目池化（功能 011）：分组/阈值/跨形态/做梦开关全配置化（原则五）；
+  # min_trees 为前置条件（同 Agent 同形态树 ≥ N 棵，不足即拒绝并注明，FR-002）；
+  # dilution_hit_ratio_threshold 为稀释告警判定口径（该项目命中数/总命中数的超阈线，CR Q2）；
+  # allow_cross_form 默认关闭——跨形态合并需显式开启（FR-007，未开启即拒绝）；
+  # enabled_for_dreaming 默认关闭——做梦仍用单项目池（FR-011，开关状态入构建快照）；
+  # pools_dir 为构建快照落盘根目录（replay/pools/{agent}/{form}/{pool_id}.json，只增不改）
+  pooling:
+    min_trees: 3
+    dilution_hit_ratio_threshold: 0.7
+    allow_cross_form: false
+    enabled_for_dreaming: false
+    pools_dir: replay/pools
 
 # 宣发（promo）形态参数：预算门禁、物料规格、敏感词库、模型价目表、模拟平台分布
 promo:

@@ -100,6 +100,13 @@ def build_historical_tree(tree_store, make_tree, make_node):
     根节点 parent_idx=None；depth 自动递推；gen_params 记入 observation_context
     （回放精确匹配的依据）；观测白名单默认含 gen_params。
     返回 (tree, node_ids 按 spec 顺序)。
+
+    可选扩展（功能 011 跨项目池化夹具；全部缺省时与既有行为逐字节一致）：
+    - evaluator_versions：写入 config_snapshot["evaluator_versions"]（版本分组键的输入）；
+    - form：写入 config_snapshot["form"]（形态标注；None = 不标注，按池形态归入）；
+    - config_extra：额外并入 config_snapshot 的键（形态配置微调变体）；
+    - root_created_at：根节点时间戳基准（节点时间戳 = 基准 + 序号 × 1e-6），
+      供"同 created_at 多棵"的时间重叠变体构造。
     """
     from core.tree.models import CostRecord, NodeStatus, new_id
 
@@ -110,15 +117,26 @@ def build_historical_tree(tree_store, make_tree, make_node):
         agent_id="agent-replay",
         policy_version="a1b2c3d4e5f6",
         observation_fields=("gen_params",),
+        evaluator_versions=None,
+        form=None,
+        config_extra=None,
+        root_created_at=None,
     ):
+        snapshot = {
+            "evaluator_weights": {"rule.x": 0.0},
+            "observation_fields": list(observation_fields),
+        }
+        if evaluator_versions is not None:
+            snapshot["evaluator_versions"] = dict(evaluator_versions)
+        if form is not None:
+            snapshot["form"] = form
+        if config_extra:
+            snapshot.update(config_extra)
         tree = make_tree(
             project_id=project_id,
             agent_id=agent_id,
             policy_version=policy_version,
-            config_snapshot={
-                "evaluator_weights": {"rule.x": 0.0},
-                "observation_fields": list(observation_fields),
-            },
+            config_snapshot=snapshot,
         )
         tree_store.create_tree(tree)
 
@@ -141,7 +159,7 @@ def build_historical_tree(tree_store, make_tree, make_node):
                 score=score,
                 cost=cost or CostRecord(),
                 status=status,
-                created_at=float(i + 1),
+                created_at=float(i + 1) if root_created_at is None else root_created_at + i * 1e-6,
             )
             tree_store.append_node(node)
             node_ids.append(node.node_id)
@@ -1572,3 +1590,174 @@ def screenplay_config():
 
     path = Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
     return ScreenplayConfig.from_yaml(path)
+
+
+# ---------------------------------------------------------------------------
+# 跨项目池化夹具（功能 011 / T1002）：多项目树工厂、版本集变体、得分冲突变体、
+# 时间重叠变体、池化临时目录与配置。既有夹具行为不变（扩展均为可选参数）。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def pool_evaluator_versions():
+    """池化默认评估器版本集（同版本集 = 同语义最小单位：版本分组键的输入）。"""
+    return {"rule.x": "1.0.0", "proxy.y": "1.0.0"}
+
+
+@pytest.fixture()
+def make_pool_tree(tree_store, build_historical_tree, pool_evaluator_versions):
+    """跨项目池化单树工厂：root + 每个结构键一个子节点（gen_params = 结构键）。
+
+    参数（全部关键字）：
+    - project_id：项目归属（跨项目池的追溯字段）；
+    - structure_keys：结构键元组（子节点 gen_params；回放匹配键）；
+    - scores：逐结构键得分（与 structure_keys 等长）；
+    - evaluator_versions：评估器版本集（写入 config_snapshot；缺省用默认版本集）；
+    - form：形态标注（写入 config_snapshot["form"]；None = 不标注）；
+    - created_at：根节点时间戳基准（同值即时间重叠变体）；
+    - config_extra：config_snapshot 额外键（形态配置微调变体）。
+    返回 (tree, node_ids)；树已落盘（冻结）于 tree_store。
+    """
+    from core.tree.models import CostRecord, NodeStatus
+
+    def _make(
+        *,
+        project_id="project-a",
+        agent_id="agent-pool",
+        structure_keys=({"temperature": 0.3}, {"temperature": 0.7}),
+        scores=(0.6, 0.7),
+        evaluator_versions=None,
+        form=None,
+        created_at=None,
+        policy_version="a1b2c3d4e5f6",
+        config_extra=None,
+    ):
+        if len(scores) != len(structure_keys):
+            raise ValueError("structure_keys 与 scores 必须等长")
+        spec = [(None, {}, 0.0, NodeStatus.EVALUATED, CostRecord())]
+        spec += [
+            (0, params, score, NodeStatus.EVALUATED, CostRecord(llm_calls=1))
+            for params, score in zip(structure_keys, scores, strict=True)
+        ]
+        return build_historical_tree(
+            spec,
+            project_id=project_id,
+            agent_id=agent_id,
+            policy_version=policy_version,
+            evaluator_versions=(
+                pool_evaluator_versions if evaluator_versions is None else evaluator_versions
+            ),
+            form=form,
+            config_extra=config_extra,
+            root_created_at=created_at,
+        )
+
+    return _make
+
+
+@pytest.fixture()
+def pool_multi_project_trees(make_pool_tree):
+    """默认多项目树集合：项目 A/B 各 2 棵同 Agent 同形态同版本集树（共 4 棵）。
+
+    结构键逐棵不同（树序号入结构键），得分逐棵递增（0.5 ~ 0.8）；
+    C1 场景 1（合并归属可追溯）与场景 4（同输入两次构建可重现）的输入。
+    """
+    trees = []
+    for p_index, project_id in enumerate(("project-a", "project-b")):
+        for t in range(2):
+            tag = f"{project_id}-{t}"
+            tree, _ = make_pool_tree(
+                project_id=project_id,
+                structure_keys=(
+                    {"temperature": 0.3, "tree": tag},
+                    {"temperature": 0.7, "tree": tag},
+                ),
+                scores=(0.5 + 0.1 * (p_index * 2 + t), 0.6 + 0.1 * (p_index * 2 + t)),
+                created_at=1000.0 + p_index * 10 + t,
+            )
+            trees.append(tree)
+    return trees
+
+
+@pytest.fixture()
+def pool_version_split_trees(make_pool_tree, pool_evaluator_versions):
+    """版本集变体：项目 A/B 各有 1 棵旧版本集 + 1 棵新版本集树（共 4 棵 → 两个版本组）。
+
+    新版本集把 rule.x 抬到 2.0.0——跨版本不混池（C1 场景 2）。
+    """
+    new_versions = {**pool_evaluator_versions, "rule.x": "2.0.0"}
+    trees = []
+    for p_index, project_id in enumerate(("project-a", "project-b")):
+        for versions, tag in ((pool_evaluator_versions, "v1"), (new_versions, "v2")):
+            tree, _ = make_pool_tree(
+                project_id=project_id,
+                structure_keys=({"temperature": 0.5, "version": tag},),
+                scores=(0.6 + 0.1 * p_index,),
+                evaluator_versions=versions,
+                created_at=1000.0 + p_index * 10 + (0.0 if tag == "v1" else 1.0),
+            )
+            trees.append(tree)
+    return trees
+
+
+@pytest.fixture()
+def pool_conflict_trees(make_pool_tree):
+    """得分冲突变体（澄清 Q1）：A/B 同结构键同版本集但得分不同（0.6 vs 0.8）。
+
+    每项目另有 1 棵独立结构键树（共 4 棵 ≥ min_trees=3）——冲突树是
+    "可复现假设在该树上不成立"的诊断源（UNKNOWN + ScoreConflict）。
+    """
+    conflict_key = {"temperature": 0.5, "shared": True}
+    trees = []
+    for p_index, (project_id, conflict_score) in enumerate(
+        (("project-a", 0.6), ("project-b", 0.8))
+    ):
+        for slot, (keys, scores) in enumerate(
+            (
+                ((conflict_key,), (conflict_score,)),
+                (({"temperature": 0.3, "unique": project_id},), (0.7,)),
+            )
+        ):
+            tree, _ = make_pool_tree(
+                project_id=project_id,
+                structure_keys=keys,
+                scores=scores,
+                created_at=1000.0 + p_index * 10 + slot,
+            )
+            trees.append(tree)
+    return trees
+
+
+@pytest.fixture()
+def pool_overlapping_time_trees(make_pool_tree):
+    """时间重叠变体：A/B 各 2 棵同 created_at 树（共 4 棵同刻）。
+
+    同时间戳多棵 → 池构建按 (created_at, project_id) 字典序稳定排序（可重现，边界情况）。
+    """
+    trees = []
+    for project_id in ("project-a", "project-b"):
+        for t in range(2):
+            tree, _ = make_pool_tree(
+                project_id=project_id,
+                structure_keys=({"temperature": 0.3 + 0.1 * t},),
+                scores=(0.6 + 0.05 * t,),
+                created_at=2000.0,
+            )
+            trees.append(tree)
+    return trees
+
+
+@pytest.fixture()
+def pooling_data_dir(tmp_path):
+    """池化快照临时目录：replay/pools 的数据目录等价物（不污染仓库工作树）。"""
+    path = tmp_path / "replay" / "pools"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture()
+def pooling_config(pooling_data_dir):
+    """池化配置夹具：默认档（min_trees=3 / 稀释阈值 0.7 / 跨形态与做梦开关关闭）+ 临时池目录。"""
+    from core.replay.pooling_models import PoolingConfig
+
+    return PoolingConfig(pools_dir=str(pooling_data_dir))

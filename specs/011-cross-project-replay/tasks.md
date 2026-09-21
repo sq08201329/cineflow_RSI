@@ -12,8 +12,8 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T1001 configs/movie.yaml 追加 replay.pooling 段（min_trees=3、dilution_hit_ratio_threshold=0.7、allow_cross_form=false、enabled_for_dreaming=false）+ replay/pools/ 数据目录约定（.gitkeep）
-- [ ] T1002 [P] conftest 夹具扩展：多项目树工厂（≥2 项目 × ≥2 棵同 Agent 同形态树，project_id 归属）、评估器版本集变体（同/不同版本集）、**得分冲突变体**（A/B 同结构键同版本集不同得分）、时间重叠变体（同 created_at 多棵）、pooling 临时目录夹具
+- [x] T1001 configs/movie.yaml 追加 replay.pooling 段（min_trees=3、dilution_hit_ratio_threshold=0.7、allow_cross_form=false、enabled_for_dreaming=false）+ replay/pools/ 数据目录约定（.gitkeep）
+- [x] T1002 [P] conftest 夹具扩展：多项目树工厂（≥2 项目 × ≥2 棵同 Agent 同形态树，project_id 归属）、评估器版本集变体（同/不同版本集）、**得分冲突变体**（A/B 同结构键同版本集不同得分）、时间重叠变体（同 created_at 多棵）、pooling 临时目录夹具
 
 ## 阶段 2：基础（阻塞性前置条件）
 
