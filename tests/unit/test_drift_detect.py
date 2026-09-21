@@ -11,6 +11,7 @@
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -297,3 +298,64 @@ class Test快照读取与口径:
         drift_sequence_writer("stable", agent_id=_AGENT, evaluator_key=_KEY)
         with pytest.raises(ValidationError, match="周期"):
             detect_drift(_AGENT, _KEY, "2026-W99", drift_config, drift_data_dir)
+
+
+def _raw_snapshot(data_dir, period, **overrides):
+    """直接落盘一份快照 JSON（健壮性测试用：绕过 010 写入器构造脏数据）。"""
+    payload = {
+        "agent_id": _AGENT,
+        "evaluator_id": "judge.cinematic",
+        "period": period,
+        "samples": 5,
+        "bucket_width": 0.1,
+        "buckets": [0, 0, 0, 0, 0, 5, 0, 0, 0, 0],
+        "quantiles": {"p25": 0.45, "p50": 0.5, "p75": 0.55, "p90": 0.58},
+    }
+    payload.update(overrides)
+    path = Path(data_dir) / "snapshots" / _AGENT / "judge.cinematic" / f"{period}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+class Test健壮性与诚实报错:
+    """边界情况：如实报错/如实标注，绝不静默用脏数据或伪造结论。"""
+
+    def test_从未采集的评估器_无数据(self, drift_data_dir, drift_config):
+        metrics = detect_drift(_AGENT, _KEY, _CURRENT, drift_config, drift_data_dir)
+        assert metrics.verdict is DriftVerdict.NO_DATA
+        assert metrics.samples == 0
+        assert build_baseline(_AGENT, _KEY, _CURRENT, drift_config, drift_data_dir) is None
+
+    def test_周期标签形态非法报错(self, drift_data_dir, drift_config):
+        for bad in ("2026-39", "bad", 39, ""):
+            with pytest.raises(ValidationError, match="周期"):
+                detect_drift(_AGENT, _KEY, bad, drift_config, drift_data_dir)
+
+    def test_evaluator_key_形态非法报错(self, drift_data_dir, drift_config):
+        for bad in ("judge.cinematic", "@1.0.0", ""):
+            with pytest.raises(ValidationError, match="evaluator_key"):
+                detect_drift(_AGENT, bad, _CURRENT, drift_config, drift_data_dir)
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"buckets": [1, -1] + [0] * 8},  # 负计数
+            {"buckets": "oops"},  # 非列表
+            {"quantiles": {"p25": 0.4}},  # 缺分位点
+            {"quantiles": {"p25": 0.4, "p50": 0.5, "p75": 0.6, "p90": "high"}},  # 非数值
+            {"samples": -1},  # 非法样本量
+        ],
+    )
+    def test_脏快照显式报错(self, drift_data_dir, drift_config, overrides):
+        _raw_snapshot(drift_data_dir, _CURRENT, **overrides)
+        with pytest.raises(ValidationError):
+            detect_drift(_AGENT, _KEY, _CURRENT, drift_config, drift_data_dir)
+
+    def test_零样本快照_判样本不足不炸(self, drift_data_dir, drift_config):
+        _raw_snapshot(drift_data_dir, "2026-W38", samples=0, buckets=[0] * 10)
+        _raw_snapshot(drift_data_dir, _CURRENT)
+        metrics = detect_drift(_AGENT, _KEY, _CURRENT, drift_config, drift_data_dir)
+        assert metrics.verdict is DriftVerdict.INSUFFICIENT
+        assert "基线窗口样本不足" in metrics.note
+        assert metrics.psi is None
