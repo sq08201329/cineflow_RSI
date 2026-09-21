@@ -93,10 +93,10 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T1022 契约测试聚合 tests/contract/test_pooling_contracts.py（C1~C9 全场景端到端断言，含 SC-002 同树双池一致率 100% 与 SC-004 前置/单项目告警 100%）
-- [ ] T1023 [P] 端到端演示 ops/demo_merged_pool.py（quickstart 六步；断言退出码 0、跨项目命中、冲突 UNKNOWN、稀释告警、一致性、开关默认）
-- [ ] T1024 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
-- [ ] T1025 [P] 更新 README.md（跨项目池化用法与稀释控制说明）与 docs/二期立项书.md 里程碑表（F6 已交付注明）
+- [x] T1022 契约测试聚合 tests/contract/test_pooling_contracts.py（C1~C9 全场景端到端断言，含 SC-002 同树双池一致率 100% 与 SC-004 前置/单项目告警 100%）
+- [x] T1023 [P] 端到端演示 ops/demo_merged_pool.py（quickstart 六步；断言退出码 0、跨项目命中、冲突 UNKNOWN、稀释告警、一致性、开关默认）
+- [x] T1024 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
+- [x] T1025 [P] 更新 README.md（跨项目池化用法与稀释控制说明）与 docs/二期立项书.md 里程碑表（F6 已交付注明）
 
 ---
 

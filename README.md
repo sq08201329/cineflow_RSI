@@ -394,6 +394,51 @@ uv run python ops/calibrate.py confirm --proposal <proposal_id> --by <姓名>
 uv run python ops/calibrate.py shelve  --proposal <proposal_id> --by <姓名>
 ```
 
+## 跨项目池化（功能 011）
+
+多个项目的发现树按 `(Agent, 形态)` 分组合并进同一个模拟器池：回放时同一**结构键**
+（策略可复现的 gen_params）+ 同一**评估器版本集**在池内全部项目树中查找，命中即复用该
+历史得分（不再 UNKNOWN）。池化是 `core/replay` 的**只读扩展**（无新 DB 表、无新依赖），
+快照文件化于 `replay/pools/{agent}/{form}/{pool_id}.json`（只增不改 + git 版本化）。
+
+```bash
+# 单元测试（构建/快照/匹配/分布/谱系/一致性与做梦开关）
+uv run pytest tests/unit -k "merged_pool or cross_match or hit_stats or cross_lineage"
+uv run pytest tests/unit -k "pooling_acceptance"
+
+# 契约聚合（C1~C9 全场景 + SC-002/003/004/006 机检）
+uv run pytest tests/contract -k pooling
+
+# 合并口径无偏性（发布阻塞：τ ≥ 0.95；注入偏差 100% 拒绝）
+uv run pytest tests/unbiasedness -k merged
+
+# 端到端演示（quickstart 六步：构建 → 跨项目命中 → 冲突 UNKNOWN → 稀释告警 →
+# 一致性 + τ → 做梦开关默认关闭；退出码 0，报告 JSON 落 stdout）
+uv run python ops/demo_merged_pool.py
+```
+
+配置（`configs/movie.yaml` 的 `replay.pooling` 段，全配置化，缺项即拒绝）：
+
+| 配置项 | 默认 | 含义 |
+| --- | --- | --- |
+| `min_trees` | 3 | 前置条件：同 Agent 同形态树 ≥ N 棵才可建池（不足即拒绝并注明） |
+| `dilution_hit_ratio_threshold` | 0.7 | 稀释告警判定口径：某项目**命中占比**（该项目命中数 / 总命中数）超阈即告警 |
+| `allow_cross_form` | false | 跨形态合并需显式开启（未开启即拒绝并入其他形态的树） |
+| `enabled_for_dreaming` | false | 做梦层是否使用合并池（默认关闭 → 单项目池，保守闸门） |
+
+**稀释控制**：`hit_stats` 产出 per-project 与合并口径**双报告**；判定只看**命中占比**
+（树数占比同报告作参考维度）；单项目构成（占比 1.0）必然超阈并如实标注"单项目构成"；
+告警**如实可见但不阻止**回放，也不自动回退（原则六）。
+
+**诚实边界**：跨项目同结构键同版本集但**得分不同 → UNKNOWN + ScoreConflict 诊断**
+（不取均值、不取最新、不编造）；跨版本集不命中（版本集是匹配的组成，原则一）；
+冲突记录进命中分布 `conflicts` 字段，供 010 校准与 F7 漂移检测消费。
+
+**做梦接入（最小改动）**：`dreaming/pooling.py::select_dreaming_pool` 读配置选池——
+开启且前置条件满足 → 合并池（`MergedSimulatorPool` 与 002 `SimulatorPool` 同 `build` 接口，
+`dreaming.pipeline` 零改动）；默认关闭或前置不足 → 单项目池并注明"未启用：…"；
+开关状态与前置判定 100% 入构建快照。
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
