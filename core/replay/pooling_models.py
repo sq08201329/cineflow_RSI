@@ -300,12 +300,14 @@ class HitDistribution:
     """命中分布：per-project 与合并口径双报告 + 冲突清单（FR-006）。
 
     合并口径必须等于逐项目合计（双记账一致，不得虚报）；无项目参与时允许空分布。
+    note 记录 UNKNOWN 率与冲突频次（如实留痕、不自动回退，FR-012）。
     """
 
     per_project: tuple = ()
     merged_hits: int = 0
     merged_unknowns: int = 0
     conflicts: tuple = ()
+    note: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(
