@@ -609,7 +609,11 @@ class DeployModeState:
 
 @dataclass(frozen=True)
 class ShadowEvent:
-    """影子期单个候选的判定记录（契约 C5）：若 auto 会放行与否 + 同期人工决策差异分类。"""
+    """影子期单个候选的判定记录（契约 C5）：若 auto 会放行与否 + 同期人工决策差异分类。
+
+    `unacceptable`：事后人工复核判定"即便自动接班也不可接受"（影子期无真实部署，这是
+    误入率分子第二项的唯一来源——不能靠"未部署所以没问题"推断）。
+    """
 
     period: str
     agent_id: str
@@ -620,10 +624,12 @@ class ShadowEvent:
     diff_category: DiffCategory
     reason: str
     recorded_at: str
+    unacceptable: bool = False
 
     def __post_init__(self) -> None:
         for name in ("period", "agent_id", "candidate_version", "reason", "recorded_at"):
             _require_non_empty(name, getattr(self, name))
+        _require_bool("unacceptable", self.unacceptable)
         object.__setattr__(self, "verdict", _as_enum("verdict", self.verdict, GateDecision))
         object.__setattr__(
             self, "human_decision", _as_enum("human_decision", self.human_decision, HumanDecision)
@@ -668,6 +674,7 @@ class ShadowEvent:
             "diff_category": self.diff_category.value,
             "reason": self.reason,
             "recorded_at": self.recorded_at,
+            "unacceptable": self.unacceptable,
         }
 
 
