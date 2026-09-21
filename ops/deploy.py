@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""部署自动化 CLI（功能 014）：mode / evaluate / shadow-report 子命令。
+"""部署自动化 CLI（功能 014）：mode / evaluate / shadow-report / spot-check / veto / assess-drift。
 
 - `mode`：读写部署模式状态（`--show` 只读；`--set manual|shadow|auto` 需 `--by/--reason`，
   门禁（manual→auto 直连、影子期双下限、重标定阻断）在 core 内判定，本 CLI 只转发结果）；
@@ -182,8 +182,145 @@ def _cmd_shadow_report(args) -> int:
     return 0
 
 
+def _cmd_spot_check(args) -> int:
+    from core.deployment import spot_check
+    from core.deployment.config import DeploymentConfig
+
+    cfg = DeploymentConfig.from_yaml(args.config)
+    if args.list_pending:
+        pending = spot_check.pending_spot_checks(args.data_dir, agent_id=args.agent)
+        stale = spot_check.stale_pending_checks(
+            args.data_dir,
+            agent_id=args.agent,
+            max_age_days=args.pending_alert_days,
+        )
+        print(
+            json.dumps(
+                {
+                    "pending": pending,
+                    "pending_count": len(pending),
+                    "pending_alert_days": args.pending_alert_days,
+                    "stale": stale,
+                    "alert": (
+                        f"有 {len(stale)} 个抽检任务超过 {args.pending_alert_days} 天未复核"
+                        "（只告警，不自动视为通过）"
+                        if stale
+                        else ""
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if not args.deploy_event:
+        print(json.dumps({"error": "--deploy-event 或 --list 二选一"}, ensure_ascii=False))
+        return 2
+    try:
+        record = spot_check.open_spot_check(args.deploy_event, data_dir=args.data_dir, cfg=cfg)
+    except Exception as exc:  # noqa: BLE001 - 无源任务/留痕冲突如实报错
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        return 1
+    if record is None:
+        print(
+            json.dumps(
+                {
+                    "task": None,
+                    "note": "本次部署未抽中（渐进策略：前 first_n 次全量，之后按比例）",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    print(
+        json.dumps(
+            {
+                "task": record.to_dict(),
+                "record_path": str(spot_check.record_path_from(record, args.data_dir)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _cmd_veto(args) -> int:
+    from core.deployment import spot_check
+    from core.deployment.config import DeploymentConfig
+
+    cfg = DeploymentConfig.from_yaml(args.config)
+    try:
+        event = spot_check.veto_and_rollback(
+            args.record,
+            by=args.by,
+            reason=args.reason,
+            data_dir=args.data_dir,
+            cfg=cfg,
+            config_path=args.config,
+            history_root=args.history_root,
+        )
+    except Exception as exc:  # noqa: BLE001 - 失败路径必须如实暴露（含状态已达成的部分）
+        print(json.dumps({"error": str(exc), "alert": True}, ensure_ascii=False))
+        return 1
+    print(json.dumps({"rollback": event.to_dict()}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_assess_drift(args) -> int:
+    from core.calibration.drift_models import DriftState
+    from core.calibration.drift_status import DriftRegistry
+    from core.deployment import spot_check
+
+    registry = DriftRegistry.load(args.drift_dir)
+    statuses = [
+        status
+        for key, status in registry.current().items()
+        if (args.evaluator_key is None or key == args.evaluator_key)
+        and status.status in (DriftState.SUSPECT, DriftState.CONFIRMED_DRIFT)
+    ]
+    if not statuses:
+        print(
+            json.dumps(
+                {
+                    "assessments": [],
+                    "note": "无 suspect/confirmed_drift 状态：无需回滚评估（不制造噪音证据）",
+                    "pointer_unchanged": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    records = []
+    for status in statuses:
+        try:
+            event = spot_check.record_drift_assessment(
+                args.agent, status, data_dir=args.data_dir, config_path=args.config
+            )
+        except Exception as exc:  # noqa: BLE001 - 无部署留痕/无指针如实报错
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return 1
+        if event is not None:
+            records.append(event.to_dict())
+    print(
+        json.dumps(
+            {
+                "assessments": records,
+                "note": "回滚评估记录：不自动回滚（指针未变），处置权在人工（012 流程）",
+                "pointer_unchanged": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="策略部署：模式/评估/影子对照报告（功能 014）")
+    parser = argparse.ArgumentParser(description="策略部署：模式/评估/影子报告/抽检/回滚/漂移评估")
     sub = parser.add_subparsers(dest="command", required=True)
 
     mode_parser = sub.add_parser("mode", help="查看/切换部署模式（门禁在 core 内判定）")
@@ -222,6 +359,45 @@ def main() -> int:
     report_parser.add_argument("--config", default=str(REPO_ROOT / DEFAULT_CONFIG))
     report_parser.add_argument("--data-dir", default=str(REPO_ROOT / DEFAULT_DATA_DIR))
     report_parser.set_defaults(func=_cmd_shadow_report)
+
+    spot_parser = sub.add_parser("spot-check", help="渐进抽检：产复核任务 / 列待复核与逾期待复核")
+    spot_parser.add_argument("--deploy-event", default=None, help="部署事件留痕路径（产任务）")
+    spot_parser.add_argument("--agent", default=None, help="限定 Agent（--list 用）")
+    spot_parser.add_argument(
+        "--list", dest="list_pending", action="store_true", help="列出待复核任务与逾期告警"
+    )
+    spot_parser.add_argument(
+        "--pending-alert-days",
+        type=float,
+        default=14.0,
+        help="超过 N 天未复核即告警（只告警，不自动通过；core 不硬编码该节奏）",
+    )
+    spot_parser.add_argument("--config", default=str(REPO_ROOT / DEFAULT_CONFIG))
+    spot_parser.add_argument("--data-dir", default=str(REPO_ROOT / DEFAULT_DATA_DIR))
+    spot_parser.set_defaults(func=_cmd_spot_check)
+
+    veto_parser = sub.add_parser("veto", help="抽检否决 → 三件事同时生效（回滚 + manual + 重标定）")
+    veto_parser.add_argument("--record", required=True, help="抽检任务留痕路径")
+    veto_parser.add_argument("--by", required=True, help="复核人（留痕必填）")
+    veto_parser.add_argument("--reason", required=True, help="否决理由（留痕必填）")
+    veto_parser.add_argument(
+        "--history-root", default="policies/history", help="策略工件根（回滚目标存在性检查）"
+    )
+    veto_parser.add_argument("--config", default=str(REPO_ROOT / DEFAULT_CONFIG))
+    veto_parser.add_argument("--data-dir", default=str(REPO_ROOT / DEFAULT_DATA_DIR))
+    veto_parser.set_defaults(func=_cmd_veto)
+
+    drift_parser = sub.add_parser(
+        "assess-drift", help="部署后漂移的回滚评估（记录落盘，不自动回滚）"
+    )
+    drift_parser.add_argument("--agent", required=True, help="Agent ID")
+    drift_parser.add_argument(
+        "--drift-dir", default=str(REPO_ROOT / "calibration"), help="012 漂移状态登记数据目录"
+    )
+    drift_parser.add_argument("--evaluator-key", default=None, help="限定 evaluator_id@version")
+    drift_parser.add_argument("--config", default=str(REPO_ROOT / DEFAULT_CONFIG))
+    drift_parser.add_argument("--data-dir", default=str(REPO_ROOT / DEFAULT_DATA_DIR))
+    drift_parser.set_defaults(func=_cmd_assess_drift)
 
     args = parser.parse_args()
     return args.func(args)

@@ -448,3 +448,336 @@ def test_c5_report_is_append_only(deployment_data_dir, deployment_config):
             SHADOW_PERIOD, cfg, data_dir=deployment_data_dir, agent_id="visual", at=SHADOW_AT
         )
     assert path.read_bytes() == original
+
+
+# ---------------------------------------------------------------------------
+# auto-deploy-spotcheck 段（功能 014 US3 / T1425）：契约 C6（唯一入口三行为与两种落痕）、
+# C7（自动部署执行）、C8（渐进抽检）、C9（否决回滚三件事与失败路径）、C10（部署后漂移的
+# 回滚评估）端到端聚合。
+#
+# 机检口径：①不满足门槛的自动部署次数为 0（auto + 非 eligible 一律不调部署）；
+# ②指针与留痕不一致 100% 拒绝 + 告警（防外部绕过）；③抽检否决后三件事 100% 同时生效
+# （回滚 + 模式 manual + 重标定标记），失败路径保持人工（绝不停留在不确定状态）；
+# ④漂移只产评估记录、指针不动；⑤历史节点与 005 meta.json 零修改。
+# ---------------------------------------------------------------------------
+
+from core.deployment import spot_check as spot_module  # noqa: E402
+from core.deployment.auto_deploy import (  # noqa: E402
+    PointerMismatchError,
+    auto_deploy,
+    deploy_events,
+    read_pointer,
+    select_period_candidate,
+)
+from core.deployment.errors import RollbackTargetMissingError  # noqa: E402
+from core.deployment.models import RollbackTrigger  # noqa: E402
+
+AUTO_AGENT = "visual"
+DEPLOY_PREVIOUS = "dep-000"
+DEPLOY_CANDIDATE = "cand-auto-001"
+DEPLOY_AT = "2026-09-21T00:00:00+00:00"
+CHECK_AT = "2026-09-22T00:00:00+00:00"
+
+
+def _relaxed_cfg(deployment_config, *, first_n=None, ratio=None):
+    from core.deployment.config import SpotCheckConfig
+
+    spot = deployment_config.spot_check
+    return replace(
+        deployment_config,
+        shadow=ShadowConfig(min_days=0, min_candidates=0),
+        spot_check=SpotCheckConfig(
+            first_n=spot.first_n if first_n is None else first_n,
+            ratio=spot.ratio if ratio is None else ratio,
+        ),
+    )
+
+
+def _pointer_and_cfg(deployment_pointer_files, deployment_config, **kwargs):
+    pointer = deployment_pointer_files(AUTO_AGENT, current_version=DEPLOY_PREVIOUS)
+    return pointer, _relaxed_cfg(deployment_config, **kwargs)
+
+
+def _enter_auto(data_dir, cfg):
+    deploy_mode.set_mode(
+        DeployMode.SHADOW, by="ops", reason="开影子期", cfg=cfg, data_dir=data_dir, at=DEPLOY_AT
+    )
+    deploy_mode.set_mode(
+        DeployMode.AUTO, by="ops", reason="影子期达标", cfg=cfg, data_dir=data_dir, at=DEPLOY_AT
+    )
+
+
+def _snapshot_file(data_dir, name="snap.json"):
+    path = data_dir.parent / name
+    path.write_text("{}", encoding="utf-8")
+    return path
+
+
+def _commit_evidence(candidate, deployed, registry, *, reward_candidate=0.62):
+    return {
+        "deployed_version": deployed,
+        "unbiasedness": {"verdict": "pass", "tau": 0.82, "threshold": 0.6},
+        "reward_compare": {
+            "candidate": reward_candidate,
+            "deployed": 0.55,
+            "source": "replay/pools/pool-a.json",
+        },
+        "validation_rewards": {candidate: 0.8, deployed: 0.5},
+        "judge_keys": (JUDGE_KEY,),
+        "drift_registry": registry,
+    }
+
+
+def test_c6_c7_auto_deploy_requires_eligible_and_writes_ledger(
+    deployment_pointer_files,
+    deployment_data_dir,
+    deployment_config,
+    deployment_drift_registry,
+    deployment_history_root,
+    multi_tree_pool,
+):
+    """C6/C7：auto 期非 eligible 不部署（次数 0）；eligible 才更新指针 + 留痕 + 历史零改动。"""
+    pointer, cfg = _pointer_and_cfg(deployment_pointer_files, deployment_config)
+    history_root = deployment_history_root(AUTO_AGENT, DEPLOY_PREVIOUS)
+    trees, store = multi_tree_pool(3)
+    rows_before = len(store.trees_by(agent_id=AUTO_AGENT))
+    artifacts_before = {
+        path: path.read_bytes() for path in sorted(history_root.rglob("*")) if path.is_file()
+    }
+    _enter_auto(deployment_data_dir, cfg)
+    registry = deployment_drift_registry("normal")
+
+    # 非 eligible（前置缺失）→ 只落快照 + 拦截，不部署
+    blocked = evaluate_candidate(
+        AUTO_AGENT,
+        "cand-blocked",
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        at=DEPLOY_AT,
+        unbiasedness=None,
+        reward_compare={"candidate": 0.6, "deployed": 0.55, "source": "replay/pools/pool-a.json"},
+        validation_rewards={"cand-blocked": 0.8, DEPLOY_PREVIOUS: 0.5},
+    )
+    assert blocked.action is DeployAction.BLOCKED
+    assert deploy_events(deployment_data_dir, AUTO_AGENT) == []
+    assert read_pointer(pointer["config"], AUTO_AGENT) == DEPLOY_PREVIOUS
+
+    # eligible → 部署：指针更新 + 部署事件留痕（source=auto）
+    allowed = evaluate_candidate(
+        AUTO_AGENT,
+        DEPLOY_CANDIDATE,
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        config_path=pointer["config"],
+        at=DEPLOY_AT,
+        **_commit_evidence(DEPLOY_CANDIDATE, DEPLOY_PREVIOUS, registry),
+    )
+    assert allowed.action is DeployAction.DEPLOYED
+    assert allowed.deploy_event.source == "auto"
+    assert read_pointer(pointer["config"], AUTO_AGENT) == DEPLOY_CANDIDATE
+    ledger = deploy_events(deployment_data_dir, AUTO_AGENT)
+    assert [item["candidate_version"] for item in ledger] == [DEPLOY_CANDIDATE]
+    assert ledger[0]["evidence_snapshot"] == str(allowed.snapshot_path)
+
+    # 历史零修改：树库行数不变、策略工件逐字节不变（meta.json 未被重写）
+    assert len(store.trees_by(agent_id=AUTO_AGENT)) == rows_before
+    assert {
+        path: path.read_bytes() for path in sorted(history_root.rglob("*")) if path.is_file()
+    } == artifacts_before
+    assert not list(history_root.rglob("*.meta.json"))
+
+
+def test_c7_pointer_mismatch_is_refused_with_alert(
+    deployment_pointer_files, deployment_data_dir, deployment_config
+):
+    """C7 场景 2（SC-006 机检）：指针与留痕不一致 → 100% 拒绝 + 告警，指针不动。"""
+    pointer, cfg = _pointer_and_cfg(deployment_pointer_files, deployment_config)
+    _enter_auto(deployment_data_dir, cfg)
+    auto_deploy(
+        agent_id=AUTO_AGENT,
+        candidate_version=DEPLOY_CANDIDATE,
+        snapshot_path=_snapshot_file(deployment_data_dir),
+        from_version=DEPLOY_PREVIOUS,
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        config_path=pointer["config"],
+        at=DEPLOY_AT,
+    )
+    # 外部手工把指针改回旧版本（绕过系统）
+    from core.yaml_edit import replace_section_entries
+
+    pointer["config"].write_text(
+        replace_section_entries(
+            pointer["config"].read_text(encoding="utf-8"),
+            ("deployment", AUTO_AGENT),
+            {"current_policy_version": DEPLOY_PREVIOUS},
+        ),
+        encoding="utf-8",
+    )
+    tampered = pointer["config"].read_bytes()
+    with pytest.raises(PointerMismatchError):
+        auto_deploy(
+            agent_id=AUTO_AGENT,
+            candidate_version="cand-auto-002",
+            snapshot_path=_snapshot_file(deployment_data_dir, "snap2.json"),
+            from_version=DEPLOY_PREVIOUS,
+            cfg=cfg,
+            data_dir=deployment_data_dir,
+            config_path=pointer["config"],
+            at="2026-09-22T00:00:00+00:00",
+        )
+    assert pointer["config"].read_bytes() == tampered
+    assert len(deploy_events(deployment_data_dir, AUTO_AGENT)) == 1
+    alerts = (deployment_data_dir / "deploys" / "alerts.jsonl").read_text(encoding="utf-8")
+    assert "pointer_mismatch" in alerts
+
+
+def test_c7_period_selection_picks_one_candidate(
+    deployment_data_dir, deployment_pointer_files, deployment_config
+):
+    """C7 场景 3：同周期多候选满足门槛 → 按 reward 择一，其余如实记录。"""
+    record = select_period_candidate(
+        [
+            {"version": "cand-1", "reward": 0.58},
+            {"version": "cand-2", "reward": 0.66},
+            {"version": "cand-3", "reward": 0.61},
+        ],
+        agent_id=AUTO_AGENT,
+        period="2026-W39",
+        data_dir=deployment_data_dir,
+        at=DEPLOY_AT,
+    )
+    assert record["selected"] == "cand-2"
+    assert len(record["rejected"]) == 2
+    assert (deployment_data_dir / "deploys" / "selection-visual-2026-W39.json").is_file()
+
+
+def test_c8_progressive_spot_check_and_stale_alert(
+    deployment_pointer_files, deployment_data_dir, deployment_config
+):
+    """C8：前 first_n 次全量、之后按比例；逾期未复核只告警（不自动通过）。"""
+    pointer, cfg = _pointer_and_cfg(
+        deployment_pointer_files, deployment_config, first_n=2, ratio=1.0
+    )
+    _enter_auto(deployment_data_dir, cfg)
+    for index in range(4):
+        auto_deploy(
+            agent_id=AUTO_AGENT,
+            candidate_version=f"cand-{index:03d}",
+            snapshot_path=_snapshot_file(deployment_data_dir, f"snap-{index}.json"),
+            from_version=read_pointer(pointer["config"], AUTO_AGENT),
+            cfg=cfg,
+            data_dir=deployment_data_dir,
+            config_path=pointer["config"],
+            at=f"2026-09-2{1 + index}T00:00:00+00:00",
+        )
+    triggers = []
+    for event in deploy_events(deployment_data_dir, AUTO_AGENT):
+        record = spot_module.open_spot_check(
+            event["_path"], data_dir=deployment_data_dir, cfg=cfg, at=DEPLOY_AT
+        )
+        triggers.append(None if record is None else record.trigger.value)
+    assert triggers == ["first_n", "first_n", "ratio", "ratio"]  # ratio=1.0：之后全量抽
+    pending = spot_module.pending_spot_checks(deployment_data_dir, agent_id=AUTO_AGENT)
+    assert len(pending) == 4
+    stale = spot_module.stale_pending_checks(
+        deployment_data_dir, agent_id=AUTO_AGENT, max_age_days=3, at="2026-10-05T00:00:00+00:00"
+    )
+    assert len(stale) == 4
+    assert all(item["conclusion"] == "pending" for item in stale)  # 只告警，不自动通过
+
+
+def test_c9_veto_rollback_three_things_and_failure_path(
+    deployment_pointer_files,
+    deployment_data_dir,
+    deployment_config,
+    deployment_history_root,
+    tmp_path,
+):
+    """C9（SC-004 机检）：否决 → 三件事同时生效；目标工件缺失 → 报错且模式已回 manual。"""
+    pointer, cfg = _pointer_and_cfg(deployment_pointer_files, deployment_config)
+    deployment_history_root(AUTO_AGENT, DEPLOY_PREVIOUS)
+    _enter_auto(deployment_data_dir, cfg)
+    auto_deploy(
+        agent_id=AUTO_AGENT,
+        candidate_version=DEPLOY_CANDIDATE,
+        snapshot_path=_snapshot_file(deployment_data_dir),
+        from_version=DEPLOY_PREVIOUS,
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        config_path=pointer["config"],
+        at=DEPLOY_AT,
+    )
+    event = deploy_events(deployment_data_dir, AUTO_AGENT)[0]
+    task = spot_module.open_spot_check(
+        event["_path"], data_dir=deployment_data_dir, cfg=cfg, at=DEPLOY_AT
+    )
+    record_path = spot_module.record_path_from(task, deployment_data_dir)
+
+    # 失败路径：目标工件缺失 → 显式报错，但模式已回 manual + 标记已写（不停留在不确定状态）
+    empty_history = tmp_path / "empty-history"
+    with pytest.raises(RollbackTargetMissingError):
+        spot_module.veto_and_rollback(
+            record_path,
+            by="reviewer",
+            reason="抽检否决",
+            data_dir=deployment_data_dir,
+            cfg=cfg,
+            config_path=pointer["config"],
+            history_root=empty_history,
+            at=CHECK_AT,
+        )
+    state = deploy_mode.load_mode_state(deployment_data_dir)
+    assert state.current is DeployMode.MANUAL
+    assert state.recalibration_required is True
+    assert read_pointer(pointer["config"], AUTO_AGENT) == DEPLOY_CANDIDATE
+    assert spot_module.rollback_events(deployment_data_dir, AUTO_AGENT) == []
+
+    # 补上工件后重试（模式已在 manual，工具必须幂等处理，不因"已是 manual"而失败）
+    history_root_target = deployment_history_root(AUTO_AGENT, DEPLOY_PREVIOUS)
+    rollback = spot_module.veto_and_rollback(
+        record_path,
+        by="reviewer",
+        reason="抽检否决：产出质量不达线",
+        data_dir=deployment_data_dir,
+        cfg=cfg,
+        config_path=pointer["config"],
+        history_root=history_root_target,
+        at="2026-09-23T00:00:00+00:00",
+    )
+    assert read_pointer(pointer["config"], AUTO_AGENT) == DEPLOY_PREVIOUS
+    assert rollback.trigger is RollbackTrigger.SPOT_CHECK_VETO
+    assert rollback.mode_after is DeployMode.MANUAL
+    assert rollback.recalibration_required is True
+    assert spot_module.rollback_events(deployment_data_dir, AUTO_AGENT)
+
+
+def test_c10_drift_assessment_records_without_rollback(
+    deployment_pointer_files, deployment_data_dir, deployment_config
+):
+    """C10：部署后漂移 → 评估记录落盘（trigger=drift_assessment），指针与模式不动。"""
+    pointer, cfg = _pointer_and_cfg(deployment_pointer_files, deployment_config)
+    _enter_auto(deployment_data_dir, cfg)
+    auto_deploy(
+        agent_id=AUTO_AGENT,
+        candidate_version=DEPLOY_CANDIDATE,
+        snapshot_path=_snapshot_file(deployment_data_dir),
+        from_version=DEPLOY_PREVIOUS,
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        config_path=pointer["config"],
+        at=DEPLOY_AT,
+    )
+    record = spot_module.record_drift_assessment(
+        AUTO_AGENT,
+        {"evaluator_key": JUDGE_KEY, "status": "suspect"},
+        data_dir=deployment_data_dir,
+        config_path=pointer["config"],
+        at=CHECK_AT,
+    )
+    assert record is not None
+    assert record.trigger is RollbackTrigger.DRIFT_ASSESSMENT
+    assert read_pointer(pointer["config"], AUTO_AGENT) == DEPLOY_CANDIDATE  # 指针不动
+    state = deploy_mode.load_mode_state(deployment_data_dir)
+    assert state.current is DeployMode.AUTO  # 模式不动
+    assert state.recalibration_required is False
