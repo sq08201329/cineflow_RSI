@@ -23,6 +23,7 @@ from core.replay.pooling_models import (
     VersionGroup,
 )
 from core.replay.simulator import ensure_frozen
+from core.tree.store import TreeStore
 
 # 评估器版本集在 config_snapshot 中的记录键（各 Agent 轮次树统一写入）
 EVALUATOR_VERSIONS_KEY = "evaluator_versions"
@@ -155,7 +156,7 @@ def _config_note(reference: dict, snapshot: dict) -> str:
 
 
 def build_merged_pool(
-    store,
+    store: TreeStore,
     agent_id: str,
     form: str,
     cfg: PoolingConfig,

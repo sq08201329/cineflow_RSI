@@ -41,7 +41,7 @@
 
 ### 用户故事 1 的实现
 
-- [ ] T1009 [US1] 实现 core/replay/merged_pool.py（build_merged_pool：分组 + 版本集分组 + 前置条件 + (created_at, project_id) 稳定排序可重现；依赖 T1004、T1006）
+- [x] T1009 [US1] 实现 core/replay/merged_pool.py（build_merged_pool：分组 + 版本集分组 + 前置条件 + (created_at, project_id) 稳定排序可重现；依赖 T1004、T1006）
 - [x] T1010 [US1] 实现 core/replay/pool_snapshot.py（persist_pool_snapshot：replay/pools/{agent}/{form}/{pool_id}.json 只增不改幂等；**pool_id = 分组输入的确定性哈希**——同输入即同 id，是幂等落盘的前提）
 
 **检查点**: 合并池构建可重现 + 快照落盘——MVP 成立
