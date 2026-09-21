@@ -385,6 +385,25 @@ def list_facets(config: WebConfig) -> dict:
     }
 
 
+def list_lineage_versions(config: WebConfig) -> list[str]:
+    """谱系版本全集：meta 版本 ∪ 树上策略版本（升序）——离线快照与版本索引的枚举口径。"""
+    versions = set(_meta_index(config))
+    for row in _fetch(config, _TREES_ALL_SQL):
+        versions.add(row["policy_version"])
+    return sorted(versions)
+
+
+def list_dreaming_agents(config: WebConfig) -> list[str]:
+    """分线全集：dreaming/history 下的 Agent 目录 ∪ 树上 Agent（升序）——曲线面板的枚举口径。"""
+    agents = set()
+    history_root = config.data_dir("dreaming")
+    if history_root.is_dir():
+        agents |= {path.name for path in history_root.iterdir() if path.is_dir()}
+    for row in _fetch(config, _TREES_ALL_SQL):
+        agents.add(row["agent_id"])
+    return sorted(agents)
+
+
 # ---------------------------------------------------------------------------
 # 树清单 / 节点列表 / 节点详情
 # ---------------------------------------------------------------------------

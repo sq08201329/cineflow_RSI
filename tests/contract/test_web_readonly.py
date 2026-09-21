@@ -109,6 +109,14 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
 
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
+# 歧义成员名：`Path.replace(target)` 是写操作，`str.replace(old, new)` 不是——
+# 按位置参数个数区分（1 个位置参数 = 路径替换），避免把字符串替换误判为写盘。
+_AMBIGUOUS_METHODS = {"replace"}
+
+
+def _is_path_replace(call: ast.Call) -> bool:
+    return len(call.args) == 1 and not call.keywords
+
 
 def _write_calls(tree: ast.Module) -> list[tuple[ast.Call, FunctionNode | None]]:
     """全部写盘调用（含写模式 open），附带所属函数。"""
@@ -119,6 +127,8 @@ def _write_calls(tree: ast.Module) -> list[tuple[ast.Call, FunctionNode | None]]
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
         if name in _WRITE_METHODS:
+            if name in _AMBIGUOUS_METHODS and not _is_path_replace(node):
+                continue
             calls.append((node, None))
         elif name == "open":
             if _is_write_mode(node):
@@ -245,6 +255,23 @@ class Test扫描器自检:
             encoding="utf-8",
         )
         assert _write_offenders(path)
+
+    def test_字符串替换不误报(self, tmp_path):
+        """`str.replace(old, new)` 不是写盘（歧义成员名按位置参数个数区分）。"""
+        path = tmp_path / EXPORT_MODULE
+        path.write_text(
+            "def decorate(dest, html):\n    return html.replace('a', 'b')\n",
+            encoding="utf-8",
+        )
+        assert _write_offenders(path) == []
+
+    def test_检出路径替换写调用(self, tmp_path):
+        path = tmp_path / EXPORT_MODULE
+        path.write_text(
+            "def dump(dest, name):\n    target = dest / name\n    target.replace(dest / 'other')\n",
+            encoding="utf-8",
+        )
+        assert _write_offenders(path) == []
 
     def test_检出只读模块内的路径写方法(self, tmp_path):
         path = tmp_path / "queries.py"

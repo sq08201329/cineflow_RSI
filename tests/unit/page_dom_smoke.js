@@ -8,13 +8,15 @@
  *   - 真实跑视图初始化与交互（点击树行 / 切换 Agent）→ 页面真的渲染；
  *   - 结果以 JSON 打到 stdout，由 pytest 断言（node 缺失时该测试跳过）。
  *
- * 用法：node page_dom_smoke.js <html 路径> <app.js 路径> <baseUrl> <mode:tree|board>
+ * 用法：node page_dom_smoke.js <html> <app.js> <baseUrl> <tree|board> [agent] [static]
  */
 
 const fs = require("fs");
 const vm = require("vm");
 
-const [htmlPath, appPath, baseUrl, mode, agent] = process.argv.slice(2);
+const [, , htmlPath, appPath, baseUrl, mode, ...rest] = process.argv;
+const STATIC_MODE = rest.includes("static"); // 静态导出模式（页面读 data/*.json）
+const agent = rest.find((value) => value !== "static") || ""; // 可选：看板指定分线
 
 class El {
   constructor(tag) {
@@ -112,7 +114,7 @@ const sandbox = {
       }
     },
   },
-  window: { location: { search: "" }, CINEFLOW_STATIC: false },
+  window: { location: { search: "" }, CINEFLOW_STATIC: STATIC_MODE },
   fetch: (url, options) =>
     fetch(new URL(url, baseUrl), options).then((response) => ({
       ok: response.ok,
@@ -209,6 +211,10 @@ function dump() {
       picker.value = agent;
       const handlers = picker.listeners.change || [];
       handlers.forEach((handler) => handler());
+      // 分线切换完成的判据：成本小计已按该 Agent 重算（其后曲线/标注均已就绪）
+      await waitFor(() => (elements["cost-total"].textContent || "").includes(agent), {
+        label: `分线 ${agent} 渲染`,
+      });
     }
     await waitFor(() => elements["reward-chart"].children.length > 0, {
       label: "曲线渲染",
