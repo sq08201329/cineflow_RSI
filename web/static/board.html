@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CineFlow 进化曲线看板（只读）</title>
+    <!--
+      只读视图（宪章 v1.1.0 原则五新条款）：看板无任何操作入口——录入/审批/部署
+      永远走 CLI（页面不承载写路径，原则六诚实边界）。
+      图表为手绘 SVG（app.js 用 createElementNS 绘制），不引任何图表库。
+    -->
+    <link rel="stylesheet" href="static/style.css" />
+  </head>
+  <body data-view="evolution-board">
+    <header class="topbar">
+      <h1>CineFlow 进化曲线看板</h1>
+      <p class="hint" id="mode-hint">只读视图 · 数据同源于做梦轮次报告与校准/漂移产物</p>
+    </header>
+
+    <main id="board-root">
+      <section class="panel" id="agent-panel">
+        <h2>Agent 分线</h2>
+        <div class="actions">
+          <label for="agent-picker">Agent</label>
+          <select id="agent-picker"></select>
+          <button type="button" id="refresh-board">刷新</button>
+        </div>
+        <p class="muted" id="board-agent-note"></p>
+      </section>
+
+      <section class="panel" id="reward-panel">
+        <h2>逐轮 reward 曲线</h2>
+        <svg
+          class="chart"
+          id="reward-chart"
+          viewBox="0 0 640 220"
+          role="img"
+          aria-label="逐轮 reward 曲线（塌缩轮次已标注）"
+        ></svg>
+        <div class="legend">
+          <span>折线 = 胜出候选 reward</span>
+          <span id="collapse-note" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="panel" id="cost-panel">
+        <h2>成本汇总（按 Agent / 周期）</h2>
+        <svg
+          class="chart"
+          id="cost-chart"
+          viewBox="0 0 640 220"
+          role="img"
+          aria-label="成本汇总柱状图"
+        ></svg>
+        <p class="muted" id="cost-total"></p>
+      </section>
+
+      <section class="panel" id="calibration-panel">
+        <h2>010 信度达标状态</h2>
+      </section>
+
+      <section class="panel" id="drift-panel">
+        <h2>012 漂移状态</h2>
+      </section>
+
+      <p class="muted" id="empty-state" hidden>暂无数据（如实空态）</p>
+      <p class="error" id="error-box" hidden></p>
+    </main>
+
+    <!-- 静态导出模式注入点（web/export.py 在导出页注入 window.CINEFLOW_STATIC） -->
+    <script src="static/app.js"></script>
+  </body>
+</html>

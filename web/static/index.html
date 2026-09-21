@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CineFlow 发现树浏览器（只读）</title>
+    <!--
+      只读视图（宪章 v1.1.0 原则五新条款）：本页只读不写——无表单、无写入口；
+      录入/审批/部署永远走 CLI（页面不承载任何操作入口，原则六诚实边界）。
+      零外部库：样式与脚本均为本目录静态资产（chart 手绘 SVG，见 app.js）。
+    -->
+    <link rel="stylesheet" href="static/style.css" />
+  </head>
+  <body data-view="tree-browser">
+    <header class="topbar">
+      <h1>CineFlow 发现树浏览器</h1>
+      <p class="hint" id="mode-hint">只读视图 · 数据同源于既有 JSON 报告与发现树库</p>
+    </header>
+
+    <main id="tree-browser-root">
+      <!-- 三维过滤控件（项目 / Agent / 策略版本）+ 深度过滤 + 分页 -->
+      <section class="panel" id="tree-filters">
+        <h2>三维过滤</h2>
+        <div class="filter-grid">
+          <label for="filter-project">项目</label>
+          <select id="filter-project" data-filter="project_id">
+            <option value="">全部项目</option>
+          </select>
+
+          <label for="filter-agent">Agent</label>
+          <select id="filter-agent" data-filter="agent_id">
+            <option value="">全部 Agent</option>
+          </select>
+
+          <label for="filter-version">策略版本</label>
+          <select id="filter-version" data-filter="policy_version">
+            <option value="">全部版本</option>
+          </select>
+
+          <label for="filter-depth">节点深度</label>
+          <select id="filter-depth" data-filter="depth">
+            <option value="">全部深度</option>
+            <option value="0">深度 0（根）</option>
+            <option value="1">深度 1</option>
+            <option value="2">深度 2</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button type="button" id="apply-filters">应用过滤</button>
+          <button type="button" id="reset-filters">重置</button>
+        </div>
+      </section>
+
+      <!-- 树清单 -->
+      <section class="panel" id="tree-list-panel">
+        <h2>发现树清单</h2>
+        <table id="tree-table">
+          <thead>
+            <tr>
+              <th>树</th>
+              <th>项目</th>
+              <th>Agent</th>
+              <th>策略版本</th>
+              <th>节点数</th>
+              <th>形态</th>
+              <th>创建时间</th>
+            </tr>
+          </thead>
+          <tbody id="tree-table-body"></tbody>
+        </table>
+        <div class="actions">
+          <button type="button" id="tree-page-prev">上一页</button>
+          <span id="tree-page-info">第 1 页</span>
+          <button type="button" id="tree-page-next">下一页</button>
+        </div>
+      </section>
+
+      <!-- 节点表 -->
+      <section class="panel" id="node-panel">
+        <h2>节点列表 <span id="node-tree-label" class="muted"></span></h2>
+        <table id="node-table">
+          <thead>
+            <tr>
+              <th>节点</th>
+              <th>深度</th>
+              <th>得分</th>
+              <th>成本（USD）</th>
+              <th>状态</th>
+              <th>时间</th>
+            </tr>
+          </thead>
+          <tbody id="node-table-body"></tbody>
+        </table>
+        <div class="actions">
+          <button type="button" id="node-page-prev">上一页</button>
+          <span id="node-page-info">第 1 页</span>
+          <button type="button" id="node-page-next">下一页</button>
+        </div>
+      </section>
+
+      <!-- 节点详情 -->
+      <section class="panel" id="node-detail">
+        <h2>节点详情</h2>
+        <dl id="node-detail-body">
+          <dt>提示</dt>
+          <dd class="muted">从上表选择节点查看详情</dd>
+        </dl>
+      </section>
+
+      <!-- 谱系视图 -->
+      <section class="panel" id="lineage-view">
+        <h2>谱系链路 <span id="lineage-version-label" class="muted"></span></h2>
+        <div class="lineage-grid">
+          <div>
+            <h3>父版本</h3>
+            <ul id="lineage-parents"></ul>
+          </div>
+          <div>
+            <h3>本版本产出树</h3>
+            <ul id="lineage-trees"></ul>
+          </div>
+          <div>
+            <h3>子版本</h3>
+            <ul id="lineage-children"></ul>
+          </div>
+        </div>
+        <p class="muted" id="lineage-cross-project"></p>
+      </section>
+
+      <p class="muted" id="empty-state" hidden>暂无数据（如实空态）</p>
+      <p class="error" id="error-box" hidden></p>
+    </main>
+
+    <!-- 静态导出模式注入点（web/export.py 在导出页注入 window.CINEFLOW_STATIC） -->
+    <script src="static/app.js"></script>
+  </body>
+</html>
