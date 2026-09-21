@@ -1761,3 +1761,213 @@ def pooling_config(pooling_data_dir):
     from core.replay.pooling_models import PoolingConfig
 
     return PoolingConfig(pools_dir=str(pooling_data_dir))
+
+
+# ---------------------------------------------------------------------------
+# 功能 012（judge 漂移自动检测）夹具：010 分布快照序列工厂（真实 schema 同源写入器）
+# + 基线/稳定/三形态漂移/样本不足/缺口周期序列 + 010 台账与信度报告（含 judge 条目）
+# + drift 临时数据目录。全部为新增夹具，既有夹具行为不变。
+# ---------------------------------------------------------------------------
+
+# 基线型窄峰分布的形状参数：围绕 0.5、σ≈0.08（25 个确定性样本，落在 bucket 3~6）
+_DRIFT_Z_GRID = (
+    -1.6,
+    -1.3,
+    -1.1,
+    -0.9,
+    -0.8,
+    -0.7,
+    -0.6,
+    -0.5,
+    -0.4,
+    -0.3,
+    -0.2,
+    -0.1,
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.1,
+    1.3,
+    1.6,
+)
+
+
+def _drift_scores(period_index: int, *, spread: float = 0.1, shift: float = 0.0) -> list[float]:
+    """确定性打分序列：中心 0.5、σ≈spread、整体平移 shift，微抖动不跨分桶边界。
+
+    同 period_index 重算逐字节一致；抖动幅度 0.002（不影响判定，仅让各周期分桶
+    直方图略有差异，避免"逐周期完全相同"的平凡稳定序列）。
+    """
+    return [
+        round(0.5 + shift + spread * z + 0.002 * ((i * 7 + period_index * 3) % 5 - 2), 6)
+        for i, z in enumerate(_DRIFT_Z_GRID)
+    ]
+
+
+@pytest.fixture()
+def drift_period_labels():
+    """漂移检测默认周期序列：6 个周期（前 5 个为基线窗口，末个为当前周期）。"""
+    return ("2026-W34", "2026-W35", "2026-W36", "2026-W37", "2026-W38", "2026-W39")
+
+
+@pytest.fixture()
+def drift_score_sequences(drift_period_labels):
+    """命名分布序列（period → 锚点得分列表），供快照工厂落盘。
+
+    - stable：6 周期同一窄峰分布（稳定序列，判 normal 不误报）；
+    - mean_shift：前 5 周期基线 + 当前周期整体 +0.2（均值平移漂移）；
+    - variance_widen：前 5 周期基线 + 当前周期 σ×1.8（方差展宽漂移）；
+    - bimodal：前 5 周期基线 + 当前周期双峰（0.15/0.85 两簇，双峰化漂移）；
+    - insufficient_current：前 5 周期基线 + 当前周期 2 样本（当前周期样本不足）；
+    - insufficient_baseline：基线仅 1 周期 × 2 样本 + 当前周期充足（基线窗口样本不足）；
+    - gap：基线缺 2026-W36 一个周期（序列缺口，不插值）+ 当前周期稳定；
+    - first_period：仅当前周期一条（首周期无基线）。
+    """
+    periods = tuple(drift_period_labels)
+    baseline = {p: _drift_scores(i) for i, p in enumerate(periods[:-1])}
+    current = periods[-1]
+    bimodal = [0.15] * 13 + [0.85] * 12
+    return {
+        "stable": {p: _drift_scores(i) for i, p in enumerate(periods)},
+        "mean_shift": {**baseline, current: _drift_scores(5, shift=0.2)},
+        "variance_widen": {**baseline, current: _drift_scores(5, spread=0.18)},
+        "bimodal": {**baseline, current: list(bimodal)},
+        "insufficient_current": {**baseline, current: [0.45, 0.55]},
+        "insufficient_baseline": {periods[0]: [0.45, 0.55], current: _drift_scores(5)},
+        "gap": {
+            p: _drift_scores(i)
+            for i, p in enumerate(periods[:-1])
+            if p != "2026-W36"  # 缺口周期：既不落盘也不插值
+        }
+        | {current: _drift_scores(5)},
+        "first_period": {current: _drift_scores(5)},
+    }
+
+
+@pytest.fixture()
+def drift_data_dir(tmp_path):
+    """漂移临时数据目录夹具：010 产物目录（snapshots/ledger/reports）+ drift 四层子目录。"""
+    base = tmp_path / "calibration"
+    for sub in ("snapshots", "ledger", "reports"):
+        (base / sub).mkdir(parents=True)
+    for sub in ("metrics", "status", "dispositions", "reports"):
+        (base / "drift" / sub).mkdir(parents=True)
+    return base
+
+
+@pytest.fixture()
+def write_drift_snapshots(drift_data_dir):
+    """分布快照序列落盘工厂（功能 012）：与 010 同源写入器，schema 逐字段一致。
+
+    参数：sequence = {period: [锚点得分]}；agent_id / evaluator_key（evaluator_id@版本）
+    / data_dir 可覆盖。返回落盘路径列表（按 sequence 顺序展开）。
+    """
+
+    def _write(
+        sequence,
+        *,
+        agent_id: str = "visual",
+        evaluator_key: str = "judge.cinematic@1.0.0",
+        data_dir=None,
+    ):
+        from core.calibration.ledger import write_anchor_snapshots
+        from core.calibration.models import PairingRecord
+
+        base = drift_data_dir if data_dir is None else data_dir
+        paths = []
+        for period, scores in sequence.items():
+            pairs = [
+                PairingRecord(
+                    anchor_id=f"{period}-a{i}",
+                    evaluator_key=evaluator_key,
+                    anchor_score=float(score),
+                    auto_score=0.5,
+                )
+                for i, score in enumerate(scores)
+            ]
+            paths += write_anchor_snapshots(base, agent_id, period, pairs)
+        return paths
+
+    return _write
+
+
+@pytest.fixture()
+def write_calibration_ledger(drift_data_dir):
+    """010 台账写入工厂（功能 012 用）：per 评估器 per 周期追加 BiasRecord 行。
+
+    entries 元素：{evaluator_key, period, samples, kendall_tau? | pearson_r?, note?}；
+    judge 条目走 kendall_tau、连续条目走 pearson_r（与 010 close_round 同口径）。
+    """
+
+    def _write(entries, *, agent_id: str = "visual", data_dir=None):
+        from core.calibration.ledger import append_ledger
+        from core.calibration.models import BiasRecord
+
+        base = drift_data_dir if data_dir is None else data_dir
+        records = [
+            BiasRecord(
+                evaluator_key=entry["evaluator_key"],
+                period=entry["period"],
+                samples=entry["samples"],
+                mean_shift=entry.get("mean_shift"),
+                pearson_r=entry.get("pearson_r"),
+                kendall_tau=entry.get("kendall_tau"),
+                note=entry.get("note", ""),
+            )
+            for entry in entries
+        ]
+        append_ledger(base, agent_id, records)
+        return records
+
+    return _write
+
+
+@pytest.fixture()
+def calibration_reliability_report(drift_data_dir, write_calibration_ledger):
+    """010 信度报告夹具（含 judge 条目）：写台账后调 build_report 落盘 reports/{period}.json。
+
+    默认 judge.cinematic@1.0.0 的 kendall_tau 低于信度目标（0.3 < 0.6，信度下降信号），
+    proxy.aesthetic@1.0.0 达标（0.8）——双信号联动测试的两侧对照。
+    """
+
+    def _make(
+        period: str = "2026-W39",
+        *,
+        agent_id: str = "visual",
+        target: float = 0.6,
+        judge_tau: float = 0.3,
+        proxy_r: float = 0.8,
+        samples: int = 12,
+        data_dir=None,
+    ):
+        from core.calibration.report import build_report
+
+        base = drift_data_dir if data_dir is None else data_dir
+        write_calibration_ledger(
+            [
+                {
+                    "evaluator_key": "judge.cinematic@1.0.0",
+                    "period": period,
+                    "samples": samples,
+                    "kendall_tau": judge_tau,
+                },
+                {
+                    "evaluator_key": "proxy.aesthetic@1.0.0",
+                    "period": period,
+                    "samples": samples,
+                    "pearson_r": proxy_r,
+                },
+            ],
+            agent_id=agent_id,
+            data_dir=base,
+        )
+        return build_report(base, period, target=target)
+
+    return _make

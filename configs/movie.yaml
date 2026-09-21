@@ -317,6 +317,24 @@ calibration:
   ridge_lambda: 1.0 # 约束岭回归向现权重收缩的强度
   self_pairing_exclusions: # 防自循环：平台真值锚点不与自身来源分量配对
     platform_truth: ["human.platform_metrics"]
+  # judge 漂移自动检测（功能 012 F7）：滑动窗口基线 + PSI/分位数偏移双维判定。
+  # 算法 + 阈值集即"检测口径"，口径哈希进 detector_version（原则一：口径变更不回溯）；
+  # scope_kinds 限定检测范围（默认仅 judge 类，proxy/rule 需显式纳入——其分布变化
+  # 更可能是输入分布变化的镜像）；double_signal 为报表侧强化告警规则（不参与阈值判定）
+  drift:
+    window: 5 # 滑动窗口基线周期数（最近 N 周期、不含当前周期；升版即新基线）
+    buckets: 10 # 分桶数（[0,1] 等宽；须与 010 快照分桶数一致，缺/错即报错）
+    psi_threshold: 0.2 # 分布距离（PSI）超阈线：> 该值判漂移（主指标）
+    quantile_threshold: 0.1 # 分位数最大位移超阈线：> 该值判漂移（辅指标，p25/p50/p75/p90）
+    min_samples: 3 # 样本下限：当前周期或基线窗口样本 < 该值即"样本不足"（不硬判）
+    suspect_weight: 0.5 # suspect 的 judge 权重系数（分级处置降权；US2 合成门禁消费）
+    confirmed_exclude: true # confirmed_drift 是否排除出合成（true = 权重归零，不参与合成）
+    scope_kinds: ["judge"] # 检测范围（evaluator_id 前缀）：proxy/rule/human 默认不纳入
+    double_signal: # 双信号强化告警规则：漂移 ∧ 信度低于 target → 级别升级 + "双信号"标注
+      enabled: true
+      reliability_target: 0.6 # 010 信度达标线（低于即视为"信度下降"信号）
+      base_level: warning # 单信号（仅漂移或仅信度下降）告警级别
+      escalated_level: critical # 双信号告警级别（必须与 base_level 不同——级别升级）
 
 # 做梦层（dreaming）形态参数：候选数、摘要窗口、奖励 λ、随机预算、塌缩检测
 dreaming:
