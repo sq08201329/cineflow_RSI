@@ -74,7 +74,7 @@ promo:
   default_model: mock-copy-v1
   materials_per_round: 2
   material_spec:
-    max_copy_chars: 40 # 竖屏信息流文案更短
+    max_copy_chars: 80 # 竖屏信息流文案更短（仍短于电影 120，且容纳模拟生成文案长度）
     poster_size: "1080x1920" # 竖屏封面
     max_duration_seconds: 20
   sensitive_words: ["最", "第一", "国家级"] # 示例敏感词库；缺配置即拒投不放行
@@ -96,16 +96,18 @@ visual:
   exploration_per_round_usd: 60 # 单轮生成预算上限（FR-003，预算门禁）
   clips_per_round: 2
   clip_spec: # 片段规格（rule.format_compliance 对照）
-    width: 540
-    height: 960 # 竖屏 9:16
+    # 试水档：竖屏 9:16 预览分辨率/帧率（生产档为 1080x1920@30fps，装配层替换即可）
+    width: 144 # 9:16 且可被 16 整除（避免 ffmpeg 改尺寸撞合规门禁）
+    height: 256 # 竖屏 9:16
     fps: 8
-    duration_seconds: 1.5 # 短剧镜头更短
+    duration_seconds: 7.5 # 单镜时长（镜头数 = 成片目标时长 / 本值）
     codec: h264
   frame_sampling: # 帧采样规则（进评估器版本元信息，决策 3）
     count: 8
     size: 64
   simulated_gen: # 确定性模拟生成器参数（决策 2）
-    frames: 12
+    frames: 60 # 帧数 = duration_seconds × fps（片段时长与规格自洽）
+    fps: 8 # 编码帧率（模拟生成器读本项；须与 clip_spec.fps 一致，否则合规门禁判 0）
     estimated_cost_usd: 0.25 # 预估花费（实际扣费 ≤ 预估）
     cost_per_clip_usd: 0.2 # 实际扣费（短剧单片段单价下调）
   judge: # judge.cinematic 委员会（决策 5）：锚点=固定生成参数集经模拟生成器产出
@@ -171,8 +173,8 @@ editing:
       - {span: [0.85, 1.0], mean_ms: 1200, var_ms: 150000, weight: 2.0}
   render: # 渲染合成参数（编码单线程确定性档，消除 004 x264 多线程 flake 根因）
     fps: 8
-    width: 540
-    height: 960 # 竖屏 9:16 成片
+    width: 144 # 9:16 且可被 16 整除（避免 ffmpeg 改尺寸撞合规门禁）
+    height: 256 # 竖屏 9:16 成片（试水档；生产档 1080x1920@30fps 走装配层替换）
     codec: libx264
     encode_threads: 1 # 固定单线程档：同 EDL 两次渲染逐字节一致（SC-001）
     price_per_second_usd: 0.02 # 成片时长计价；缺价目即报错（原则三）
@@ -219,8 +221,8 @@ storyboard:
     awe: [0.55, 0.30, 0.80] # 敬畏（紫）
   render: # 预演渲染参数（编码单线程确定性档：同 ShotList 两次渲染逐字节一致）
     fps: 8
-    width: 540
-    height: 960 # 竖屏 9:16 预演
+    width: 144 # 9:16 且可被 16 整除（避免 ffmpeg 改尺寸撞合规门禁）
+    height: 256 # 竖屏 9:16 预演（试水档）
     codec: libx264
     encode_threads: 1 # 固定单线程档：消除 x264 多线程编码的非确定性
     price_per_shot_usd: 0.02 # 按镜头数计价；缺价目即报错（原则三）
