@@ -7,7 +7,9 @@
 桩评估器不在此定义（唯一定义来源为 T025 的 tests/stubs.py）。
 """
 
+import json
 import time
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -2006,5 +2008,380 @@ def calibration_reliability_report(drift_data_dir, write_calibration_ledger):
             data_dir=base,
         )
         return build_report(base, period, target=target)
+
+    return _make
+
+
+# ---------------------------------------------------------------------------
+# 功能 013（前端可视化）夹具：web 临时数据目录与配置、夹具树（2 项目 × 2 Agent ×
+# 2 策略版本）、做梦轮次报告文件、010 信度报告、012 漂移状态与报表、谱系 meta。
+# 全部为新增夹具，既有夹具行为不变；web 侧取数走文件版 SQLite（真连接，覆盖惰性建连
+# 与 DB 不可用路径）。
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# web 夹具策略源码：版本号 = 内容哈希（与 001/005 的版本纪律一致——夹具不臆造版本字面量）
+WEB_POLICY_SOURCES = {
+    "champion": (
+        "class Policy:\n"
+        '    """web 夹具冠军策略（谱系根：无父版本）。"""\n'
+        "\n"
+        "    def solve(self, env, budget):\n"
+        '        return ""\n'
+    ),
+    "child": (
+        "class Policy:\n"
+        '    """web 夹具子代策略（父版本 = 冠军）。"""\n'
+        "\n"
+        "    def solve(self, env, budget):\n"
+        '        return ""\n'
+    ),
+    "orphan": (
+        "class Policy:\n"
+        '    """web 夹具无树版本（有 meta 无树：谱系呈现版本自身）。"""\n'
+        "\n"
+        "    def solve(self, env, budget):\n"
+        '        return ""\n'
+    ),
+}
+
+# web 夹具树规格：(tree_id, 项目, Agent, 形态标注, 逐节点得分)
+# 覆盖三维过滤（2 项目 × 2 Agent × 2 版本）、跨项目归属（冠军版本横跨 proj-alpha/proj-beta）、
+# 未标注形态（form=None）与分页（节点总数 > page_size）
+WEB_TREE_SPECS = (
+    ("tree-alpha-visual-champion", "proj-alpha", "visual", "visual", (0.3, 0.5, 0.7)),
+    ("tree-alpha-visual-child", "proj-alpha", "visual", "visual", (0.4, 0.9)),
+    ("tree-beta-visual-champion", "proj-beta", "visual", None, (0.6,)),
+    ("tree-beta-storyboard-beta", "proj-beta", "storyboard", "storyboard", (0.2, 0.35)),
+)
+
+
+@pytest.fixture()
+def web_versions():
+    """web 夹具策略版本（内容哈希）：champion / child / orphan。"""
+    from policies.versioning import policy_version
+
+    return {name: policy_version(source) for name, source in WEB_POLICY_SOURCES.items()}
+
+
+@pytest.fixture()
+def web_tree_engine(tmp_path):
+    """web 查询层夹具库：文件版 SQLite + 001 schema（独立于 in-memory 夹具，跨连接共享）。"""
+    from core.tree.db import create_schema
+
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'tree.db'}")
+    create_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def web_tree_dsn(web_tree_engine):
+    """只读角色的 DSN 等价物（单测走 SQLite 文件；真实 PG 权限断言见 T1311）。"""
+    return str(web_tree_engine.url)
+
+
+@pytest.fixture()
+def web_fixture_trees(web_tree_engine, web_versions):
+    """web 夹具树集合（落盘即冻结）：{tree_id: [node_id, ...]}。
+
+    每棵树 = 根节点 + 逐节点子节点（挂在根下，depth 1）；created_at 按 (树序号, 节点序号)
+    单调递增（树清单倒序与节点分页的确定性依据）。observation_context 携带 gen_params 与
+    工件元信息键（champion 树中间节点带 material_* 键，覆盖工件元信息投影）。
+    """
+    import blake3
+
+    from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
+    from core.tree.store import create_tree_store
+
+    store = create_tree_store(web_tree_engine)
+    trees: dict[str, list[str]] = {}
+    for tree_index, (tree_id, project_id, agent_id, form, scores) in enumerate(WEB_TREE_SPECS):
+        version = web_versions["champion" if "champion" in tree_id else "child"]
+        snapshot: dict = {"evaluator_weights": {"proxy.aesthetic": 1.0, "judge.cinematic": 1.0}}
+        if form is not None:
+            snapshot["form"] = form
+        root_id = f"{tree_id}-n0"
+        node_ids = [f"{tree_id}-n{index}" for index in range(len(scores))]
+        store.create_tree(
+            DiscoveryTree(
+                tree_id=tree_id,
+                project_id=project_id,
+                agent_id=agent_id,
+                policy_version=version,
+                root_id=root_id,
+                node_ids=node_ids,
+                config_snapshot=snapshot,
+            )
+        )
+        for index, score in enumerate(scores):
+            observation = {
+                "gen_params": {"temperature": 0.2 + 0.1 * index, "tree": tree_id},
+                "clip_id": f"{tree_id}-clip-{index}",
+            }
+            if tree_id == "tree-alpha-visual-champion" and index == 1:
+                observation |= {"material_kind": "poster", "material_tags": ["fixture"]}
+            node_id = node_ids[index]
+            store.append_node(
+                TreeNode(
+                    node_id=node_id,
+                    tree_id=tree_id,
+                    parent_id=None if index == 0 else root_id,
+                    depth=0 if index == 0 else 1,
+                    agent_id=agent_id,
+                    policy_version=version,
+                    prompt=f"夹具提示词 {index}：探索 {agent_id} 的参数组合",
+                    observation_context=observation,
+                    artifact_hash=blake3.blake3(node_id.encode()).hexdigest(),
+                    eval_breakdown={
+                        "proxy.aesthetic@1.0.0": {
+                            "score": score,
+                            "diagnostics": {"band": "high" if score > 0.5 else "low"},
+                        },
+                        "judge.cinematic@1.0.0": {"score": score, "diagnostics": {}},
+                    },
+                    score=score,
+                    cost=CostRecord(
+                        llm_calls=1,
+                        llm_tokens=100 * (index + 1),
+                        generation_api_cost_usd=0.05 * (index + 1),
+                        wall_clock_seconds=0.25 * (index + 1),
+                    ),
+                    status=NodeStatus.EVALUATED,
+                    created_at=1000.0 + tree_index * 10 + index,
+                )
+            )
+        trees[tree_id] = node_ids
+    return trees
+
+
+@pytest.fixture()
+def web_data_dir(tmp_path):
+    """web 文件化产物临时根：policies / dreaming / calibration / pools 四类 data_dirs。
+
+    calibration 下按 010 产物（snapshots/ledger/reports）与 012 产物
+    （drift/{metrics,status,dispositions,reports}）分层创建，与既有夹具同构。
+    """
+    base = tmp_path / "web-data"
+    dirs = {
+        "policies": base / "policies",
+        "dreaming": base / "dreaming",
+        "calibration": base / "calibration",
+        "pools": base / "replay" / "pools",
+    }
+    for path in dirs.values():
+        path.mkdir(parents=True)
+    for sub in ("snapshots", "ledger", "reports"):
+        (dirs["calibration"] / sub).mkdir()
+    for sub in ("metrics", "status", "dispositions", "reports"):
+        (dirs["calibration"] / "drift" / sub).mkdir(parents=True)
+    return dirs
+
+
+@pytest.fixture()
+def web_config(monkeypatch, tmp_path, web_data_dir, web_tree_dsn):
+    """web 配置夹具：以真实 configs/movie.yaml 的 web 段为基准，数据目录/DSN 指向临时夹具。
+
+    page_size=3（小于夹具节点总数）便于分页边界断言；dsn_env 指向临时环境变量。
+    """
+    from dataclasses import replace
+
+    from web.queries import WebConfig
+
+    base = WebConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+    config = replace(
+        base,
+        dsn_env="CINEFLOW_WEB_TEST_DSN",
+        page_size=3,
+        data_dirs={key: str(value) for key, value in web_data_dir.items()},
+        export_dir=str(tmp_path / "web-dist"),
+    )
+    monkeypatch.setenv(config.dsn_env, web_tree_dsn)
+    return config
+
+
+@pytest.fixture()
+def web_source_files():
+    """web/ 下全部 Python 源文件（静态断言输入）。"""
+    return sorted((REPO_ROOT / "web").rglob("*.py"))
+
+
+@pytest.fixture()
+def write_dream_rounds(web_data_dir):
+    """做梦轮次报告工厂：按 dreaming.pipeline 的 DreamRound schema 落盘（与 005 同源）。
+
+    specs 元素：{"round_id", "curve": [逐轮得分], "cost_usd", "winner": bool, "status"}；
+    reward 由 005 权威口径 compute_reward 从轨迹推导（不写死字面量）；winner 为 None/False
+    的轮次落盘失败态（无胜出候选，曲线侧跳过）。
+    """
+
+    def _write(specs, *, agent_id: str = "visual", history_root=None):
+        from core.replay.trajectory import ReplayTrajectory, TrajectoryStatus
+        from core.tree.models import CostRecord
+        from dreaming.pipeline import Candidate, DreamRound
+        from dreaming.reward import compute_reward
+
+        root = Path(web_data_dir["dreaming"]) if history_root is None else Path(history_root)
+        directory = root / agent_id
+        directory.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for index, spec in enumerate(specs, start=1):
+            round_id = spec.get("round_id", f"dream-{agent_id}-{index}")
+            status = spec.get("status", "completed")
+            curve = list(spec.get("curve", [0.2, 0.4]))
+            cost_usd = float(spec.get("cost_usd", 0.0))
+            candidates: list = []
+            winner = None
+            if status == "completed" and spec.get("winner", True):
+                version = spec.get("version", f"ver-{agent_id}-{index}")
+                trajectory = ReplayTrajectory(
+                    policy_version=version,
+                    best_score_curve=curve,
+                    probe_count=int(spec.get("probe_count", 4)),
+                    effective_sequential_rounds=float(spec.get("sequential_rounds", 1.0)),
+                    total_cost=CostRecord(generation_api_calls=1, generation_api_cost_usd=cost_usd),
+                    final_node_id=f"{round_id}-final",
+                    status=TrajectoryStatus.COMPLETED,
+                    diagnostics={},
+                )
+                candidates.append(
+                    Candidate(
+                        version=version,
+                        source_code=f"# {round_id} 候选（夹具）\n",
+                        static_check="passed",
+                        trajectory=trajectory.to_dict(),
+                        reward=compute_reward(trajectory, 0.5),
+                    )
+                )
+                winner = version
+            payload = DreamRound(
+                round_id=round_id,
+                agent_id=agent_id,
+                champion_version=spec.get("champion_version", "ver-champion"),
+                digest={"agent_id": agent_id, "recent_k": 5, "rounds": [], "note": ""},
+                digest_sha="0" * 64,
+                candidates=candidates,
+                winner_version=winner,
+                status=status,
+                diagnostics={},
+            ).to_dict()
+            target = directory / f"{round_id}.json"
+            target.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            paths.append(target)
+        return paths
+
+    return _write
+
+
+@pytest.fixture()
+def web_fixture_rounds(web_data_dir, write_dream_rounds):
+    """默认做梦轮次序列（visual）：4 轮完成（第 2 轮起奖励低于基线 ×0.7 连续 3 轮 → 塌缩）
+    + 1 轮失败（曲线上跳过，不干扰塌缩序号的 1-based 位置）。
+    """
+    specs = [
+        {"round_id": "dream-visual-1", "curve": [0.6, 0.8], "cost_usd": 0.4},
+        {"round_id": "dream-visual-2", "curve": [0.2, 0.3], "cost_usd": 0.3},
+        {"round_id": "dream-visual-3", "curve": [0.2, 0.25], "cost_usd": 0.2},
+        {"round_id": "dream-visual-4", "curve": [0.15, 0.2], "cost_usd": 0.1},
+        {"round_id": "dream-visual-5", "status": "failed_all_rejected", "winner": None},
+    ]
+    return write_dream_rounds(specs, agent_id="visual")
+
+
+@pytest.fixture()
+def web_lineage_files(web_data_dir, web_versions):
+    """谱系 meta 夹具：冠军（根，含人工审批）→ 子代（树口径版本）+ 孤儿版本（有 meta 无树）。"""
+    from dreaming.lineage import write_meta
+    from policies.versioning import record_policy
+
+    history_root = Path(web_data_dir["policies"])
+    for source in WEB_POLICY_SOURCES.values():
+        record_policy(source, "visual", history_root=history_root)
+    champion = web_versions["champion"]
+    child = web_versions["child"]
+    orphan = web_versions["orphan"]
+    write_meta(
+        history_root,
+        "visual",
+        {
+            "version": champion,
+            "parent_version": None,
+            "created_round": "manual-seed",
+            "reward": {"pareto_auc": 0.3, "parallel_penalty": 0.25, "lambda": 0.5, "reward": 0.05},
+            "source": "manual",
+            "approval": {
+                "approver": "sunqi",
+                "at": "2026-09-21T00:00:00+08:00",
+                "decision": "approved",
+                "reason": "web 夹具首版部署（谱系根）",
+            },
+        },
+    )
+    write_meta(
+        history_root,
+        "visual",
+        {
+            "version": child,
+            "parent_version": champion,
+            "created_round": "dream-visual-2",
+            "reward": {"pareto_auc": 0.25, "parallel_penalty": 0.25, "lambda": 0.5, "reward": 0.0},
+            "source": "dreaming",
+        },
+    )
+    write_meta(
+        history_root,
+        "visual",
+        {
+            "version": orphan,
+            "parent_version": champion,
+            "created_round": "dream-visual-3",
+            "reward": {"pareto_auc": 0.1, "parallel_penalty": 0.25, "lambda": 0.5, "reward": -0.15},
+            "source": "dreaming",
+        },
+    )
+    return {"champion": champion, "child": child, "orphan": orphan}
+
+
+@pytest.fixture()
+def web_reliability_report(web_data_dir, calibration_reliability_report):
+    """010 信度报告夹具（写入 web 的 calibration 目录）：judge 0.3 < 0.6 未达标、proxy 达标。"""
+    return calibration_reliability_report(
+        period="2026-W39", data_dir=web_data_dir["calibration"], target=0.6
+    )
+
+
+@pytest.fixture()
+def web_drift_report(web_data_dir, drift_config, drift_sequence_writer):
+    """012 漂移报表夹具（写入 web 的 calibration 目录）：检测 → 超阈登记 suspect → 落盘报表。
+
+    返回 `build_report` 的报表对象；报表文件位于 `calibration/drift/reports/{period}.json`，
+    状态登记位于 `calibration/drift/status/`（web 摘要面板的两类只读来源）。
+    """
+
+    def _make(
+        *,
+        agent_id: str = "visual",
+        evaluator_key: str = "judge.cinematic@1.0.0",
+        period: str = "2026-W39",
+        variant: str = "mean_shift",
+        periods=("2026-W38", "2026-W39"),
+    ):
+        from core.calibration.drift_metrics import detect_drift
+        from core.calibration.drift_report import build_report
+        from core.calibration.drift_status import register_suspect
+
+        base = web_data_dir["calibration"]
+        drift_sequence_writer(
+            variant, agent_id=agent_id, evaluator_key=evaluator_key, data_dir=base
+        )
+        metrics = None
+        for label in periods:
+            metrics = detect_drift(agent_id, evaluator_key, label, drift_config, base)
+        if metrics is not None and metrics.verdict.value == "drift":
+            register_suspect(base, evaluator_key, metrics, at="2026-09-21T10:00:00+00:00")
+        return build_report(period, drift_config, base)
 
     return _make
