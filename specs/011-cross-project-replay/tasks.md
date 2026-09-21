@@ -80,7 +80,7 @@
 
 - [x] T1017 [P] [US3] tests/unit/test_cross_lineage.py（C6：跨项目 policy_version → 树与子版本（归属标注）、单项目版本跨项目字段为空列表而非缺失）
 - [x] T1018 [P] [US3] tests/unit/test_pooling_acceptance.py（C7/C9：同树在单项目池与合并池回放得分序列一致（逐树逐策略）；做梦默认单项目池（开关状态入快照机检）；开关开启但前置条件不足 → 单项目池 + 注明）
-- [ ] T1019 [P] [US3] tests/unbiasedness/test_merged_pool_unbiased.py（C8：合并池夹具回放 vs 真实重跑 τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝）
+- [x] T1019 [P] [US3] tests/unbiasedness/test_merged_pool_unbiased.py（C8：合并池夹具回放 vs 真实重跑 τ ≥ 0.95；注入偏差 ≥3 形态 100% 拒绝）
 
 ### 用户故事 3 的实现
 
