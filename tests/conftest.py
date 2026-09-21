@@ -2749,18 +2749,30 @@ def deployment_pointer_files(tmp_path, deployment_data_dir):
     current_version = 副本内的当前部署指针值。
     """
 
-    def _make(agent_id="screenplay", current_version="fa6b7bca77ed"):
+    def _make(agent_id="screenplay", current_version=None):
         import yaml
+
+        from core.yaml_edit import upsert_section_entries
 
         source = (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
         config = tmp_path / f"movie-{agent_id}.yaml"
         config.write_text(source, encoding="utf-8")
         payload = yaml.safe_load(source)
+        pointer = (payload.get("deployment") or {}).get(agent_id, {}).get("current_policy_version")
+        if pointer is None:
+            # 该 Agent 尚无部署指针（如 visual）：用定点改写补一条（与部署路径同款写法）
+            pointer = current_version or "dep-000"
+            config.write_text(
+                upsert_section_entries(
+                    source, ("deployment", agent_id), {"current_policy_version": pointer}
+                ),
+                encoding="utf-8",
+            )
         return {
             "config": config,
             "data_dir": deployment_data_dir,
             "agent_id": agent_id,
-            "current_version": payload["deployment"][agent_id]["current_policy_version"],
+            "current_version": pointer,
         }
 
     return _make
@@ -2789,3 +2801,26 @@ def write_deploy_events(deployment_data_dir):
         return paths
 
     return _write
+
+
+@pytest.fixture()
+def deployment_history_root(tmp_path):
+    """策略工件目录夹具：policies/history/{agent}/{version}.py（回滚目标工件存在性检查用）。
+
+    返回工厂 `_make(agent_id, *versions)`：写入策略源码工件（版本号由内容哈希决定，
+    但此处按调用者给定的版本名落盘即可——工件存在性检查只认路径）。
+    """
+
+    def _make(agent_id, *versions):
+        root = tmp_path / "policies" / "history"
+        for version in versions:
+            target = root / agent_id / f"{version}.py"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                f'"""夹具策略工件：{agent_id}@{version}"""\n\n\nclass Policy:\n'
+                '    def solve(self, env, budget):\n        return ""\n',
+                encoding="utf-8",
+            )
+        return root
+
+    return _make

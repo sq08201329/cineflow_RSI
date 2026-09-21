@@ -21,5 +21,13 @@ class DeploymentRecordConflictError(DeploymentError):
     """部署留痕已存在且内容不同：只增不改（历史不回溯改写）。"""
 
 
+class PointerMismatchError(DeploymentError):
+    """部署指针与留痕不一致（防外部绕过）：拒绝部署并落告警，人工核对后才可继续。"""
+
+
+class RollbackTargetMissingError(DeploymentError):
+    """回滚目标版本工件缺失：显式报错并保持人工审批（绝不停留在不确定状态）。"""
+
+
 class DeploymentEvidenceError(DeploymentError):
     """证据非法（payload 形态/取值不符合口径）——与"证据缺失"区分：前者报错，后者 missing。"""

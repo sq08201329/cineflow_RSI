@@ -68,8 +68,11 @@ class DiffCategory(StrEnum):
 
 
 class SpotCheckConclusion(StrEnum):
-    """人工抽检结论：通过（留痕，模式保持 auto）/ 否决（三件事同时生效）。"""
+    """抽检结论：`pending`（系统产任务，待人工复核）/ 通过（留痕，模式保持 auto）/
+    否决（三件事同时生效）。`pending` 是"任务已产、人工未签"的如实状态——长期未复核
+    只告警、**绝不自动转为通过**。"""
 
+    PENDING = "pending"
     PASS = "pass"
     VETO = "veto"
 
@@ -852,10 +855,12 @@ class SpotCheckRecord:
     by: str
     at: str
     reason: str
+    record_id: str = ""
 
     def __post_init__(self) -> None:
         for name in ("agent_id", "deploy_event", "by", "at", "reason"):
             _require_non_empty(name, getattr(self, name))
+        _require_optional_non_empty("record_id", self.record_id)
         if isinstance(self.seq, bool) or not isinstance(self.seq, int) or self.seq < 1:
             raise ValidationError(f"seq 必须为 ≥ 1 的整数（部署序号），实际为 {self.seq!r}")
         object.__setattr__(self, "trigger", _as_enum("trigger", self.trigger, SpotCheckTrigger))
@@ -878,12 +883,17 @@ class SpotCheckRecord:
             "by": self.by,
             "at": self.at,
             "reason": self.reason,
+            "record_id": self.record_id,
         }
 
 
 @dataclass(frozen=True)
 class RollbackEvent:
-    """回滚留痕（契约 C9/C10）：回滚后模式恒为 manual（抽检否决三件事之一）。"""
+    """回滚留痕（契约 C9/C10）：实际回滚后模式恒为 manual（抽检否决三件事之一）。
+
+    例外：`trigger=drift_assessment` 是**回滚评估记录**（部署后漂移，不自动回滚）——
+    模式如实记录当前值，指针不动，处置权在 012 的人工流程。
+    """
 
     agent_id: str
     from_version: str
@@ -901,10 +911,14 @@ class RollbackEvent:
             _require_non_empty(name, getattr(self, name))
         object.__setattr__(self, "trigger", _as_enum("trigger", self.trigger, RollbackTrigger))
         object.__setattr__(self, "mode_after", _as_enum("mode_after", self.mode_after, DeployMode))
-        if self.mode_after is not DeployMode.MANUAL:
+        if (
+            self.mode_after is not DeployMode.MANUAL
+            and self.trigger is not RollbackTrigger.DRIFT_ASSESSMENT
+        ):
             raise ValidationError(
-                "mode_after 必须为 manual（回滚即恢复全人工审批），实际为"
-                f" {self.mode_after.value!r}"
+                "mode_after 必须为 manual（实际回滚即恢复全人工审批），实际为"
+                f" {self.mode_after.value!r}；漂移评估不执行回滚（trigger=drift_assessment）"
+                "方可如实记录当前模式"
             )
         if self.to_version == self.from_version:
             raise ValidationError(

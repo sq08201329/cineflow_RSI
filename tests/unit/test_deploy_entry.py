@@ -266,24 +266,29 @@ def test_auto_mode_requires_config_path_for_pointer_rewrite(
         )
 
 
-def test_default_deploy_is_not_implemented_yet(
+def test_default_deploy_path_is_the_real_auto_deploy(
     deployment_data_dir, deployment_config, deployment_drift_registry, deployment_pointer_files
 ):
-    """US3 未落地前，默认部署实现显式报错（不静默跳过部署、也不伪装成功）。"""
+    """不注入钩子时走真实部署实现（T1422 已落地）：指针更新 + 部署事件 + 快照同批留痕。"""
+    pointer = deployment_pointer_files(AGENT, current_version=DEPLOYED)
     cfg = _cfg(deployment_config)
     _open_shadow(deployment_data_dir, cfg)
     _fill_window(deployment_data_dir, cfg)
-    with pytest.raises(NotImplementedError, match="T1422"):
-        evaluate_candidate(
-            AGENT,
-            CANDIDATE,
-            cfg=cfg,
-            data_dir=deployment_data_dir,
-            config_path=deployment_pointer_files()["config"],
-            at=T0,
-            **_judged(deployment_drift_registry("normal")),
-        )
-    # 判定与快照不因部署未落地而丢失（留痕先于部署）
+    outcome = evaluate_candidate(
+        AGENT,
+        CANDIDATE,
+        cfg=cfg,
+        data_dir=deployment_data_dir,
+        config_path=pointer["config"],
+        at=T0,
+        **_judged(deployment_drift_registry("normal")),
+    )
+    assert outcome.action is DeployAction.DEPLOYED
+    assert outcome.deploy_event is not None
+    from core.deployment.auto_deploy import read_pointer
+
+    assert read_pointer(pointer["config"], AGENT) == CANDIDATE
+    # 判定与快照先在（留痕先于部署）
     snapshots = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in (deployment_data_dir / "evidence" / AGENT).glob(f"{CANDIDATE}.*.json")
