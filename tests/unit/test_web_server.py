@@ -8,9 +8,6 @@ JSON 响应形态与错误映射（404/400/405/503）。
 比直接调处理函数更接近部署形态。
 """
 
-import http.client
-import json
-import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,54 +18,10 @@ from web import server as web_server
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class _LiveServer:
-    """把服务起在临时端口上，返回 (host, port) 与关闭句柄。"""
-
-    def __init__(self, config, static_root):
-        self.httpd = web_server.create_server(config, static_root=static_root)
-        self.host, self.port = self.httpd.server_address[0], self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
-        self.thread.start()
-
-    def request(self, method: str, path: str, *, headers=None, body=None):
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
-        try:
-            conn.request(method, path, body=body, headers=headers or {})
-            response = conn.getresponse()
-            payload = response.read()
-            return response.status, dict(response.getheaders()), payload
-        finally:
-            conn.close()
-
-    def json(self, method: str, path: str, **kwargs):
-        status, headers, payload = self.request(method, path, **kwargs)
-        parsed = json.loads(payload.decode("utf-8")) if payload else None
-        return status, headers, parsed
-
-    def close(self):
-        self.httpd.shutdown()
-        self.httpd.server_close()
-        self.thread.join(timeout=5)
-
-
 @pytest.fixture()
-def static_root(tmp_path):
-    """静态资产根（测试用临时目录）：两页面 + 脚本 + 样式 + 一个越界诱饵文件。"""
-    root = tmp_path / "static"
-    root.mkdir()
-    (root / "index.html").write_text("<!doctype html><title>树浏览器</title>", encoding="utf-8")
-    (root / "board.html").write_text("<!doctype html><title>进化看板</title>", encoding="utf-8")
-    (root / "app.js").write_text("// 夹具脚本\n", encoding="utf-8")
-    (root / "style.css").write_text("body { margin: 0 }\n", encoding="utf-8")
-    (tmp_path / "secret.txt").write_text("不应被服务", encoding="utf-8")
-    return root
-
-
-@pytest.fixture()
-def live_server(web_config, static_root):
-    server = _LiveServer(web_config, static_root)
-    yield server
-    server.close()
+def live_server(web_live_server):
+    """默认配置的活服务（端口 0）。"""
+    return web_live_server()
 
 
 class Test路由表:
@@ -121,9 +74,7 @@ class Test只读数据接口:
         assert detail["eval_breakdown"][0]["evaluator_key"].endswith("@1.0.0")
 
     def test_谱系与曲线与摘要(self, live_server, web_fixture_trees, web_fixture_rounds):
-        status, _headers, lineage = live_server.json(
-            "GET", "/api/lineage/version-does-not-exist"
-        )
+        status, _headers, lineage = live_server.json("GET", "/api/lineage/version-does-not-exist")
         assert status == 404
         status, _headers, evolution = live_server.json("GET", "/api/evolution/visual")
         assert status == 200
@@ -199,38 +150,29 @@ class TestToken校验:
         ],
     )
     def test_配置_token_后缺token或错token_401(
-        self, web_config, static_root, web_fixture_trees, path, headers
+        self, web_config, web_fixture_trees, path, headers, web_live_server
     ):
-        server = _LiveServer(replace(web_config, token="s3cret"), static_root)
-        try:
+        server = web_live_server(replace(web_config, token="s3cret"))
+        status, _headers, payload = server.json("GET", path, headers=headers)
+        assert status == 401
+        assert payload["error"] == "unauthorized"
+
+    def test_配置_token_后带token_200(self, web_config, web_fixture_trees, web_live_server):
+        server = web_live_server(replace(web_config, token="s3cret"))
+        for path, headers in (
+            ("/api/health?token=s3cret", {}),
+            ("/api/health", {"Authorization": "Bearer s3cret"}),
+        ):
             status, _headers, payload = server.json("GET", path, headers=headers)
-            assert status == 401
-            assert payload["error"] == "unauthorized"
-        finally:
-            server.close()
-
-    def test_配置_token_后带token_200(self, web_config, static_root, web_fixture_trees):
-        server = _LiveServer(replace(web_config, token="s3cret"), static_root)
-        try:
-            for path, headers in (
-                ("/api/health?token=s3cret", {}),
-                ("/api/health", {"Authorization": "Bearer s3cret"}),
-            ):
-                status, _headers, payload = server.json("GET", path, headers=headers)
-                assert status == 200
-                assert payload["db"] == "up"
-        finally:
-            server.close()
-
-    def test_静态资产不受_token_约束(self, web_config, static_root):
-        """静态资产只含页面代码（无权威数据）：数据面全部在 /api/* 之后。"""
-        server = _LiveServer(replace(web_config, token="s3cret"), static_root)
-        try:
-            status, _headers, payload = server.request("GET", "/static/app.js")
             assert status == 200
-            assert payload.decode("utf-8") == "// 夹具脚本\n"
-        finally:
-            server.close()
+            assert payload["db"] == "up"
+
+    def test_静态资产不受_token_约束(self, web_config, web_live_server):
+        """静态资产只含页面代码（无权威数据）：数据面全部在 /api/* 之后。"""
+        server = web_live_server(replace(web_config, token="s3cret"))
+        status, _headers, payload = server.request("GET", "/static/app.js")
+        assert status == 200
+        assert payload.decode("utf-8") == "// 夹具脚本\n"
 
 
 class Test静态资产服务与路径穿越:
@@ -277,55 +219,49 @@ class Test静态资产服务与路径穿越:
 
 class TestDB不可用韧性:
     def test_服务照常启动_树接口_503_文件面板可用(
-        self, web_config, static_root, web_data_dir, monkeypatch
+        self, web_config, web_data_dir, monkeypatch, web_live_server
     ):
         broken = replace(web_config, dsn_env="CINEFLOW_WEB_BROKEN_DSN")
         monkeypatch.setenv(
             "CINEFLOW_WEB_BROKEN_DSN",
             "postgresql+psycopg://cineflow:cineflow@127.0.0.1:1/none",
         )
-        server = _LiveServer(broken, static_root)
-        try:
-            status, _headers, payload = server.json("GET", "/api/trees")
-            assert status == 503
-            assert payload["error"] == "database_unavailable"
-            assert payload["detail"]
+        server = web_live_server(broken)
+        status, _headers, payload = server.json("GET", "/api/trees")
+        assert status == 503
+        assert payload["error"] == "database_unavailable"
+        assert payload["detail"]
 
-            status, _headers, health = server.json("GET", "/api/health")
-            assert status == 200
-            assert health["db"] == "down"
-            assert health["files"] == "ok"
+        status, _headers, health = server.json("GET", "/api/health")
+        assert status == 200
+        assert health["db"] == "down"
+        assert health["files"] == "ok"
 
-            status, _headers, evolution = server.json("GET", "/api/evolution/visual")
-            assert status == 200
-            assert evolution["rounds"] == []
+        status, _headers, evolution = server.json("GET", "/api/evolution/visual")
+        assert status == 200
+        assert evolution["rounds"] == []
 
-            status, _headers, summary = server.json("GET", "/api/summary")
-            assert status == 200
-            assert summary["calibration"]["agents"] == []
+        status, _headers, summary = server.json("GET", "/api/summary")
+        assert status == 200
+        assert summary["calibration"]["agents"] == []
 
-            status, _headers, _payload = server.request("GET", "/static/app.js")
-            assert status == 200
-        finally:
-            server.close()
+        status, _headers, _payload = server.request("GET", "/static/app.js")
+        assert status == 200
 
-    def test_DSN_未配置_树接口_503(self, web_config, static_root, monkeypatch, web_data_dir):
+    def test_DSN_未配置_树接口_503(self, web_config, monkeypatch, web_data_dir, web_live_server):
         monkeypatch.delenv(web_config.dsn_env, raising=False)
-        server = _LiveServer(web_config, static_root)
-        try:
-            status, _headers, payload = server.json("GET", "/api/trees")
-            assert status == 503
-            assert web_config.dsn_env in payload["detail"]
-        finally:
-            server.close()
+        server = web_live_server()
+        status, _headers, payload = server.json("GET", "/api/trees")
+        assert status == 503
+        assert web_config.dsn_env in payload["detail"]
 
 
 class Test绑定与配置:
     def test_默认_bind_回环地址(self, web_config):
         assert web_config.host == "127.0.0.1"
 
-    def test_端口取配置值(self, web_config, static_root):
-        httpd = web_server.create_server(replace(web_config, port=0), static_root=static_root)
+    def test_端口取配置值(self, web_config, web_static_root):
+        httpd = web_server.create_server(replace(web_config, port=0), static_root=web_static_root)
         try:
             assert httpd.server_address[0] == "127.0.0.1"
             assert httpd.server_address[1] > 0

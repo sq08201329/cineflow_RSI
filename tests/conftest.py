@@ -7,7 +7,9 @@
 桩评估器不在此定义（唯一定义来源为 T025 的 tests/stubs.py）。
 """
 
+import http.client
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -2204,6 +2206,70 @@ def web_config(monkeypatch, tmp_path, web_data_dir, web_tree_dsn):
 def web_source_files():
     """web/ 下全部 Python 源文件（静态断言输入）。"""
     return sorted((REPO_ROOT / "web").rglob("*.py"))
+
+
+@pytest.fixture()
+def web_static_root(tmp_path):
+    """静态资产根夹具：两页面 + 脚本 + 样式 + 越界诱饵（静态资产/路径穿越用例）。"""
+    root = tmp_path / "static"
+    root.mkdir()
+    (root / "index.html").write_text("<!doctype html><title>树浏览器</title>", encoding="utf-8")
+    (root / "board.html").write_text("<!doctype html><title>进化看板</title>", encoding="utf-8")
+    (root / "app.js").write_text("// 夹具脚本\n", encoding="utf-8")
+    (root / "style.css").write_text("body { margin: 0 }\n", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("不应被服务", encoding="utf-8")
+    return root
+
+
+class _LiveServer:
+    """真实 socket 上的只读服务（端口 0 = 临时端口）：比直调处理函数更接近部署形态。"""
+
+    def __init__(self, config, static_root):
+        from web import server as web_server
+
+        self.httpd = web_server.create_server(config, static_root=static_root)
+        self.host = self.httpd.server_address[0]
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def request(self, method: str, path: str, *, headers=None, body=None):
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
+        try:
+            conn.request(method, path, body=body, headers=headers or {})
+            response = conn.getresponse()
+            payload = response.read()
+            return response.status, dict(response.getheaders()), payload
+        finally:
+            conn.close()
+
+    def json(self, method: str, path: str, **kwargs):
+        status, headers, payload = self.request(method, path, **kwargs)
+        parsed = json.loads(payload.decode("utf-8")) if payload else None
+        return status, headers, parsed
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=5)
+
+
+@pytest.fixture()
+def web_live_server(web_config, web_static_root):
+    """活服务工厂：`start(config=None)` 起在临时端口；测试结束统一 shutdown。"""
+    servers: list[_LiveServer] = []
+
+    def _start(config=None, static_root=None):
+        server = _LiveServer(
+            web_config if config is None else config,
+            web_static_root if static_root is None else static_root,
+        )
+        servers.append(server)
+        return server
+
+    yield _start
+    for server in servers:
+        server.close()
 
 
 @pytest.fixture()
