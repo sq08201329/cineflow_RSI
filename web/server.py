@@ -61,6 +61,7 @@ ROUTES: tuple[Route, ...] = (
     Route("GET", r"^/static/(?P<rel>.+)$", "static_asset"),
     Route("GET", r"^/api/health$", "api_health"),
     Route("GET", r"^/api/summary$", "api_summary"),
+    Route("GET", r"^/api/facets$", "api_facets"),
     Route("GET", r"^/api/trees$", "api_trees"),
     Route("GET", r"^/api/trees/(?P<tree_id>[^/]+)/nodes$", "api_tree_nodes"),
     Route("GET", r"^/api/nodes/(?P<node_id>[^/]+)$", "api_node_detail"),
@@ -246,6 +247,9 @@ class WebRequestHandler(BaseHTTPRequestHandler):
 
     def api_summary(self, *, query: dict) -> None:
         self._send_json(200, queries.get_summary(self.config))
+
+    def api_facets(self, *, query: dict) -> None:
+        self._send_json(200, queries.list_facets(self.config))
 
     def api_trees(self, *, query: dict) -> None:
         payload = queries.list_trees(

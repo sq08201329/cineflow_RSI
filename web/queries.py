@@ -70,6 +70,11 @@ _TREES_ALL_SQL = (
     " ORDER BY t.tree_id ASC"
 )
 
+_FACETS_SQL = (
+    "SELECT t.project_id, t.agent_id, t.policy_version, t.config_snapshot"
+    " FROM discovery_trees AS t ORDER BY t.tree_id ASC"
+)
+
 _NODE_SELECT_SQL = """
 SELECT n.node_id, n.parent_id, n.depth, n.score, n.cost, n.status, n.created_at
   FROM tree_nodes AS n
@@ -343,6 +348,38 @@ def _page_bounds(config: WebConfig, page: Any, page_size: Any) -> tuple[int, int
             raise WebQueryError(f"page_size 必须为 ≥ 1 的整数，实际为 {page_size!r}")
         effective = min(page_size, config.page_size)
     return page, effective, effective, (page - 1) * effective
+
+
+# ---------------------------------------------------------------------------
+# 过滤选项（facets）
+# ---------------------------------------------------------------------------
+
+
+def list_facets(config: WebConfig) -> dict:
+    """过滤控件选项：项目/Agent/策略版本/形态（去重升序，取自树库——权威来源）。
+
+    形态取自 `config_snapshot["form"]`（011 树自报形态）：未标注的树不进选项
+    （页面需要"未标注"选项时可另加常量，此处不臆造形态名）。
+    """
+    projects: set[str] = set()
+    agents: set[str] = set()
+    versions: set[str] = set()
+    forms: set[str] = set()
+    for row in _fetch(config, _FACETS_SQL):
+        projects.add(row["project_id"])
+        agents.add(row["agent_id"])
+        versions.add(row["policy_version"])
+        snapshot = _json_column(
+            row["config_snapshot"], default={}, source="discovery_trees.config_snapshot"
+        )
+        if isinstance(snapshot, dict) and isinstance(snapshot.get("form"), str):
+            forms.add(snapshot["form"])
+    return {
+        "projects": sorted(projects),
+        "agents": sorted(agents),
+        "policy_versions": sorted(versions),
+        "forms": sorted(forms),
+    }
 
 
 # ---------------------------------------------------------------------------
