@@ -58,14 +58,14 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T1113 [P] [US2] tests/unit/test_drift_status.py（C3：suspect 登记含 trigger_metrics、人工确认 → confirmed_drift、误报 → false_alarm → 恢复 normal、系统写终态拒绝（机检）、留痕只增不改）
-- [ ] T1114 [P] [US2] tests/unit/test_drift_gate.py（C4/C5：normal 权重不变、suspect ×suspect_weight、confirmed_drift 归零、三态合成结果差异断言、deploy_evidence_verdict 对 suspect/confirmed_drift 拒绝 + 理由、normal/false_alarm 允许）
+- [x] T1113 [P] [US2] tests/unit/test_drift_status.py（C3：suspect 登记含 trigger_metrics、人工确认 → confirmed_drift、误报 → false_alarm → 恢复 normal、系统写终态拒绝（机检）、留痕只增不改）
+- [x] T1114 [P] [US2] tests/unit/test_drift_gate.py（C4/C5：normal 权重不变、suspect ×suspect_weight、confirmed_drift 归零、三态合成结果差异断言、deploy_evidence_verdict 对 suspect/confirmed_drift 拒绝 + 理由、normal/false_alarm 允许）
 
 ### 用户故事 2 的实现
 
-- [ ] T1115 [US2] 实现 core/calibration/drift_status.py（register_suspect/dispose/registry 文件化只增不改；依赖 T1104）
-- [ ] T1116 [US2] 实现 core/calibration/drift_gate.py（gate_weights + deploy_evidence_verdict；权重变化自然升版的说明入 docstring）
-- [ ] T1117 [US2] 各 Agent loop 接线（visual/editing/storyboard/screenplay 四处：合成前调 gate_weights 一行；各包回归全绿；**promo 与 sound 无 judge 层，不接**）
+- [x] T1115 [US2] 实现 core/calibration/drift_status.py（register_suspect/dispose/registry 文件化只增不改；依赖 T1104）
+- [x] T1116 [US2] 实现 core/calibration/drift_gate.py（gate_weights + deploy_evidence_verdict；权重变化自然升版的说明入 docstring）
+- [x] T1117 [US2] 各 Agent loop 接线（visual/editing/storyboard/screenplay 四处：合成前调 gate_weights 一行；各包回归全绿；**promo 与 sound 无 judge 层，不接**）
 
 **检查点**: 状态机 + 门禁 + 证据接口成立；五处接线回归不破
 
@@ -79,12 +79,12 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T1118 [P] [US3] tests/unit/test_drift_report.py（C6/C7：items 齐全（指标序列/基线/阈值/状态/处置记录）、已处置项如实呈现、无数据标注"无数据"、双信号强化（漂移 ∧ 信度低于 target）与单信号常规两路径、**F6 ScoreConflict 附注口径：读取 F6 持久化来源（最近一次池化回放的命中分布文件，若有）；F6 侧未持久化时附注字段为空并注明"无持久化来源"，不得伪造冲突数据**——附注不参与阈值判定）
+- [x] T1118 [P] [US3] tests/unit/test_drift_report.py（C6/C7：items 齐全（指标序列/基线/阈值/状态/处置记录）、已处置项如实呈现、无数据标注"无数据"、双信号强化（漂移 ∧ 信度低于 target）与单信号常规两路径、**F6 ScoreConflict 附注口径：读取 F6 持久化来源（最近一次池化回放的命中分布文件，若有）；F6 侧未持久化时附注字段为空并注明"无持久化来源"，不得伪造冲突数据**——附注不参与阈值判定）
 
 ### 用户故事 3 的实现
 
-- [ ] T1119 [US3] 实现 core/calibration/drift_report.py（build_report → calibration/drift/reports/{period}.json；读检测记录 + 010 信度报告；**ScoreConflict 附注读取 F6 持久化来源，无持久化则字段为空并注明"无持久化来源"**；依赖 T1110、T1115）
-- [ ] T1120 [US3] ops/calibrate.py 新增 drift 子命令（检测 + 报表 + dispose 处置入口；节奏：close → drift → report；依赖 T1110、T1119）
+- [x] T1119 [US3] 实现 core/calibration/drift_report.py（build_report → calibration/drift/reports/{period}.json；读检测记录 + 010 信度报告；**ScoreConflict 附注读取 F6 持久化来源，无持久化则字段为空并注明"无持久化来源"**；依赖 T1110、T1115）
+- [x] T1120 [US3] ops/calibrate.py 新增 drift 子命令（检测 + 报表 + dispose 处置入口；节奏：close → drift → report；依赖 T1110、T1119）
 
 **检查点**: 报表与联动成立；CLI 可走通检测→报表→处置
 
@@ -92,10 +92,10 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T1121 契约测试聚合 tests/contract/test_drift_contracts.py（C1~C8 全场景端到端断言，含 SC-002 系统只写 suspect 机检、SC-003 证据接口拒绝 100%、SC-005 只读审计）
-- [ ] T1122 [P] 端到端演示 ops/demo_judge_drift.py（quickstart 六步；断言退出码 0、检出/不误报/分级处置/证据拒绝/双信号）
-- [ ] T1123 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
-- [ ] T1124 [P] 更新 README.md（漂移监控用法与处置流程说明）与 docs/二期立项书.md 里程碑表（F7 已交付注明）
+- [x] T1121 契约测试聚合 tests/contract/test_drift_contracts.py（C1~C8 全场景端到端断言，含 SC-002 系统只写 suspect 机检、SC-003 证据接口拒绝 100%、SC-005 只读审计）
+- [x] T1122 [P] 端到端演示 ops/demo_judge_drift.py（quickstart 六步；断言退出码 0、检出/不误报/分级处置/证据拒绝/双信号）
+- [x] T1123 运行 quickstart.md 全部验证步骤并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
+- [x] T1124 [P] 更新 README.md（漂移监控用法与处置流程说明）与 docs/二期立项书.md 里程碑表（F7 已交付注明）
 
 ---
 

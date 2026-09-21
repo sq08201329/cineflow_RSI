@@ -439,6 +439,73 @@ uv run python ops/demo_merged_pool.py
 `dreaming.pipeline` 零改动）；默认关闭或前置不足 → 单项目池并注明"未启用：…"；
 开关状态与前置判定 100% 入构建快照。
 
+## judge 漂移监控（功能 012）
+
+按 `(agent, evaluator_id@version)` 读 010 已积累的**锚点得分分布快照序列**，对比
+**滑动窗口基线**（最近 `window` 周期、不含当前周期）给出**两维指标**——分布距离 PSI（主）
++ 分位数位移 p25/p50/p75/p90（辅）——任一超阈即判漂移；**只读** 010 产物、零生成/零 LLM。
+产物文件化于 `calibration/drift/{metrics,status,dispositions,reports}/`（只增不改 + git 版本化）。
+
+```bash
+# 单元测试（模型/配置/统计原语/检测/口径版本/状态机/门禁/报表/接线）
+uv run pytest tests/unit -k "drift"
+
+# 契约聚合（C1~C8 全场景 + SC-002 系统只写 suspect / SC-003 证据拒绝 100% / SC-005 只读）
+uv run pytest tests/contract -k drift
+
+# 一轮检测 + 报表（CLI；数据目录默认 calibration/，无 010 快照时产出空报表）
+uv run python ops/calibrate.py drift --period 2026-W39
+
+# 端到端演示（quickstart 六步，退出码 0，报告 JSON 落 stdout）
+uv run python ops/demo_judge_drift.py
+```
+
+配置（`configs/movie.yaml` 的 `calibration.drift` 段，全配置化，缺项即报错）：
+
+| 配置项 | 默认 | 含义 |
+| --- | --- | --- |
+| `window` | 5 | 滑动窗口基线周期数（不含当前周期；升版点切分基线） |
+| `buckets` | 10 | 分桶数（须与 010 快照分桶数一致，不一致即报错） |
+| `psi_threshold` | 0.2 | 分布距离超阈线（> 即判漂移；0.1~0.2 为关注带） |
+| `quantile_threshold` | 0.1 | 分位数最大位移超阈线 |
+| `min_samples` | 3 | 样本下限：当前周期或基线窗口不足即"样本不足"（不硬判） |
+| `suspect_weight` | 0.5 | `suspect` 的 judge 权重系数（分级处置降权） |
+| `confirmed_exclude` | true | `confirmed_drift` 是否排除出合成（权重归零） |
+| `scope_kinds` | `["judge"]` | 检测范围（evaluator_id 前缀）；proxy/rule 需显式纳入 |
+| `double_signal` | 见配置 | 双信号规则：漂移 ∧ 010 信度低于 target → 强化告警（级别升级） |
+
+**判定与版本**：`detector_version = drift_detector@1.0.0+{算法+阈值哈希}` 进每条检测记录；
+同一口径同输入 → 记录逐字节一致（重复检测幂等）；口径升级 → 新版本且**历史判定不回溯**；
+评估器升版 → 新版本**独立记基线**（版本边界取自 010 台账），旧版本数据不混入。
+
+**分级处置（原则六：系统只说不确定，处置权在人）**：
+
+| 状态 | 谁写 | 合成门禁 | 部署证据接口（F9 前置） |
+| --- | --- | --- | --- |
+| `normal` | 默认/人工恢复 | 权重不变 | 允许 |
+| `suspect` | **仅系统**（超阈自动登记） | judge 权重 ×0.5 | **拒绝**（含触发指标引用） |
+| `confirmed_drift` | 仅人工处置 | judge 权重归零（排除） | **拒绝**（含处置留痕引用） |
+| `false_alarm` | 仅人工处置 | 恢复原权重 | 允许 |
+
+处置流程（人工留痕不可改写）：`register_suspect`（系统，超阈）→ `dispose`（人工两键）：
+确认漂移 → `confirmed_drift`（动作 `deactivate` 停用 / `reanchor` 换锚点升版，新版本新基线）；
+判为误报 → `false_alarm` → 恢复 `normal`（动作 `restore`）。命令行：
+
+```bash
+# 处置入口（缺 --by/--reason 即拒绝；处置后自动重建报表）
+uv run python ops/calibrate.py drift --period 2026-W39 \
+  --dispose judge.cinematic@1.0.0 --conclusion false_alarm --action restore \
+  --by 校准负责人 --reason "样本骤降导致分布抖动，非真实漂移"
+```
+
+**接线**：visual / editing / storyboard / screenplay 四处 loop 在**合成前**调用
+`apply_gate(weights, drift_gate)`（各一行，未接线时权重原样）；权重变化 →
+composite 版本哈希变化 → 自然升版，历史节点不受影响。promo 与 sound 无 judge 层，不接线。
+
+**诚实边界**：漂移只判分布变化、**不判原因**（需结合人评锚点，010 信度即该锚点量化）；
+样本不足/首周期/缺口周期/无数据一律如实标注不硬判；F6 的 ScoreConflict 只作报表附注
+（无持久化来源即注明"无持久化来源"），**不参与阈值判定**。
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
