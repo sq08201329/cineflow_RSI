@@ -397,6 +397,7 @@
       pageSize: DEFAULT_PAGE_SIZE,
       selectedTree: null,
       selectedNode: null,
+      requestSeq: 0, // 过期响应守卫：只有最新一次请求的结果可以渲染
     },
 
     async init() {
@@ -479,9 +480,22 @@
       }
     },
 
+    nextSeq() {
+      this.state.requestSeq += 1;
+      return this.state.requestSeq;
+    },
+
+    isStale(seq) {
+      return seq !== this.state.requestSeq;
+    },
+
     async refreshTrees() {
       clearError();
+      const seq = this.nextSeq();
       const page = await fetchTrees(this.state.filters, this.state.treePage, this.state.pageSize);
+      if (this.isStale(seq)) {
+        return; // 已有更新的请求：丢弃过期结果（不覆盖新选择）
+      }
       fillTable(
         $("tree-table-body"),
         page.items,
@@ -525,12 +539,17 @@
         return;
       }
       clearError();
+      const treeId = this.state.selectedTree.tree_id;
+      const seq = this.nextSeq();
       const page = await fetchNodes(
-        this.state.selectedTree.tree_id,
+        treeId,
         this.state.filters,
         this.state.nodePage,
         this.state.pageSize,
       );
+      if (this.isStale(seq)) {
+        return; // 切换树/分页后的慢响应：丢弃（不覆盖新选择）
+      }
       fillTable(
         $("node-table-body"),
         page.items,
@@ -653,7 +672,7 @@
    * ------------------------------------------------------------------ */
 
   const evolutionBoard = {
-    state: { agentId: "", evolution: null, costs: null, summary: null },
+    state: { agentId: "", evolution: null, costs: null, summary: null, requestSeq: 0 },
 
     async init() {
       const [costs, summary] = await Promise.all([fetchCosts(), fetchSummary()]);
@@ -718,7 +737,13 @@
         return;
       }
       this.state.agentId = agentId;
-      this.state.evolution = await fetchEvolution(agentId);
+      this.state.requestSeq += 1;
+      const seq = this.state.requestSeq;
+      const evolution = await fetchEvolution(agentId);
+      if (seq !== this.state.requestSeq) {
+        return; // 已有更新的分线请求：丢弃过期结果（避免慢响应覆盖新选择）
+      }
+      this.state.evolution = evolution;
       this.renderReward(agentId);
       this.renderCosts();
       this.renderAgentNote(agentId);

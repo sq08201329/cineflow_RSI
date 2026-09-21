@@ -19,7 +19,7 @@
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [x] T1303 迁移测试 tests/unit/test_migration_0009.py（先写：只读角色 cineflow_web 创建语句、GRANT SELECT / REVOKE 写 / DEFAULT PRIVILEGES 只 SELECT、角色口令经环境变量不落盘；注明 PG-only——SQLite 无角色语义，单测做 SQL 文本与迁移纪律断言，权限行为断言在 T1313 真实 PG）
+- [x] T1303 迁移测试 tests/unit/test_migration_0009.py（先写：只读角色 cineflow_web 创建语句、GRANT SELECT / REVOKE 写 / DEFAULT PRIVILEGES 只 SELECT、角色口令经环境变量不落盘；注明 PG-only——SQLite 无角色语义，单测做 SQL 文本与迁移纪律断言，权限行为断言在 **T1311** 真实 PG）
 - [x] T1304 实现迁移 ops/migrations/versions/0009_web_readonly_role.py（down_revision=0008）
 - [x] T1305 [P] 查询层测试 tests/unit/test_web_queries.py（先写：六类查询（树清单/节点列表/节点详情/谱系/曲线/摘要）的字段 schema 与空态；**零 import core/agents/dreaming 的静态断言**）
 - [x] T1306 [P] 实现 web/queries.py（只读 SQL + 文件读取；惰性 DB 连接；字段语义与 001 落库口径一致）
@@ -58,13 +58,13 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T1313 [P] [US2] 浏览查询测试 tests/unit/test_web_tree_browser.py（C4/C5：三维过滤各自生效、分页边界无重复无遗漏、节点详情含 eval_breakdown 版本标注与工件哈希、谱系跨项目归属、空态 items=[]、不存在版本 404）
-- [ ] T1314 [P] [US2] 页面冒烟测试 tests/unit/test_web_pages.py（C6：index.html/board.html 可服务、JS 的 fetch 路径全部在路由表内（静态断言）、控件标记存在、无外部库引用）
+- [x] T1313 [P] [US2] 浏览查询测试 tests/unit/test_web_tree_browser.py（C4/C5：三维过滤各自生效、分页边界无重复无遗漏、节点详情含 eval_breakdown 版本标注与工件哈希、谱系跨项目归属、空态 items=[]、不存在版本 404）
+- [x] T1314 [P] [US2] 页面冒烟测试 tests/unit/test_web_pages.py（C6：index.html/board.html 可服务、JS 的 fetch 路径全部在路由表内（静态断言）、控件标记存在、无外部库引用）
 
 ### 用户故事 2 的实现
 
-- [ ] T1315 [US2] 实现 web/static/index.html + web/static/app.js（树浏览器页面：三维过滤控件 + 节点表 + 详情面板 + 谱系视图；vanilla JS fetch /api/*）
-- [ ] T1316 [US2] 查询层树浏览/谱系接口完善（依赖 T1306、T1313 测试驱动）
+- [x] T1315 [US2] 实现 web/static/index.html + web/static/app.js（树浏览器页面：三维过滤控件 + 节点表 + 详情面板 + 谱系视图；vanilla JS fetch /api/*）
+- [x] T1316 [US2] 查询层树浏览/谱系接口完善（依赖 T1306、T1313 测试驱动）
 
 **检查点**: 树浏览器两视图（清单/详情/谱系）可用且冒烟通过
 
@@ -78,13 +78,13 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T1317 [P] [US3] 看板查询测试 tests/unit/test_web_board.py（C7：reward 序列与 dreaming/history 逐字段一致、塌缩标注、成本汇总与 CostRecord 聚合对账一致、信度/漂移徽标状态与缺失空态）
-- [ ] T1318 [P] [US3] 导出测试 tests/unit/test_web_export.py（C8：导出目录含静态资产 + data/*.json、导出 JSON 与 API 响应逐字段一致、断服务后导出目录两视图可浏览）
+- [x] T1317 [P] [US3] 看板查询测试 tests/unit/test_web_board.py（C7：reward 序列与 dreaming/history 逐字段一致、塌缩标注、成本汇总与 CostRecord 聚合对账一致、信度/漂移徽标状态与缺失空态）
+- [x] T1318 [P] [US3] 导出测试 tests/unit/test_web_export.py（C8：导出目录含静态资产 + data/*.json、导出 JSON 与 API 响应逐字段一致、断服务后导出目录两视图可浏览）
 
 ### 用户故事 3 的实现
 
-- [ ] T1319 [US3] 实现 web/static/board.html + app.js 扩展（进化看板：曲线/塌缩/成本/摘要面板；图表手绘 SVG——无外部库引用静态断言）
-- [ ] T1320 [US3] 实现 web/export.py（同一查询层预生成 JSON + 资产拷贝 → web/dist/）
+- [x] T1319 [US3] 实现 web/static/board.html + app.js 扩展（进化看板：曲线/塌缩/成本/摘要面板；图表手绘 SVG——无外部库引用静态断言）
+- [x] T1320 [US3] 实现 web/export.py（同一查询层预生成 JSON + 资产拷贝 → web/dist/）
 
 **检查点**: 看板可用 + 导出离线可浏览——里程碑验收线成立
 
@@ -92,9 +92,9 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T1321 端到端演示 ops/demo_web.py（quickstart 六步：起服务 + 三重机检结果输出 + 两视图冒烟 + 同源抽样输出 + 写拒绝演示 + 静态导出；断言退出码 0）
-- [ ] T1322 运行 quickstart.md 全部验证步骤并记录（验证记录回填；**pyproject coverage source 加 web** 后复核 ≥85%；命令与 ci.yml 逐字一致）
-- [ ] T1323 [P] 更新 README.md（看板用法：起服务/导出/访问控制）与 docs/二期立项书.md 里程碑表（F8 已交付注明）
+- [x] T1321 端到端演示 ops/demo_web.py（quickstart 六步：起服务 + 三重机检结果输出 + 两视图冒烟 + 同源抽样输出 + 写拒绝演示 + 静态导出；断言退出码 0）
+- [x] T1322 运行 quickstart.md 全部验证步骤并记录（验证记录回填；**pyproject coverage source 加 web** 后复核 ≥85%；命令与 ci.yml 逐字一致）
+- [x] T1323 [P] 更新 README.md（看板用法：起服务/导出/访问控制）与 docs/二期立项书.md 里程碑表（F8 已交付注明）
 
 ---
 
