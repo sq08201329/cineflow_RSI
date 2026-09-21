@@ -95,7 +95,7 @@ _LEGAL_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
     StageStatus.RUNNING: frozenset({StageStatus.DONE, StageStatus.FAILED}),
     StageStatus.DONE: frozenset(),
     StageStatus.FAILED: frozenset({StageStatus.RUNNING}),
-    StageStatus.SKIPPED: frozenset({StageStatus.PENDING}),
+    StageStatus.SKIPPED: frozenset(),  # 重排队走 requeue（非状态迁移，语义单一路径）
 }
 
 
@@ -316,16 +316,6 @@ class StageState:
             "cost_usd": self.cost_usd if cost_usd is None else cost_usd,
             "detail": dict(self.detail if detail is None else detail),
         }
-        if status is StageStatus.PENDING:
-            # 续跑重排队：清跳过标记，调用计数与既有花费保留
-            fields.update(
-                products=(),
-                candidates=(),
-                started_at=None,
-                finished_at=None,
-                failure_reason="",
-            )
-            return replace(self, **fields)
         _require_non_empty("at", at)
         if status is StageStatus.RUNNING:
             fields.update(

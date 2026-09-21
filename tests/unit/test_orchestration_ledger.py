@@ -70,6 +70,14 @@ class Test对账一致:
         ledger = summarize_cost(_record(), {"a1": 1.0, "a2": 0.5, "a3": 0.25 + 1e-12})
         assert ledger.total_usd == pytest.approx(1.75 + 1e-12)
 
+    def test_样片包载荷标注对账结果(self):
+        from core.orchestration.ledger import ledger_payload
+
+        ledger = summarize_cost(_record(), {"a1": 1.0, "a2": 0.5, "a3": 0.25})
+        payload = ledger_payload(ledger)
+        assert payload["reconciled"] is True
+        assert payload["total_usd"] == ledger.to_dict()["total_usd"]
+
     def test_记录可序列化(self):
         ledger = summarize_cost(_record(), {"a1": 1.0, "a2": 0.5, "a3": 0.25})
         payload = json.loads(json.dumps(ledger.to_dict(), ensure_ascii=False, sort_keys=True))

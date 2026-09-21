@@ -14,7 +14,7 @@ import pytest
 from core.orchestration import executor as executor_module
 from core.orchestration.dag import build_dag
 from core.orchestration.errors import ResumeRejectedError, StageFailedError
-from core.orchestration.executor import ExecutionContext, run
+from core.orchestration.executor import ExecutionContext, resume, run
 from core.orchestration.models import (
     ProductRef,
     RunRecord,
@@ -253,6 +253,18 @@ class Test断点续跑:
             run(dag, other, resume_from=first, clock=_clock())
         assert "配置指纹" in str(excinfo.value)
 
+    def test_续跑入口与运行标识校验(self, stage_entrypoint_stub):
+        dag, stubs = _chain(stage_entrypoint_stub, 2, a1={"fail": "候选全败"})
+        first = run(dag, _ctx(), clock=_clock())
+        fixed_dag, fixed = _chain(stage_entrypoint_stub, 2)
+        resumed = resume(first, fixed_dag, _ctx(), clock=_clock())
+        assert resumed.status is RunStatus.DONE
+        assert fixed["a1"].calls == 1  # 失败阶段续跑
+        with pytest.raises(ResumeRejectedError) as excinfo:
+            run(dag, _ctx(run_id="run-2"), resume_from=first, clock=_clock())
+        assert "运行标识" in str(excinfo.value)
+        assert stub_calls(stubs) == 1  # 拒绝即零调用
+
     def test_阶段集合变化拒绝续跑(self, stage_entrypoint_stub):
         dag, _ = _chain(stage_entrypoint_stub, 3, a1={"fail": "候选全败"})
         first = run(dag, _ctx(), clock=_clock())
@@ -347,3 +359,11 @@ class Test运行时约束:
         dag, _ = _chain(stage_entrypoint_stub, 2)
         record = run(dag, _ctx(), clock=_clock())
         assert [state.cost_usd for state in record.stages] == [0.5, 0.5]
+
+    def test_默认时钟产出_iso_时间戳(self, stage_entrypoint_stub):
+        from datetime import datetime
+
+        dag, _ = _chain(stage_entrypoint_stub, 2)
+        record = run(dag, _ctx())
+        for stamp in (record.started_at, record.finished_at):
+            assert stamp and datetime.fromisoformat(stamp).tzinfo is not None

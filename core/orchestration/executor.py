@@ -134,8 +134,29 @@ def run(
     return record
 
 
+def resume(
+    record: RunRecord,
+    dag: Dag,
+    ctx: ExecutionContext,
+    *,
+    store: RunStore | None = None,
+    clock: Clock | None = None,
+) -> RunRecord:
+    """断点续跑入口（契约 C3）：等价于 `run(dag, ctx, resume_from=record)`。
+
+    运行标识取自 `ctx.run_id`（与运行记录不一致即拒绝）；输入/配置指纹校验与重排队
+    语义全部由 `run` 统一承担（单一实现，避免两条续跑路径）。
+    """
+    return run(dag, ctx, resume_from=record, store=store, clock=clock)
+
+
 def _resume_base(dag: Dag, ctx: ExecutionContext, previous: RunRecord) -> RunRecord:
-    """续跑前校验（拒绝时零副作用）：指纹一致 + 阶段集合一致；失败/跳过阶段重排队。"""
+    """续跑前校验（拒绝时零副作用）：标识/指纹一致 + 阶段集合一致；失败/跳过阶段重排队。"""
+    if ctx.run_id != previous.run_id:
+        raise ResumeRejectedError(
+            "运行标识不一致，拒绝续跑（续跑必须针对同一次运行）："
+            f"记录 {previous.run_id!r}，本次 {ctx.run_id!r}"
+        )
     if ctx.input_fingerprint != previous.input_fingerprint:
         raise ResumeRejectedError(
             "输入指纹不一致，拒绝续跑（素材已变，防止半新半旧产物）："

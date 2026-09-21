@@ -12,21 +12,21 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T1501 创建 core/orchestration/ 与 agents/pilot/ 包骨架、pilot/ 数据目录（runs/packages + .gitkeep）、configs/shortdrama.yaml 初版（form: shortdrama + 覆盖全部加载器所需段：evaluator_weights 各 Agent、各 Agent 段、replay/pooling/dreaming/calibration/drift/deployment/web；形态差异：权重与阈值、短剧节奏基准曲线（前段权重上调）、外环日级、预算与并行度下调、竖屏 1~3 分钟规格）
-- [ ] T1502 [P] conftest 夹具扩展：素材夹具（剧本/ShotList/片段/音轨/成片的最小可用产物）、形态配置夹具（movie 精简副本 + shortdrama）、pilot 临时目录、阶段执行入口桩；不改坏既有夹具
+- [x] T1501 创建 core/orchestration/ 与 agents/pilot/ 包骨架、pilot/ 数据目录（runs/packages + .gitkeep）、configs/shortdrama.yaml 初版（form: shortdrama + 覆盖全部加载器所需段：evaluator_weights 各 Agent、各 Agent 段、replay/pooling/dreaming/calibration/drift/deployment/web；形态差异：权重与阈值、短剧节奏基准曲线（前段权重上调）、外环日级、预算与并行度下调、竖屏 1~3 分钟规格）
+- [x] T1502 [P] conftest 夹具扩展：素材夹具（剧本/ShotList/片段/音轨/成片的最小可用产物）、形态配置夹具（movie 精简副本 + shortdrama）、pilot 临时目录、阶段执行入口桩；不改坏既有夹具
 
 ## 阶段 2：基础（core/orchestration 通用执行器）
 
 **⚠️ 关键**: 此阶段完成前，不能开始任何用户故事的工作
 
-- [ ] T1503 模型测试 tests/unit/test_orchestration_models.py（先写：StageSpec/StageState/RunRecord 字段与校验——状态枚举合法迁移、产物引用非空约束、指纹格式）
-- [ ] T1504 [P] 实现 core/orchestration/models.py
-- [ ] T1505 [P] DAG 测试 tests/unit/test_orchestration_dag.py（C1：拓扑序正确、环依赖拒绝、依赖不存在拒绝、stage_id 重复拒绝）
-- [ ] T1506 [P] 实现 core/orchestration/dag.py（轻量 DAG，零业务概念）
-- [ ] T1507 [P] 执行器测试 tests/unit/test_orchestration_executor.py（C2/C3：阶段状态机、失败后其后 skipped、**断点续跑不重跑已完成阶段（调用计数机检）**、输入指纹不一致拒绝续跑、完成后续跑幂等、**执行器代码零环节/形态字面量（静态断言）**）
-- [ ] T1508 [P] 实现 core/orchestration/executor.py（阶段执行 + 状态机 + 断点续跑 + 指纹校验）
-- [ ] T1509 [P] 账目测试 tests/unit/test_orchestration_ledger.py（C4：按 stage/形态汇总 == 各 Agent 成本之和；不一致即报错）
-- [ ] T1510 [P] 实现 core/orchestration/ledger.py
+- [x] T1503 模型测试 tests/unit/test_orchestration_models.py（先写：StageSpec/StageState/RunRecord 字段与校验——状态枚举合法迁移、产物引用非空约束、指纹格式）
+- [x] T1504 [P] 实现 core/orchestration/models.py
+- [x] T1505 [P] DAG 测试 tests/unit/test_orchestration_dag.py（C1：拓扑序正确、环依赖拒绝、依赖不存在拒绝、stage_id 重复拒绝）
+- [x] T1506 [P] 实现 core/orchestration/dag.py（轻量 DAG，零业务概念）
+- [x] T1507 [P] 执行器测试 tests/unit/test_orchestration_executor.py（C2/C3：阶段状态机、失败后其后 skipped、**断点续跑不重跑已完成阶段（调用计数机检）**、输入指纹不一致拒绝续跑、完成后续跑幂等、**执行器代码零环节/形态字面量（静态断言）**）
+- [x] T1508 [P] 实现 core/orchestration/executor.py（阶段执行 + 状态机 + 断点续跑 + 指纹校验）
+- [x] T1509 [P] 账目测试 tests/unit/test_orchestration_ledger.py（C4：按 stage/形态汇总 == 各 Agent 成本之和；不一致即报错）
+- [x] T1510 [P] 实现 core/orchestration/ledger.py
 
 **检查点**: 通用执行器四件套通过（含零业务概念静态断言）——用户故事可开始
 
@@ -40,12 +40,12 @@
 
 ### 用户故事 1 的测试（先写，确认失败后再实现）
 
-- [ ] T1511 [P] [US1] tests/unit/test_config_integrity.py（shortdrama.yaml 必须通过**全部**加载器：各 Agent `*Config.from_yaml` + replay/pooling/dreaming/calibration/drift/deployment/web 段解析；缺项即红——这是零代码切换的真实检验）
-- [ ] T1512 [P] [US1] tests/unit/test_form_switch.py（两套配置同链运行均成功、差异逐项可归因配置（权重/阈值/基准曲线/预算/规格）；**静态断言：core/ 与 agents/ 代码（除 agents/pilot 的配置读取）无 `shortdrama` 字面量分支或 `form ==` 判断**）
+- [x] T1511 [P] [US1] tests/unit/test_config_integrity.py（shortdrama.yaml 必须通过**全部**加载器：各 Agent `*Config.from_yaml` + replay/pooling/dreaming/calibration/drift/deployment/web 段解析；缺项即红——这是零代码切换的真实检验）
+- [x] T1512 [P] [US1] tests/unit/test_form_switch.py（两套配置同链运行均成功、差异逐项可归因配置（权重/阈值/基准曲线/预算/规格）；**静态断言：core/ 与 agents/ 代码（除 agents/pilot 的配置读取）无 `shortdrama` 字面量分支或 `form ==` 判断**）
 
 ### 用户故事 1 的实现
 
-- [ ] T1513 [US1] 依 T1511/T1512 驱动补齐 configs/shortdrama.yaml 至全部加载器通过（短剧节奏基准曲线含前段权重上调；外环日级；预算与并行度下调；竖屏规格）
+- [x] T1513 [US1] 依 T1511/T1512 驱动补齐 configs/shortdrama.yaml 至全部加载器通过（短剧节奏基准曲线含前段权重上调；外环日级；预算与并行度下调；竖屏规格）
 
 **检查点**: 短剧配置可加载 + 双形态零代码切换成立——MVP 成立
 

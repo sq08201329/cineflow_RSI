@@ -3066,12 +3066,25 @@ def pilot_dirs(tmp_path):
 def stage_entrypoint_stub():
     """阶段执行入口桩工厂：可编程产物/成本/候选/失败，并记录调用次数与入参。
 
-    返回工厂 `_make(stage_id, *, products=(), cost_usd=0.0, candidates=(), fail=None)`
-    → 桩可调用对象（`.calls` 为调用次数、`.inputs` 为历次阶段输入）。桩只依赖
+    返回工厂 `_make(stage_id, *, products=(), cost_usd=0.0, candidates=(), detail=None,
+    fail=None)` → 桩可调用对象（`.calls` 为调用次数、`.inputs` 为历次阶段输入）。
+    产物项可为 `ProductRef` 或字典；候选项可为 `CandidateOutcome`、字典
+    （`{candidate_id?, score, reasons}`）或字符串（判 0 理由）。桩只依赖
     `core/orchestration` 的模型（零业务概念），故可驱动任意阶段图。
     """
     from core.orchestration.errors import StageFailedError
     from core.orchestration.models import CandidateOutcome, ProductRef, StageOutcome
+
+    def _candidate(stage_id: str, index: int, item) -> CandidateOutcome:
+        if isinstance(item, CandidateOutcome):
+            return item
+        if isinstance(item, str):
+            return CandidateOutcome(candidate_id=f"{stage_id}-c{index}", score=0.0, reasons=(item,))
+        return CandidateOutcome(
+            candidate_id=item.get("candidate_id", f"{stage_id}-c{index}"),
+            score=item.get("score", 0.0),
+            reasons=tuple(item.get("reasons") or ()),
+        )
 
     def _make(
         stage_id: str,
@@ -3079,16 +3092,14 @@ def stage_entrypoint_stub():
         products=(),
         cost_usd: float = 0.0,
         candidates=(),
+        detail=None,
         fail: str | None = None,
     ):
         made = tuple(
             item if isinstance(item, ProductRef) else ProductRef(**item) for item in products
         ) or (ProductRef(kind="stub", ref=f"{stage_id}-ref", content_hash="0" * 64),)
         made_candidates = tuple(
-            item
-            if isinstance(item, CandidateOutcome)
-            else CandidateOutcome(candidate_id=f"{stage_id}-c{index}", score=0.0, reasons=(item,))
-            for index, item in enumerate(candidates)
+            _candidate(stage_id, index, item) for index, item in enumerate(candidates)
         )
 
         class _Stub:
@@ -3101,7 +3112,12 @@ def stage_entrypoint_stub():
                 self.inputs.append(stage_input)
                 if fail is not None:
                     raise StageFailedError(fail, candidates=made_candidates)
-                return StageOutcome(products=made, cost_usd=cost_usd, candidates=made_candidates)
+                return StageOutcome(
+                    products=made,
+                    cost_usd=cost_usd,
+                    candidates=made_candidates,
+                    detail=dict(detail or {}),
+                )
 
         stub = _Stub()
         stub.stage_id = stage_id
@@ -3118,6 +3134,21 @@ evaluator_weights:
   screenplay:
     rule.beat_structure: gate
     proxy.entity_consistency: 1.0
+  storyboard:
+    rule.shot_grammar: gate
+    proxy.emotion_alignment: 1.0
+  visual:
+    rule.format_compliance: gate
+    proxy.aesthetic: 1.0
+  sound:
+    rule.av_sync: gate
+    proxy.asr_transcript: 1.0
+  editing:
+    rule.duration_compliance: gate
+    proxy.pacing_curve: 1.0
+  promo:
+    rule.material_compliance: gate
+    proxy.ctr_history: 1.0
 replay:
   worker_count: 4
   latency_quantum_ms: 50
