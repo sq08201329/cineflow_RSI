@@ -2824,3 +2824,512 @@ def deployment_history_root(tmp_path):
         return root
 
     return _make
+
+
+# ---------------------------------------------------------------------------
+# 功能 015（短剧形态试水作品）夹具：素材最小可用产物（剧本/ShotList/片段/音轨/成片）、
+# 形态配置夹具（movie 精简副本 + shortdrama）、pilot 临时目录、阶段执行入口桩。
+# 全部为新增夹具，既有夹具行为不变；素材均为**合成内容**（不使用任何版权素材）。
+# ---------------------------------------------------------------------------
+
+PILOT_FORMS = ("movie", "shortdrama")
+
+
+@pytest.fixture()
+def pilot_material_script():
+    """剧本素材最小可用产物（ScriptArtifact：2 场景 / 2 角色 / 4 行，含 key 行）。"""
+    from agents.screenplay.artifact import ScriptArtifact
+
+    return ScriptArtifact.from_dict(
+        {
+            "schema_version": "1.0.0",
+            "stage": "script",
+            "text": "夹具短剧片段：夜班护士发现值班记录被改写。",
+            "beats": [
+                {"beat_id": "opening_image", "act": "act1", "required": True, "description": "开场"}
+            ],
+            "scenes": [
+                {
+                    "scene_id": "scene-1",
+                    "heading": "内景 - 护士站 - 夜",
+                    "location": "护士站",
+                    "time_marker": 0,
+                    "characters": ["林静", "陈默"],
+                    "axis_base": "A",
+                },
+                {
+                    "scene_id": "scene-2",
+                    "heading": "内景 - 走廊 - 夜",
+                    "location": "走廊",
+                    "time_marker": 1,
+                    "characters": ["林静"],
+                    "axis_base": "A",
+                },
+            ],
+            "characters": [
+                {"name": "林静", "aliases": ["阿静"]},
+                {"name": "陈默", "aliases": []},
+            ],
+            "lines": [
+                {
+                    "line_id": "s1-l1",
+                    "scene_id": "scene-1",
+                    "kind": "dialogue",
+                    "character": "林静",
+                    "text": "这一栏不是我填的。",
+                    "key": True,
+                    "emotion": "tense",
+                },
+                {
+                    "line_id": "s1-l2",
+                    "scene_id": "scene-1",
+                    "kind": "action",
+                    "character": "陈默",
+                    "text": "陈默把记录本翻回上一页。",
+                    "key": False,
+                    "emotion": "calm",
+                },
+                {
+                    "line_id": "s2-l1",
+                    "scene_id": "scene-2",
+                    "kind": "dialogue",
+                    "character": "林静",
+                    "text": "监控里那三分钟是空的。",
+                    "key": True,
+                    "emotion": "tense",
+                },
+                {
+                    "line_id": "s2-l2",
+                    "scene_id": "scene-2",
+                    "kind": "action",
+                    "character": "林静",
+                    "text": "林静把手机屏幕按灭。",
+                    "key": False,
+                    "emotion": "sorrow",
+                },
+            ],
+        }
+    )
+
+
+@pytest.fixture()
+def pilot_material_shotlist():
+    """ShotList 素材最小可用产物（2 镜，逐条承接 key 行，景别/机位/运动合法枚举）。"""
+    from agents.storyboard.shotlist import ShotList
+
+    return ShotList.from_dict(
+        {
+            "schema_version": "1.0.0",
+            "shots": [
+                {
+                    "shot_id": "shot-1",
+                    "scene_id": "scene-1",
+                    "covers": ["s1-l1"],
+                    "shot_size": "close_up",
+                    "camera": "eye_level",
+                    "side": "A",
+                    "movement": "static",
+                    "est_duration_ms": 1200,
+                    "alternatives": 2,
+                },
+                {
+                    "shot_id": "shot-2",
+                    "scene_id": "scene-2",
+                    "covers": ["s2-l1"],
+                    "shot_size": "medium",
+                    "camera": "low_angle",
+                    "side": "A",
+                    "movement": "dolly",
+                    "est_duration_ms": 1500,
+                    "alternatives": 2,
+                },
+            ],
+        }
+    )
+
+
+@pytest.fixture()
+def pilot_material_clip():
+    """片段素材最小可用产物：确定性编码的小规格 mp4 字节（64x64 / 4 帧 / 8fps）。"""
+    import numpy as np
+
+    from agents.editing.render import encode_mp4_deterministic
+
+    frames = np.zeros((4, 64, 64, 3), dtype=np.uint8)
+    frames[:, :, :32] = 90
+    frames[:, :, 32:] = 180
+    return encode_mp4_deterministic(frames, fps=8)
+
+
+@pytest.fixture()
+def pilot_material_track():
+    """音轨素材最小可用产物：(wav 字节, 声学属性元数据) —— 0.5s / 16kHz 单声道。"""
+    from agents.sound.audio import synthesize_wav
+
+    return synthesize_wav(
+        {"seed": 7, "duration_s": 0.5},
+        {"base_freq_hz": 220.0, "harmonics": 4, "duration_seconds": 0.5},
+        sample_rate=16000,
+    )
+
+
+@pytest.fixture()
+def pilot_material_reel(pilot_material_clip):
+    """成片素材最小可用产物：拼接片段帧后的确定性 mp4 字节（与片段同编码档）。"""
+    import numpy as np
+
+    from agents.editing.render import encode_mp4_deterministic
+
+    frames = np.concatenate(
+        [
+            np.full((4, 64, 64, 3), 90, dtype=np.uint8),
+            np.full((4, 64, 64, 3), 180, dtype=np.uint8),
+        ]
+    )
+    return encode_mp4_deterministic(frames, fps=8)
+
+
+@pytest.fixture()
+def pilot_materials(
+    tmp_path,
+    pilot_material_script,
+    pilot_material_shotlist,
+    pilot_material_clip,
+    pilot_material_track,
+    pilot_material_reel,
+):
+    """素材汇总夹具：五类最小可用产物 + 各自落盘路径（同一临时素材根目录下）。"""
+    root = tmp_path / "pilot-materials"
+    root.mkdir(parents=True, exist_ok=True)
+    wav_bytes, track_meta = pilot_material_track
+    paths = {
+        "script": root / "script.json",
+        "shotlist": root / "shotlist.json",
+        "clip": root / "clip.mp4",
+        "track": root / "track.wav",
+        "reel": root / "reel.mp4",
+    }
+    paths["script"].write_text(
+        json.dumps(pilot_material_script.to_dict(), ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    paths["shotlist"].write_text(
+        json.dumps(pilot_material_shotlist.to_dict(), ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    paths["clip"].write_bytes(pilot_material_clip)
+    paths["track"].write_bytes(wav_bytes)
+    paths["reel"].write_bytes(pilot_material_reel)
+    return {
+        "root": root,
+        "paths": paths,
+        "script": pilot_material_script,
+        "shotlist": pilot_material_shotlist,
+        "clip_bytes": pilot_material_clip,
+        "track_bytes": wav_bytes,
+        "track_meta": track_meta,
+        "reel_bytes": pilot_material_reel,
+    }
+
+
+@pytest.fixture()
+def pilot_form_config_path(tmp_path):
+    """形态配置夹具：`movie` 为精简副本（只含加载器必需段 + form），`shortdrama` 为真实配置。
+
+    返回工厂 `_path(form)` → Path。精简副本用于证明"同链双形态"不依赖仓库配置的具体取值；
+    短剧侧刻意用真实的 `configs/shortdrama.yaml`（配置完整性由 T1511 另行机检）。
+    """
+
+    def _path(form: str):
+        if form == "shortdrama":
+            return REPO_ROOT / "configs" / "shortdrama.yaml"
+        if form != "movie":
+            raise ValueError(f"未知形态：{form!r}")
+        target = tmp_path / f"configs/{form}.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_MINIMAL_MOVIE_CONFIG, encoding="utf-8")
+        return target
+
+    return _path
+
+
+@pytest.fixture()
+def pilot_dirs(tmp_path):
+    """pilot 临时目录夹具：runs/ 与 packages/（对应仓库 `pilot/` 数据目录结构）。"""
+    base = tmp_path / "pilot"
+    for sub in ("runs", "packages"):
+        (base / sub).mkdir(parents=True, exist_ok=True)
+    return base
+
+
+@pytest.fixture()
+def stage_entrypoint_stub():
+    """阶段执行入口桩工厂：可编程产物/成本/候选/失败，并记录调用次数与入参。
+
+    返回工厂 `_make(stage_id, *, products=(), cost_usd=0.0, candidates=(), fail=None)`
+    → 桩可调用对象（`.calls` 为调用次数、`.inputs` 为历次阶段输入）。桩只依赖
+    `core/orchestration` 的模型（零业务概念），故可驱动任意阶段图。
+    """
+    from core.orchestration.errors import StageFailedError
+    from core.orchestration.models import CandidateOutcome, ProductRef, StageOutcome
+
+    def _make(
+        stage_id: str,
+        *,
+        products=(),
+        cost_usd: float = 0.0,
+        candidates=(),
+        fail: str | None = None,
+    ):
+        made = tuple(
+            item if isinstance(item, ProductRef) else ProductRef(**item) for item in products
+        ) or (ProductRef(kind="stub", ref=f"{stage_id}-ref", content_hash="0" * 64),)
+        made_candidates = tuple(
+            item
+            if isinstance(item, CandidateOutcome)
+            else CandidateOutcome(candidate_id=f"{stage_id}-c{index}", score=0.0, reasons=(item,))
+            for index, item in enumerate(candidates)
+        )
+
+        class _Stub:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.inputs: list = []
+
+            def __call__(self, stage_input):
+                self.calls += 1
+                self.inputs.append(stage_input)
+                if fail is not None:
+                    raise StageFailedError(fail, candidates=made_candidates)
+                return StageOutcome(products=made, cost_usd=cost_usd, candidates=made_candidates)
+
+        stub = _Stub()
+        stub.stage_id = stage_id
+        return stub
+
+    return _make
+
+
+# 精简 movie 形态配置：仅含全部加载器必需段（形态差异（权重/规格）在此表达，
+# 与短剧真实配置做同链对照；不做任何形态特化，故取值可以刻意不同）。
+_MINIMAL_MOVIE_CONFIG = """\
+form: movie
+evaluator_weights:
+  screenplay:
+    rule.beat_structure: gate
+    proxy.entity_consistency: 1.0
+replay:
+  worker_count: 4
+  latency_quantum_ms: 50
+  validation_split: latest_tree
+  unbiasedness_tau_threshold: 0.95
+  pooling:
+    min_trees: 3
+    dilution_hit_ratio_threshold: 0.7
+    allow_cross_form: false
+    enabled_for_dreaming: false
+    pools_dir: replay/pools
+promo:
+  exploration_per_round_usd: 500
+  promo_pilot_ratio: 0.02
+  default_model: mock-copy-v1
+  materials_per_round: 4
+  material_spec: {max_copy_chars: 120, poster_size: "1080x1920", max_duration_seconds: 30}
+  sensitive_words: ["最"]
+  ctr_prior: {alpha: 2.0, beta: 40.0}
+  ctr_cap: 0.2
+  metric_weights: {ctr: 0.5, completion_rate: 0.3, conversions: 0.2}
+  model_prices:
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+  simulated_platform: {base_impressions: 1000, ctr_beta: [2.0, 40.0], completion_beta: [3.0, 7.0]}
+visual:
+  exploration_per_round_usd: 500
+  clips_per_round: 3
+  clip_spec: {width: 320, height: 240, fps: 8, duration_seconds: 2.0, codec: h264}
+  frame_sampling: {count: 8, size: 64}
+  simulated_gen: {frames: 16, estimated_cost_usd: 0.6, cost_per_clip_usd: 0.5}
+  judge:
+    anchor_gen_params: [{style: "史诗", shots: 2, seed_tier: 1}]
+    prompts: ["哪一段镜头的电影感更强？"]
+sound:
+  exploration_per_round_usd: 300
+  clips_per_round: 4
+  loudness:
+    dialogue: {target_lufs: -27.0, tolerance: 2.0}
+    sfx: {target_lufs: -30.0, tolerance: 3.0}
+    music: {target_lufs: -25.0, tolerance: 3.0}
+  av_sync_threshold_ms: 120
+  sample_rate: 16000
+  prices:
+    tts: {per_second_usd: 0.02}
+    sfx: {per_event_usd: 0.05}
+    music: {per_second_usd: 0.03}
+  simulated_gen:
+    base_freq_hz: 220.0
+    harmonics: 4
+    duration_seconds: 2.0
+    estimated_cost_usd: 0.5
+    cost_per_clip_usd: 0.4
+  asr: {cer_cap: 0.2}
+  emotion: {calibration_band: 0.5}
+editing:
+  exploration_per_round_usd: 400
+  edits_per_round: 3
+  target_duration_s: 120
+  duration_tolerance_s: 10
+  shot_limits: {min_shot_ms: 500, max_shot_ms: 20000}
+  transition_rules:
+    allowed: [cut, dissolve, fade]
+    dissolve_max_ms: 2000
+    forbid_jump_cut_within_scene: true
+  pacing_baseline:
+    d_cap: 2000000.0
+    segments:
+      - {span: [0.0, 0.15], mean_ms: 1200, var_ms: 160000, weight: 2.0}
+      - {span: [0.15, 1.0], mean_ms: 4000, var_ms: 1000000, weight: 1.0}
+  render:
+    fps: 8
+    width: 320
+    height: 240
+    codec: libx264
+    encode_threads: 1
+    price_per_second_usd: 0.05
+  judge:
+    prompts: ["哪一版剪辑的叙事更连贯？"]
+    anchor_edls:
+      - clips:
+          - {shot_id: "anchor-a1", in_ms: 0, out_ms: 1500, transition: {type: cut, duration_ms: 0}}
+        audio: []
+storyboard:
+  exploration_per_round_usd: 200
+  boards_per_round: 3
+  shot_grammar:
+    shot_sizes: [extreme_close_up, close_up, medium, full, wide]
+    max_size_jump: 2
+    max_same_size_run: 2
+    camera_positions: [eye_level, low_angle, high_angle, over_shoulder, side]
+    movements: [static, pan, tilt, dolly, handheld]
+  axis_rules: {require_transition_on_cross: true, allowed_transition_shots: 1, side_field: side}
+  alignment: {cos_floor: 0.90}
+  emotion_vectors:
+    calm: [0.30, 0.55, 0.45]
+    tense: [0.75, 0.18, 0.15]
+  render:
+    fps: 8
+    width: 320
+    height: 240
+    codec: libx264
+    encode_threads: 1
+    price_per_shot_usd: 0.06
+  judge:
+    model: mock-copy-v1
+    prompts: ["哪一版分镜的镜头语言更贴合剧本段落？"]
+    anchor_shotlists:
+      - schema_version: "1.0.0"
+        shots:
+          - shot_id: shot-anchor-a1
+            scene_id: scene-1
+            covers: [s1-l1]
+            shot_size: close_up
+            camera: eye_level
+            side: A
+            movement: static
+            est_duration_ms: 1000
+            alternatives: 2
+screenplay:
+  target_duration_min: 90
+  page_tolerance: 5
+  lines_per_page: 45
+  dialogue_action_ratio: {min: 0.4, max: 0.8}
+  beat_sheet:
+    - {beat_id: opening_image, act: act1, required: true, description: "开场画面"}
+    - {beat_id: climax, act: act3, required: true, description: "高潮"}
+  character_aliases:
+    林静: [阿静]
+  upgrade_criteria: {judge_r_target: 0.6, min_samples: 5, drift_band: 0.1, gate_violation_max: 0.2}
+  model: mock-copy-v1
+  model_prices:
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+  judge:
+    model: mock-copy-v1
+    prompts: ["哪一份大纲的戏剧张力更强？"]
+    anchor_outlines:
+      - schema_version: "1.0.0"
+        stage: outline
+        text: "锚点大纲 A：一名外科医生必须在真相与职位之间抉择。"
+        beats:
+          - {beat_id: opening_image, act: act1, required: true, description: "开场"}
+        scenes:
+          - scene_id: anchor-a1
+            heading: "内景 - 手术室 - 夜"
+            location: 手术室
+            time_marker: 0
+            characters: [林静]
+            axis_base: A
+        characters:
+          - {name: 林静, aliases: [阿静]}
+        lines:
+          - line_id: a1-l1
+            scene_id: anchor-a1
+            kind: dialogue
+            character: 林静
+            text: "别停手。"
+            key: true
+            emotion: tense
+calibration:
+  period_days: 7
+  top_k: 5
+  min_samples: 3
+  bias_threshold: 0.15
+  reliability_target: 0.6
+  ridge_lambda: 1.0
+  self_pairing_exclusions:
+    platform_truth: ["human.platform_metrics"]
+  drift:
+    window: 5
+    buckets: 10
+    psi_threshold: 0.2
+    quantile_threshold: 0.1
+    min_samples: 3
+    suspect_weight: 0.5
+    confirmed_exclude: true
+    scope_kinds: ["judge"]
+    double_signal:
+      enabled: true
+      reliability_target: 0.6
+      base_level: warning
+      escalated_level: critical
+dreaming:
+  candidates_per_round: 128
+  demo_candidates: 8
+  recent_k: 5
+  lambda: 0.5
+  epsilon_random: 0.1
+  validation_top_ratio: 0.2
+  collapse_window: 3
+  collapse_threshold: 0.7
+  replay_parallelism: 1
+  no_auto_evolve_agents: [screenplay, dev]
+cost_regression:
+  threshold: 0.2
+  history_root: dreaming/history
+web:
+  host: 127.0.0.1
+  port: 8080
+  dsn_env: CINEFLOW_WEB_DSN
+  token: ""
+  page_size: 50
+  data_dirs:
+    policies: policies/history
+    dreaming: dreaming/history
+    calibration: calibration
+    pools: replay/pools
+  export_dir: web/dist
+deployment:
+  mode_default: manual
+  gate: {validation_top_ratio: 0.2, require_unbiasedness: true, allow_without_judge: false}
+  shadow: {min_days: 14, min_candidates: 20}
+  spot_check: {first_n: 5, ratio: 0.2}
+  screenplay:
+    current_policy_version: fa6b7bca77ed
+"""
