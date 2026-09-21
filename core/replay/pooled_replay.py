@@ -1,4 +1,4 @@
-"""池化回放接线（功能 011 US2 / T1016，contracts/replay-hit.md C3~C5）。
+"""池化回放接线（功能 011 US2/US3，contracts/replay-hit.md C3~C5、lineage-acceptance.md C9）。
 
 把合并池（US1）接到 002 的回放模拟器上：`probe` 的候选选择改为**跨项目结构键匹配**
 （`cross_match`），揭示/计费/预算/时延量子/虚拟时钟等语义全部复用 002——
@@ -8,14 +8,21 @@
 - 冲突即 UNKNOWN：不揭示、不得分（`cross_match` 口径），诊断进回放结果归属（供 `hit_stats`）；
 - 已揭示节点不再命中（002 同口径：揭示只发生一次、虚拟成本不重复计入）；
 - 留出树（validation）：`exclude_tree_ids` 既不揭示也不参与匹配（防泄漏红线，C5）；
-- 全程零生成：继承 002 的装配归零 + 断言双保险（原则三）。
+- 全程零生成：继承 002 的装配归零 + 断言双保险（原则三）；
+- 池选择（T1021）：`select_replay_pool` 按 `replay.pooling.enabled_for_dreaming` 选池
+  （默认关闭 → 单项目池；开启且前置满足 → 合并池；不足 → 回落并注明），
+  `MergedSimulatorPool` 与 002 `SimulatorPool` 同 `build` 接口——调用方零特化（原则五）。
 """
 
+from dataclasses import dataclass
+
 from core.replay.cross_match import PoolIndex, build_pool_index, cross_match
-from core.replay.errors import ValidationError
+from core.replay.errors import PoolError, ValidationError
 from core.replay.hit_stats import ReplayOutcome, outcome_for_match
-from core.replay.merged_pool import select_version_group
-from core.replay.pooling_models import MergedPool
+from core.replay.merged_pool import build_merged_pool, select_version_group
+from core.replay.pool import SimulatorPool
+from core.replay.pool_snapshot import persist_pool_snapshot
+from core.replay.pooling_models import MergedPool, PoolingConfig, PoolSnapshot
 from core.replay.simulator import ReplaySimulator
 from core.tree.models import DiscoveryTree, TreeNode
 from core.tree.store import TreeStore
@@ -140,3 +147,137 @@ class PooledReplaySimulator(ReplaySimulator):
         if result.status != "hit":
             return []
         return [index.by_node[hit.node_id].node for hit in result.hits]
+
+
+@dataclass(frozen=True)
+class PoolSelection:
+    """回放池选择结果（C9）：池对象 + 是否合并池 + **如实注明的理由**。
+
+    - pool：002 口径的 `SimulatorPool` 或同接口的 `MergedSimulatorPool`（调用方零特化）；
+    - merged_pool / snapshot：合并池记录与构建快照（未走合并池为 None）；
+    - note：为何未用合并池（开关关闭 / 前置条件不足 / 合并池构建被拒），如实可见不静默。
+    """
+
+    pool: object
+    merged: bool
+    note: str
+    merged_pool: MergedPool | None = None
+    snapshot: PoolSnapshot | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "merged": self.merged,
+            "note": self.note,
+            "pool_id": None if self.merged_pool is None else self.merged_pool.pool_id,
+            "tree_count": None if self.merged_pool is None else self.merged_pool.tree_count,
+            "enabled_for_dreaming": (
+                None if self.snapshot is None else self.snapshot.enabled_for_dreaming
+            ),
+            "conditions_met": None if self.snapshot is None else self.snapshot.conditions_met,
+        }
+
+
+class MergedSimulatorPool:
+    """合并池的 `SimulatorPool` 形态（同一 `build` 接口，供做梦/回放装配零特化复用）。
+
+    `.build(...)` 产出 `PooledReplaySimulator`（probe 走跨项目 `cross_match`）；
+    `.trees` 为池内树实体（版本组隔离后的稳定序）。
+    """
+
+    def __init__(
+        self,
+        pool: MergedPool,
+        store: TreeStore,
+        *,
+        version_hash: str | None = None,
+        exclude_tree_ids: tuple[str, ...] = (),
+    ) -> None:
+        if not isinstance(pool, MergedPool):
+            raise ValidationError(f"pool 必须为 MergedPool，实际为 {type(pool).__name__}")
+        self._pool = pool
+        self._store = store
+        self._version_hash = version_hash
+        self._exclude_tree_ids = tuple(exclude_tree_ids)
+
+    @property
+    def pool(self) -> MergedPool:
+        return self._pool
+
+    @property
+    def trees(self) -> tuple[DiscoveryTree, ...]:
+        return pool_trees(
+            self._store,
+            self._pool,
+            version_hash=self._version_hash,
+            exclude_tree_ids=self._exclude_tree_ids,
+        )
+
+    def build(self, *, worker_count: int, budget: Budget, latency_quantum_ms: int):
+        """构建池化回放模拟器（接口与 002 `SimulatorPool.build` 一致）。"""
+        return PooledReplaySimulator.from_pool(
+            self._pool,
+            self._store,
+            worker_count=worker_count,
+            budget=budget,
+            latency_quantum_ms=latency_quantum_ms,
+            version_hash=self._version_hash,
+            exclude_tree_ids=self._exclude_tree_ids,
+        )
+
+
+def select_replay_pool(
+    store: TreeStore,
+    agent_id: str,
+    form: str,
+    cfg: PoolingConfig,
+    *,
+    single_project_trees,
+) -> PoolSelection:
+    """按 `replay.pooling.enabled_for_dreaming` 选择回放池（C9；通用机制，不特化 Agent）。
+
+    - **默认关闭** → 单项目池（传入树集合的 002 `SimulatorPool`）+ note「未启用：开关关闭」，
+      不构建合并池、不落快照（未越权产出池化产物）；
+    - 开启且前置条件满足（树数 ≥ min_trees）→ 合并池 + 快照（开关状态与前置判定入快照）；
+    - 开启但前置不足 → 单项目池 + note「未启用：前置条件不足」+ 快照（conditions_met=False）；
+    - 合并池构建被拒（跨形态/缺版本集等）→ 单项目池 + note 如实转述拒绝理由（不静默吞错）。
+    """
+    if not isinstance(cfg, PoolingConfig):
+        raise ValidationError(f"cfg 必须为 PoolingConfig，实际为 {type(cfg).__name__}")
+    trees = tuple(single_project_trees)
+    if not trees:
+        raise ValidationError("单项目池的树集合不得为空（回放装配需要候选树）")
+    single_pool = SimulatorPool(store)
+    for tree in trees:
+        single_pool.add_tree(tree)
+
+    if not cfg.enabled_for_dreaming:
+        return PoolSelection(
+            pool=single_pool,
+            merged=False,
+            note="未启用：开关关闭（replay.pooling.enabled_for_dreaming=false）",
+        )
+
+    try:
+        merged_pool = build_merged_pool(store, agent_id, form, cfg, enforce_min_trees=False)
+        snapshot = persist_pool_snapshot(merged_pool, cfg)
+    except (PoolError, ValidationError) as exc:
+        return PoolSelection(
+            pool=single_pool,
+            merged=False,
+            note=f"未启用：合并池构建被拒（{exc}）——回落单项目池",
+        )
+    if not merged_pool.conditions_met:
+        return PoolSelection(
+            pool=single_pool,
+            merged=False,
+            note=f"未启用：前置条件不足（{merged_pool.note}）——回落单项目池",
+            merged_pool=merged_pool,
+            snapshot=snapshot,
+        )
+    return PoolSelection(
+        pool=MergedSimulatorPool(merged_pool, store),
+        merged=True,
+        note="合并池已启用（跨项目）；构建快照已落盘",
+        merged_pool=merged_pool,
+        snapshot=snapshot,
+    )
