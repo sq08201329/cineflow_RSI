@@ -7,6 +7,7 @@
 - 池化是读路径扩展（无新 DB 表）：模型是构建快照与统计报告的机读形态（JSON 可序列化）。
 """
 
+import json
 import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -459,3 +460,7 @@ class CrossProjectLineage:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def to_json(self) -> str:
+        """JSON 可机读形态（C6：跨项目谱系报表供运营/审计消费）。"""
+        return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True)
