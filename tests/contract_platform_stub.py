@@ -1,15 +1,16 @@
-"""契约套件的"真实分支"可跑化基建：本地 stub 三个媒体平台（自算渲染侧）。
+"""契约套件的"真实分支"可跑化基建：本地 stub 五个平台（自算生成/渲染侧）。
 
-背景：`tests/contract/` 的三个适配器契约套件（视觉生成 / 分镜预演 / 剪辑渲染）
-对**双实现**跑同一套断言；真实实现分支此前因无凭证一律按用例 skip。本模块把
-"真实分支"在**无真实凭证、零外部网络**下变得可跑：起三个本地 stub 平台
-（`127.0.0.1:0`），把三组凭证环境变量指向它们即可。
+背景：`tests/contract/` 的五个适配器契约套件（视觉生成 / 分镜预演 / 声音×3 /
+剪辑渲染 / 宣发投放）对**双实现**跑同一套断言；真实实现分支此前因无凭证一律按用例 skip。
+本模块把"真实分支"在**无真实凭证、零外部网络**下变得可跑：起五个本地 stub 平台
+（`127.0.0.1:0`，三个声音类型共用一个），把七组凭证环境变量指向它们即可。
 
-关键点：stub 的"渲染侧"**按规范化参数自行渲染**（不是返回固定假字节）——
+关键点：stub 的"生成/渲染侧"**按规范化参数自行产出**（不是返回固定假字节）——
 分镜用 `board_render.render_animatic`、剪辑用 `SimulatedEditRenderer`、
-视觉用 `encode_mp4(render_frames(...))`：契约套件传什么输入，就产出对应的真实
-mp4 与元数据，因此 C10~C13 的断言（ffprobe 规格、元数据键、逐字节确定性）
-在真实适配器上真被验证，而不是被 stub 的固定值糊过去。
+视觉用 `encode_mp4(render_frames(...))`、声音用 `audio.synthesize_wav`：
+契约套件传什么输入，就产出对应的真实 mp4/wav 与元数据，因此各环节的契约断言
+（ffprobe 规格、元数据键、逐字节确定性、指标 schema）在真实适配器上真被验证，
+而不是被 stub 的固定值糊过去。
 
 **诚实边界**：这只证明"适配器的协议实现与既有契约一致"，**不证明**"某家真实
 厂商的 API 已被对接"或"B 路径已验证"（真实凭证/真实计费/真实厂商 API 均未跑过，
@@ -35,8 +36,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_STUB_ENV = "CINEFLOW_CONTRACT_STUB"
 STUB_API_KEY = "contract-stub-key"
 
-# 三组凭证 → stub 服务的映射（前缀即各自适配器的 from_env 前缀）
-CREDENTIAL_PREFIXES = ("VISUAL_GEN", "STORYBOARD_RENDER", "EDIT_RENDER")
+# 七组凭证 → stub 服务的映射（前缀即各自适配器的 from_env 前缀）
+# 三个声音类型共用一个声音 stub（协议同一套，靠 gen_type 分账）
+CREDENTIAL_PREFIXES = (
+    "VISUAL_GEN",
+    "STORYBOARD_RENDER",
+    "SOUND_TTS",
+    "SOUND_SFX",
+    "SOUND_MUSIC",
+    "EDIT_RENDER",
+    "PROMO_PLATFORM",
+)
 
 # 契约套件把渲染尺寸缩到 64x48 以控耗时（tests/contract/test_editing_platform_contract.py
 # 的 _render_cfg 同口径）：stub 渲染侧按同一档配置，ffprobe 断言才对得上
@@ -52,6 +62,28 @@ def _contract_editing_render_cfg() -> dict:
     cfg = dict(_movie_config()["editing"]["render"])
     cfg.update(width=CONTRACT_RENDER_WIDTH, height=CONTRACT_RENDER_HEIGHT)
     return cfg
+
+
+def _sound_provider_factory(distribution: dict, sample_rate: int):
+    """声音生成侧：既有确定性合成器（种子 → 谐波叠加 → PCM16 wav + 声学属性元数据）。
+
+    采样率取 `sound.sample_rate`（平台侧规格，契约套件对 wav 采样率的断言靠它对齐）。
+    """
+    from agents.sound.audio import synthesize_wav
+
+    def _provider(params: dict) -> tuple[bytes, dict]:
+        return synthesize_wav(params, distribution, sample_rate)
+
+    return _provider
+
+
+def _sound_cost_model(distribution: dict):
+    """声音计价：三类型同价目口径（estimated == actual，恒 ≤ 预估）。"""
+
+    def _cost(params: dict) -> float:
+        return float(distribution["estimated_cost_usd"])
+
+    return _cost
 
 
 def _visual_artifact_provider(distribution: dict, fps: int):
@@ -125,11 +157,10 @@ def _editing_cost_model(render_cfg: dict):
     return _cost
 
 
-def start_contract_stub() -> list[StubPlatformServer]:
-    """起三个 stub 平台（视觉生成 / 分镜预演 / 剪辑渲染），返回服务端列表。
+def start_contract_stub() -> dict[str, StubPlatformServer]:
+    """起五个 stub 平台（视觉/分镜/声音/剪辑/宣发），返回 前缀 → 服务端 的映射。
 
-    调用方负责在结束时逐个 `stop()`；凭证环境变量的注入由调用方完成
-    （`credential_env()` 给出映射）。
+    调用方负责在结束时逐个 `stop()`；凭证环境变量的注入由 `credential_env()` 给出映射。
     """
     config = _movie_config()
     storyboard_render = dict(config["storyboard"]["render"])
@@ -137,39 +168,57 @@ def start_contract_stub() -> list[StubPlatformServer]:
     editing_render = _contract_editing_render_cfg()
     visual_dist = dict(config["visual"]["simulated_gen"])
     clip_spec = dict(config["visual"]["clip_spec"])
+    sound_dist = dict(config["sound"]["simulated_gen"])
 
-    servers = [
-        StubPlatformServer(
-            api_key=STUB_API_KEY,
-            artifact_provider=_visual_artifact_provider(visual_dist, int(clip_spec["fps"])),
-            estimated_cost_usd=_visual_cost_model(visual_dist),
-        ).start(),
-        StubPlatformServer(
-            api_key=STUB_API_KEY,
-            artifact_provider=_storyboard_provider,
-            # 渲染平台：一次查询即终态（省去契约套件的轮询等待）
-            status_sequence=("succeeded",),
-            estimated_cost_usd=_storyboard_cost_model,
-        ).start(),
-        StubPlatformServer(
-            api_key=STUB_API_KEY,
-            artifact_provider=_editing_provider_factory(editing_render),
-            status_sequence=("succeeded",),
-            estimated_cost_usd=_editing_cost_model(editing_render),
-        ).start(),
-    ]
+    visual = StubPlatformServer(
+        api_key=STUB_API_KEY,
+        artifact_provider=_visual_artifact_provider(visual_dist, int(clip_spec["fps"])),
+        estimated_cost_usd=_visual_cost_model(visual_dist),
+    ).start()
+    storyboard = StubPlatformServer(
+        api_key=STUB_API_KEY,
+        artifact_provider=_storyboard_provider,
+        # 渲染平台：一次查询即终态（省去契约套件的轮询等待）
+        status_sequence=("succeeded",),
+        estimated_cost_usd=_storyboard_cost_model,
+    ).start()
+    sound = StubPlatformServer(
+        api_key=STUB_API_KEY,
+        artifact_provider=_sound_provider_factory(sound_dist, int(config["sound"]["sample_rate"])),
+        status_sequence=("succeeded",),
+        estimated_cost_usd=_sound_cost_model(sound_dist),
+    ).start()
+    editing = StubPlatformServer(
+        api_key=STUB_API_KEY,
+        artifact_provider=_editing_provider_factory(editing_render),
+        status_sequence=("succeeded",),
+        estimated_cost_usd=_editing_cost_model(editing_render),
+    ).start()
+    promo = StubPlatformServer(
+        api_key=STUB_API_KEY,
+        campaign_status_sequence=("delivering", "delivered"),
+    ).start()
+
+    servers = {
+        "VISUAL_GEN": visual,
+        "STORYBOARD_RENDER": storyboard,
+        "SOUND_TTS": sound,
+        "SOUND_SFX": sound,
+        "SOUND_MUSIC": sound,
+        "EDIT_RENDER": editing,
+        "PROMO_PLATFORM": promo,
+    }
+    missing = set(CREDENTIAL_PREFIXES) - set(servers)
+    if missing:  # pragma: no cover - 防漏配（前缀与映射必须一一对应）
+        raise ValueError(f"stub 服务缺前缀映射：{sorted(missing)}")
     return servers
 
 
-def credential_env(servers: list[StubPlatformServer]) -> dict[str, str]:
-    """三组凭证环境变量 → stub 服务（键序与 CREDENTIAL_PREFIXES 一致）。"""
-    if len(servers) != len(CREDENTIAL_PREFIXES):
-        raise ValueError(
-            f"stub 服务数必须为 {len(CREDENTIAL_PREFIXES)}（{CREDENTIAL_PREFIXES}），"
-            f"实际 {len(servers)}"
-        )
+def credential_env(servers: dict[str, StubPlatformServer]) -> dict[str, str]:
+    """七组凭证环境变量 → stub 服务（键序与 CREDENTIAL_PREFIXES 一致）。"""
     env: dict[str, str] = {}
-    for prefix, server in zip(CREDENTIAL_PREFIXES, servers, strict=True):
+    for prefix in CREDENTIAL_PREFIXES:
+        server = servers[prefix]
         env[f"{prefix}_BASE_URL"] = server.base_url
         env[f"{prefix}_API_KEY"] = server.api_key
     return env

@@ -35,12 +35,8 @@ jobs:
       - run: uv sync
       - name: 平台适配器契约套件（双实现同跑）
         run: uv run pytest tests/contract
-      - name: 契约套件真实分支对着本地 stub 实跑（视觉/分镜/剪辑协议实现，零凭证零外部网络）
-        run: >-
-          CINEFLOW_CONTRACT_STUB=1 uv run pytest
-          tests/contract/test_video_gen_adapter.py
-          tests/contract/test_storyboard_platform_contract.py
-          tests/contract/test_editing_platform_contract.py -q
+      - name: 契约套件真实分支对着本地 stub 实跑（全部适配器族协议实现，零凭证零外部网络）
+        run: CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q
 
   integration:
     runs-on: ubuntu-latest

@@ -19,14 +19,23 @@
    ffprobe 规格符合渲染配置、元数据键齐全且与 ShotList/EDL 一致、
    同输入两次渲染逐字节一致（并命中同一平台任务）。
 
+覆盖的适配器族（两批）：① 视觉生成 / 分镜预演 / 剪辑渲染（第一批量产类）；
+② **声音 ×3（TTS/SFX/音乐，wav 工件）/ 宣发投放（campaign/metrics）/ LLM 网关 http 后端
+（chat/completions + usage 计费）**（第二批量产类，见文件下半部分）。
+
+LLM 后端的（内容/usage/错误映射/网关计费）契约断言落在 `tests/contract/test_llm_http_backend.py`
+（契约套件一支，同样用本地 stub、零凭证零外部网络）。
+
 本文件**不打 integration 标记**（不依赖 Docker/PG），CI 里单独一步执行
 （见 .github/workflows/ci.yml 的 integration 作业）。
 """
 
 import copy
+import io
 import json
 import urllib.error
 import urllib.request
+import wave
 from pathlib import Path
 
 import pytest
@@ -37,6 +46,26 @@ from agents.editing.platform.base import RenderError as EditRenderError
 from agents.editing.platform.base import UnavailableError as EditUnavailable
 from agents.editing.platform.http_real import HttpRealEditRender
 from agents.editing.platform.http_real import render_params as edit_render_params
+from agents.promo.platform.base import (
+    CampaignStatus,
+    InvalidRequestError,
+    MetricsNotReadyError,
+    MetricValidationError,
+    PlatformError,
+    PromoMaterial,
+)
+from agents.promo.platform.base import (
+    RateLimitedError as PromoRateLimited,
+)
+from agents.promo.platform.base import (
+    UnavailableError as PromoUnavailable,
+)
+from agents.promo.platform.http_real import HttpRealPlatform
+from agents.sound.audio import synthesize_wav
+from agents.sound.platform.base import RateLimitedError as SoundRateLimited
+from agents.sound.platform.base import SoundGenError
+from agents.sound.platform.base import UnavailableError as SoundUnavailable
+from agents.sound.platform.http_real import HttpRealMusicGen, HttpRealSFXGen, HttpRealTTSGen
 from agents.storyboard.board_render import render_animatic
 from agents.storyboard.config import StoryboardConfig
 from agents.storyboard.platform.base import RateLimitedError as BoardRateLimited
@@ -515,6 +544,294 @@ class Test剪辑渲染协议:
         adapter, _ = adapter_factory(server_kwargs={"overcharge_usd": 0.3})
         with pytest.raises(EditRenderError, match="超过预估"):
             adapter.render(edls["audio"], library)
+
+
+# ---------------------------------------------------------------------------
+# 声音生成（HttpRealTTSGen / HttpRealSFXGen / HttpRealMusicGen）：estimate → generate
+# ---------------------------------------------------------------------------
+
+
+def _sound_params(gen_type: str, *, seed: int = 7) -> dict:
+    """声音生成参数（同 conftest 的声学属性可控口径）。"""
+    return {
+        "gen_type": gen_type,
+        "seed": seed,
+        "duration_s": 0.25,  # 缩短时长以控合成耗时
+        "loudness_gain_db": 0.0,
+        "event_times_ms": [0.0, 100.0],
+        "cer_injected": 0.0,
+        "emotion_vector": [0.5, 0.5],
+    }
+
+
+_SOUND_CLASSES = {"tts": HttpRealTTSGen, "sfx": HttpRealSFXGen, "music": HttpRealMusicGen}
+
+
+class Test声音生成协议:
+    @pytest.fixture()
+    def sound_dist(self):
+        return {
+            "base_freq_hz": 220.0,
+            "harmonics": 4,
+            "duration_seconds": 0.25,
+            "estimated_cost_usd": 0.5,
+            "cost_per_clip_usd": 0.4,
+        }
+
+    def _server(self, stub_factory, sound_dist, *, artifact_provider=None, **kwargs):
+        """stub 平台的"生成侧"：既有确定性合成器（wav + 声学属性元数据）。"""
+        options = {
+            "artifact_provider": artifact_provider
+            or (lambda params: synthesize_wav(params, sound_dist, 16000)),
+            "status_sequence": ("succeeded",),
+            "estimated_cost_usd": 0.5,
+        }
+        options.update(kwargs)
+        return stub_factory(**options)
+
+    @pytest.mark.parametrize("gen_type", ["tts", "sfx", "music"])
+    def test_全链_估价到生成(self, stub_factory, sound_dist, gen_type, tmp_path):
+        server = self._server(stub_factory, sound_dist)
+        adapter = _SOUND_CLASSES[gen_type](
+            server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+        )
+        params = _sound_params(gen_type)
+
+        estimated = adapter.estimate(params)
+        assert estimated > 0  # 估价来自平台（本地零估算）
+        assert adapter.gen_type == gen_type  # 类型由类属性权威声明（成本分账粒度）
+
+        produced = adapter.generate(params)
+
+        # 工件：stub 返回的 wav 原样字节 + 可解析且规格符合（采样率/声道/位深）
+        assert produced.wav_bytes == server.artifact_bytes(server.job_ids()[0])
+        with wave.open(io.BytesIO(produced.wav_bytes), "rb") as wf:
+            assert wf.getframerate() == 16000
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+
+        # 元数据：必含 loudness_gain_db + 该类型标记（评估器确定性输入）
+        markers = {"tts": "cer_injected", "sfx": "event_times_ms", "music": "emotion_vector"}
+        assert produced.metadata["loudness_gain_db"] == 0.0
+        assert markers[gen_type] in produced.metadata
+
+        # 成本：estimated ≥ actual > 0；幂等键由规范化参数派生（含 gen_type）后原样透传
+        assert 0 < produced.actual_cost_usd <= estimated + 1e-9
+        body = json.loads(server.records_of("/jobs")[0]["body"].decode("utf-8"))
+        assert body["params"]["gen_type"] == gen_type
+        assert body["idempotency_key"] == idempotency_key("sound-gen", body["params"])
+
+    def test_同参数两次生成_同一平台任务且逐字节一致(self, stub_factory, sound_dist):
+        server = self._server(stub_factory, sound_dist)
+        adapter = HttpRealTTSGen(
+            server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+        )
+        first = adapter.generate(_sound_params("tts"))
+        second = adapter.generate(_sound_params("tts"))
+        assert server.job_count == 1  # 同参数 → 同幂等键 → 平台侧同一任务（0 重复扣费）
+        assert first.wav_bytes == second.wav_bytes
+        assert first.metadata == second.metadata
+
+    def test_三类型互不串账_不同任务(self, stub_factory, sound_dist):
+        server = self._server(stub_factory, sound_dist)
+        for gen_type, cls in _SOUND_CLASSES.items():
+            adapter = cls(
+                server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+            )
+            adapter.generate(_sound_params(gen_type))
+        assert server.job_count == 3  # 同 seed 但 gen_type 不同 → 不同幂等键 → 三个任务
+
+    def test_平台终态失败_映射_SoundGenError带详情(self, stub_factory, sound_dist):
+        server = self._server(
+            stub_factory,
+            sound_dist,
+            status_sequence=("running", "failed"),
+            error_message="声码器节点过载",
+        )
+        adapter = HttpRealTTSGen(
+            server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+        )
+        with pytest.raises(SoundGenError, match="声码器节点过载"):
+            adapter.generate(_sound_params("tts"))
+
+    def test_元数据缺必含键_拒绝(self, stub_factory, sound_dist):
+        server = self._server(
+            stub_factory, sound_dist, artifact_provider=lambda params: (b"wav", {})
+        )
+        adapter = HttpRealMusicGen(
+            server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+        )
+        with pytest.raises(SoundUnavailable, match="缺必含键"):
+            adapter.generate(_sound_params("music"))
+
+    def test_429_5xx_超时_错误映射(self, stub_factory, sound_dist):
+        server = self._server(stub_factory, sound_dist)
+        adapter = HttpRealTTSGen(
+            server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+        )
+        params = _sound_params("tts")
+        server.enqueue_status(429)
+        with pytest.raises(SoundRateLimited, match="限流"):
+            adapter.generate(params)
+        server.enqueue_status(503)
+        with pytest.raises(SoundUnavailable, match="HTTP 503"):
+            adapter.estimate(params)
+        server.enqueue_latency(1.5)
+        slow = HttpRealTTSGen(
+            server.base_url, server.api_key, request_timeout_s=0.2, poll_interval_s=0.01
+        )
+        with pytest.raises(SoundUnavailable, match="超时 0.2s"):
+            slow.estimate(params)
+
+    def test_actual_超过预估_显式报错(self, stub_factory, sound_dist):
+        server = self._server(stub_factory, sound_dist, overcharge_usd=0.2)
+        adapter = HttpRealTTSGen(
+            server.base_url, server.api_key, poll_interval_s=0.01, poll_deadline_s=10.0
+        )
+        with pytest.raises(SoundGenError, match="超过预估"):
+            adapter.generate(_sound_params("tts"))
+
+
+# ---------------------------------------------------------------------------
+# 宣发投放（HttpRealPlatform）：create_campaign → status → metrics → pause
+# ---------------------------------------------------------------------------
+
+
+def _material(artifact_hash: str = "ab" * 32) -> PromoMaterial:
+    return PromoMaterial(
+        material_id="mat-stub-1",
+        kind="copy",
+        content={"copy": "测试文案"},
+        artifact_hash=artifact_hash,
+        platform="simulated",
+        tags=["剧情"],
+    )
+
+
+class Test宣发投放协议:
+    def test_全链_创建到暂停(self, stub_factory, tmp_path):
+        server = stub_factory(campaign_status_sequence=("delivering", "delivered"))
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+
+        campaign = adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:full")
+        assert campaign.budget_usd == 5.0
+        assert campaign.spent_usd <= 5.0  # 花费上限纪律
+        assert campaign.status is CampaignStatus.CREATED
+
+        # 幂等键与鉴权头原样透传
+        record = server.records_of("/campaigns")[0]
+        assert record["headers"]["authorization"] == "Bearer stub-key"
+        body = json.loads(record["body"].decode("utf-8"))
+        assert body["idempotency_key"] == "stub:promo:full"
+        assert body["material"]["material_id"] == "mat-stub-1"
+
+        assert adapter.get_status(campaign.external_id) is CampaignStatus.DELIVERING
+        assert adapter.get_status(campaign.external_id) is CampaignStatus.DELIVERED
+
+        snapshot = adapter.fetch_metrics(campaign.external_id)
+        assert snapshot.impressions == 1200 and snapshot.clicks == 144
+        assert snapshot.data_version == "stub-v1"
+        assert adapter.fetch_metrics(campaign.external_id) == snapshot  # 平台真值稳定
+
+        adapter.pause(campaign.external_id)  # 已 delivered：无操作（幂等）
+        assert adapter.get_status(campaign.external_id) is CampaignStatus.DELIVERED
+
+    def test_指标未就绪_如实抛错而非返0(self, stub_factory):
+        """核心语义：未 delivered 前 fetch_metrics 必须抛 MetricsNotReadyError（不返 0）。"""
+        server = stub_factory()
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        campaign = adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:early")
+        with pytest.raises(MetricsNotReadyError, match="metrics not ready"):
+            adapter.fetch_metrics(campaign.external_id)
+
+    def test_同幂等键_平台只建一个活动(self, stub_factory):
+        server = stub_factory()
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        first = adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:idem")
+        second = adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:idem")
+        other = adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:other")
+        assert second.external_id == first.external_id
+        assert second.campaign_id == first.campaign_id
+        assert other.external_id != first.external_id
+        assert server.campaign_count == 2  # 同键未新建活动（0 重复扣费）
+
+    def test_未知活动_归请求非法(self, stub_factory):
+        server = stub_factory()
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        for call in (
+            lambda: adapter.get_status("ghost"),
+            lambda: adapter.fetch_metrics("ghost"),
+            lambda: adapter.pause("ghost"),
+        ):
+            with pytest.raises(InvalidRequestError, match="HTTP 404"):
+                call()
+
+    def test_申请预算非正_拒绝(self, stub_factory):
+        server = stub_factory()
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        with pytest.raises(InvalidRequestError, match="预算必须为正"):
+            adapter.create_campaign(_material(), 0.0, idempotency_key="stub:promo:zero")
+
+    def test_平台扣费超申请额_显式报错(self, stub_factory):
+        server = stub_factory(spent_spec=lambda payload: payload["budget_usd"] + 1.0)
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        with pytest.raises(PlatformError, match="超过申请预算"):
+            adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:overspend")
+
+    @pytest.mark.parametrize(
+        "bad_metrics",
+        [
+            {"ctr": 1.5},  # 比率越界
+            {"completion_rate": -0.1},  # 比率越界
+            {"clicks": -1},  # 计数为负
+            {"impressions": 12.5},  # 计数非整数（口径不符即拒，不四舍五入）
+            {"conversions": True},  # bool 冒充计数
+            {"data_version": ""},  # 缺版本
+        ],
+    )
+    def test_指标字段非法_拒绝(self, stub_factory, bad_metrics):
+        base = {
+            "ctr": 0.12,
+            "completion_rate": 0.55,
+            "conversions": 7,
+            "impressions": 1200,
+            "clicks": 144,
+            "platform_timestamp": 1700000000.0,
+            "data_version": "stub-v1",
+        }
+        base.update(bad_metrics)
+        server = stub_factory(metrics_provider=lambda campaign: base)
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        campaign = adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:bad")
+        for _ in range(3):
+            if adapter.get_status(campaign.external_id) is CampaignStatus.DELIVERED:
+                break
+        with pytest.raises(MetricValidationError):
+            adapter.fetch_metrics(campaign.external_id)
+
+    def test_429_5xx_超时_错误映射(self, stub_factory):
+        server = stub_factory()
+        adapter = HttpRealPlatform(server.base_url, server.api_key)
+        server.enqueue_status(429)
+        with pytest.raises(PromoRateLimited, match="限流"):
+            adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:429")
+        server.enqueue_status(500)
+        with pytest.raises(PromoUnavailable, match="HTTP 500"):
+            adapter.get_status("any")
+        server.enqueue_latency(1.5)
+        slow = HttpRealPlatform(server.base_url, server.api_key, request_timeout_s=0.2)
+        with pytest.raises(PromoUnavailable, match="超时 0.2s"):
+            slow.get_status("any")
+
+    def test_distribution_不随请求外发(self, stub_factory, promo_config):
+        """真实平台不接受分布注入：`distribution` 只做签名兼容，不进请求体。"""
+        distribution = dict(promo_config.simulated_platform)
+        server = stub_factory()
+        adapter = HttpRealPlatform(server.base_url, server.api_key, distribution)
+        adapter.create_campaign(_material(), 5.0, idempotency_key="stub:promo:dist")
+        body = json.loads(server.records_of("/campaigns")[0]["body"].decode("utf-8"))
+        assert set(body) == {"material", "budget_usd", "idempotency_key"}
+        assert "base_impressions" not in json.dumps(body)
 
 
 # ---------------------------------------------------------------------------

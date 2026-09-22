@@ -75,8 +75,18 @@ class StubPlatformState:
     error_message: str = "stub：渲染失败（注入）"
     params_hash_mode: str = "platform"  # platform | absent
     omit_artifact_meta: bool = False  # True → 不发 X-Artifact-Meta（元数据缺失路径）
+    # ---- 宣发投放（campaigns/metrics） ----
+    campaign_status_sequence: tuple[str, ...] = ("delivering", "delivered")
+    metrics_ready_status: str = "delivered"  # 未达此状态即 409（指标未就绪）
+    metrics_provider: Callable[[dict], dict] | None = None  # 活动 dict → 指标 payload
+    spent_spec: CostSpec | None = None  # None → 申请预算 × 0.75（不超上限）
+    # ---- LLM（chat/completions） ----
+    chat_provider: Callable[[dict], dict] | None = None  # 请求 body → 响应 payload
     jobs: dict[str, dict] = field(default_factory=dict)
     by_key: dict[str, str] = field(default_factory=dict)
+    campaigns: dict[str, dict] = field(default_factory=dict)
+    campaign_by_key: dict[str, str] = field(default_factory=dict)
+    chats: list[dict] = field(default_factory=list)
     requests: list[dict] = field(default_factory=list)
     faults: list[_Fault] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -231,6 +241,12 @@ class _StubHandler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "artifact":
             self._get_artifact(parts[1])
             return
+        if len(parts) == 2 and parts[0] == "campaigns":
+            self._get_campaign(parts[1])
+            return
+        if len(parts) == 3 and parts[0] == "campaigns" and parts[2] == "metrics":
+            self._get_metrics(parts[1])
+            return
         self._send_json(404, {"error": f"unknown path {self.path}"})
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 约定
@@ -248,8 +264,17 @@ class _StubHandler(BaseHTTPRequestHandler):
         if parts == ["estimate"]:
             self._estimate(body)
             return
+        if parts == ["chat", "completions"]:
+            self._chat(body)
+            return
+        if parts == ["campaigns"]:
+            self._create_campaign(body)
+            return
         if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel":
             self._cancel(parts[1])
+            return
+        if len(parts) == 3 and parts[0] == "campaigns" and parts[2] == "pause":
+            self._pause(parts[1])
             return
         self._send_json(404, {"error": f"unknown path {self.path}"})
 
@@ -368,6 +393,143 @@ class _StubHandler(BaseHTTPRequestHandler):
             status = job["status"]
         self._send_json(202, {"status": status, "external_id": external_id})
 
+    # ---- 宣发投放（campaigns / metrics） ----
+
+    def _create_campaign(self, body: bytes) -> None:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            material = payload["material"]
+            budget = float(payload["budget_usd"])
+            key = payload["idempotency_key"]
+            assert isinstance(key, str) and key
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            self._send_json(400, {"error": "body must be {material, budget_usd, idempotency_key}"})
+            return
+        with self.state.lock:
+            existing = self.state.campaign_by_key.get(key)
+            if existing is not None:  # 幂等：同键返回同一活动（不新建、不重复扣费）
+                campaign = self.state.campaigns[existing]
+                repeat = True
+            else:
+                external_id = f"stub-{blake3.blake3(key.encode()).hexdigest()[:12]}"
+                spent = (
+                    round(budget * 0.75, 2)
+                    if self.state.spent_spec is None
+                    else resolve_cost(self.state.spent_spec, {"budget_usd": budget})
+                )
+                self.state.campaigns[external_id] = {
+                    "external_id": external_id,
+                    "campaign_id": f"cmp-{len(self.state.campaigns) + 1:04d}",
+                    "material_id": material.get("material_id", ""),
+                    "budget_usd": budget,
+                    "spent_usd": spent,
+                    "status": "created",
+                    "step": 0,
+                    "ticks": 0,
+                }
+                self.state.campaign_by_key[key] = external_id
+                campaign = self.state.campaigns[external_id]
+                repeat = False
+        response = {
+            "external_id": campaign["external_id"],
+            "campaign_id": campaign["campaign_id"],
+            "material_id": campaign["material_id"],
+            "budget_usd": campaign["budget_usd"],
+            "spent_usd": campaign["spent_usd"],
+            "status": campaign["status"],
+            "idempotent_repeat": repeat,
+        }
+        self._send_json(202, response)
+
+    def _get_campaign(self, external_id: str) -> None:
+        with self.state.lock:
+            campaign = self.state.campaigns.get(external_id)
+            if campaign is None:
+                self._send_json(404, {"error": f"unknown campaign {external_id}"})
+                return
+            sequence = self.state.campaign_status_sequence
+            if campaign["status"] not in ("delivered", "paused", "failed"):
+                if campaign["ticks"] < len(sequence):  # 每次查询推进一格（确定性）
+                    campaign["status"] = sequence[campaign["ticks"]]
+                    campaign["ticks"] += 1
+            payload = {
+                "external_id": external_id,
+                "budget_usd": campaign["budget_usd"],
+                "spent_usd": campaign["spent_usd"],
+                "status": campaign["status"],
+            }
+        self._send_json(200, payload)
+
+    def _get_metrics(self, external_id: str) -> None:
+        with self.state.lock:
+            campaign = self.state.campaigns.get(external_id)
+            if campaign is None:
+                self._send_json(404, {"error": f"unknown campaign {external_id}"})
+                return
+            if campaign["status"] != self.state.metrics_ready_status:
+                # 指标未就绪：409（协议里的"未就绪"冲突语义）——绝不返 0 假装有数据
+                self._send_json(
+                    409,
+                    {
+                        "error": "metrics not ready",
+                        "status": campaign["status"],
+                    },
+                )
+                return
+            payload = (
+                self.state.metrics_provider(dict(campaign))
+                if self.state.metrics_provider is not None
+                else {
+                    "ctr": 0.12,
+                    "completion_rate": 0.55,
+                    "conversions": 7,
+                    "impressions": 1200,
+                    "clicks": 144,
+                    "platform_timestamp": 1700000000.0,
+                    "data_version": "stub-v1",
+                }
+            )
+        self._send_json(200, payload)
+
+    def _pause(self, external_id: str) -> None:
+        with self.state.lock:
+            campaign = self.state.campaigns.get(external_id)
+            if campaign is None:
+                self._send_json(404, {"error": f"unknown campaign {external_id}"})
+                return
+            if campaign["status"] not in ("delivered", "failed", "paused"):
+                campaign["status"] = "paused"
+            status = campaign["status"]
+        self._send_json(202, {"status": status, "external_id": external_id})
+
+    # ---- LLM（chat/completions） ----
+
+    def _chat(self, body: bytes) -> None:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            assert isinstance(payload, dict)
+        except (UnicodeDecodeError, json.JSONDecodeError, AssertionError):
+            self._send_json(400, {"error": "body must be json"})
+            return
+        with self.state.lock:
+            self.state.chats.append(payload)
+            response = (
+                self.state.chat_provider(payload)
+                if self.state.chat_provider is not None
+                else {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": f"echo: {payload.get('model')}",
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+                }
+            )
+        self._send_json(200, response)
+
 
 class StubPlatformServer:
     """监听 127.0.0.1 随机端口的 stub 平台（上下文管理器即起停）。"""
@@ -417,6 +579,23 @@ class StubPlatformServer:
 
     def artifact_bytes(self, external_id: str) -> bytes:
         return self.state.artifact_bytes(external_id)
+
+    def campaign(self, external_id: str) -> dict:
+        with self.state.lock:
+            return dict(self.state.campaigns[external_id])
+
+    def campaign_ids(self) -> list[str]:
+        with self.state.lock:
+            return list(self.state.campaigns)
+
+    @property
+    def campaign_count(self) -> int:
+        with self.state.lock:
+            return len(self.state.campaigns)
+
+    def chat_requests(self) -> list[dict]:
+        with self.state.lock:
+            return list(self.state.chats)
 
     def start(self) -> StubPlatformServer:
         self._thread.start()
