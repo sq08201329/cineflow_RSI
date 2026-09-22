@@ -740,12 +740,11 @@ llm:
 **其余适配器仍无凭证、C 路径与真实生成仍 `not_delivered`**：
 
 ```bash
-# 在**你自己的 shell** 里导出（本仓任何文件都不含真实密钥；脚本只报"已设置/未设置 + 长度"）
-export OPENAI_BASE_URL=https://api.deepseek.com
-export OPENAI_API_KEY=...                 # 你的 DeepSeek 密钥
+# 在**你自己的 shell** 里导出（变量名须与配置档案声明一致；本仓任何文件都不含真实密钥）
+export DEEPSEEK_API_KEY=...               # 你的 DeepSeek 密钥
 
 # ① 网关级冒烟：一次调用，打印模型 / base host（脱敏）/ tokens / 按价目折算的成本 / 缓存命中
-uv run python ops/smoke_llm.py --config configs/movie.yaml --model deepseek-flash
+uv run python ops/smoke_llm.py --config configs/movie.yaml --profile deepseek-flash
 
 # ② 最小规模的真实试水单轮（剧本线真实，平台适配器仍模拟）：会真的计费
 uv run python ops/smoke_llm.py --config configs/shortdrama.yaml --round
