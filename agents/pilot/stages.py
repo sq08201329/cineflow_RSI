@@ -550,6 +550,8 @@ def _sound_entry(stage_input: StageInput) -> StageOutcome:
     timing_sheet = stage_input.handoff_input
     plans = build_sound_plans(runtime, timing_sheet)
     adapters = dict(runtime.backends.sound)  # tts/sfx/music 三类（装配点一次构造）
+    # 功能 016：声音阶段无 LLM 调用（不改网关），但档案口径同样随快照冻结
+    llm_profiles = runtime.gateway.profile_snapshot().to_dict()
     result = run_sound_round(
         round_id=round_id,
         policy=_SoundPolicy(plans=plans),
@@ -558,6 +560,7 @@ def _sound_entry(stage_input: StageInput) -> StageOutcome:
         adapters=adapters,
         engine=runtime.engine,
         config=config,
+        llm_profiles=llm_profiles,
         inputs={"timing_sheet": timing_sheet},
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=len(plans))

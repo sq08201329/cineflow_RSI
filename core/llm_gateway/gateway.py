@@ -63,7 +63,11 @@ class LLMResult:
 
 
 class LLMGateway:
-    """统一入口：chat(prompt, model=..., ...) -> LLMResult。"""
+    """统一入口：chat(prompt, model=..., ...) -> LLMResult。
+
+    `profiles`（功能 016）：模型档案解析结果 `ProfileLoad`；缺省 None = 既有调用形态
+    （只按 `price_book` 折算，快照走"旧扁平价目表"路径）——**单档案行为与现状等价**。
+    """
 
     def __init__(
         self,
@@ -72,9 +76,13 @@ class LLMGateway:
         *,
         sleep: Callable[[float], None] = time.sleep,
         max_retries: int = MAX_RETRIES,
+        profiles=None,
     ) -> None:
         self.backend = backend
         self._price_book = price_book
+        # 模型档案（功能 016）：`ProfileLoad`（配置解析结果）；None = 既有调用形态
+        # （`price_book=` 单档案等价现状，快照取自该价目表并如实标注来源）
+        self._profiles = profiles
         self._sleep = sleep
         self._max_retries = max_retries
         self._cache: dict[str, LLMResult] = {}
@@ -124,3 +132,17 @@ class LLMGateway:
         self.total_cost_usd += cost
         self.call_count += 1
         return result
+
+    def profile_snapshot(self):
+        """LLM 档案快照（功能 016 / 契约 C7）：档案 + 价目 + 价目口径备注 + 端点 host +
+        迁移说明，**不含密钥**——各 Agent 构造 `config_snapshot` 时并入键 `llm_profiles`，
+        历史节点因此绑定当时的价目口径（改价不漂移，可审计复算）。
+
+        未接入档案（既有 `price_book=` 调用形态）时，快照取自该价目表并标注来源
+        `legacy_price_book`：单档案等价现状（SC-005），且端点/凭证名如实标注"沿用旧变量名"。
+        """
+        from core.llm_gateway.profiles import legacy_price_book_snapshot
+
+        if self._profiles is not None:
+            return self._profiles.snapshot()
+        return legacy_price_book_snapshot(self._price_book)

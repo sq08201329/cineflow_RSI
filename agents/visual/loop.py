@@ -36,6 +36,10 @@ from core.evaluators.base import ArtifactRef, EvalResult
 from core.evaluators.composite import composite_score_versioned
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import LLMGateway
+from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
+    gateway_profile_snapshot,
+    with_llm_profiles,
+)
 from core.tree.artifacts import ArtifactStore
 from core.tree.errors import DuplicateError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
@@ -139,7 +143,10 @@ def run_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=_config_snapshot(config, compliance, proxies, judge),
+        config_snapshot=with_llm_profiles(
+            _config_snapshot(config, compliance, proxies, judge),
+            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        ),
     )
     try:
         store.create_tree(tree)

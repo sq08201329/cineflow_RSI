@@ -203,7 +203,12 @@ def build_backends(
         selection=selection,
         resolved=resolved,
         llm=llm,
-        gateway=LLMGateway(llm, price_book=configs.screenplay.model_prices, sleep=lambda _: None),
+        gateway=LLMGateway(
+            llm,
+            price_book=configs.screenplay.model_prices,
+            sleep=lambda _: None,
+            profiles=_llm_profiles_for(config_path),  # 功能 016：档案与价目随快照冻结
+        ),
         storyboard=_guard(
             "storyboard", resolved["storyboard"], lambda: _storyboard(resolved["storyboard"])
         ),
@@ -306,3 +311,17 @@ def _promo(kind: str, configs):
     from agents.promo.platform.http_real import HttpRealPlatform
 
     return HttpRealPlatform.from_env()
+
+
+def _llm_profiles_for(config_path: str | Path):
+    """读形态配置的 LLM 档案（功能 016）：有 `llm` 段用新写法，否则按旧扁平写法迁移。
+
+    解析失败即抛 `BackendAssemblyError`（缺项即报错，不静默给出空档案、不回落默认价）。
+    """
+    from core.llm_gateway.profiles import ProfileConfigError, load_or_migrate
+
+    payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    try:
+        return load_or_migrate(payload if isinstance(payload, Mapping) else {})
+    except ProfileConfigError as exc:
+        raise BackendAssemblyError(f"LLM 档案解析失败（{config_path}）：{exc}") from exc

@@ -12,6 +12,7 @@
 
 import json
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -29,6 +30,7 @@ from agents.sound.platform.base import SoundGenAdapter, SoundGenError
 from agents.sound.timing import TimingSheet
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
+from core.llm_gateway.profiles import with_llm_profiles  # 功能 016：档案快照接线（声音无 LLM 调用）
 from core.tree.artifacts import ArtifactStore
 from core.tree.errors import DuplicateError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
@@ -113,6 +115,7 @@ def run_sound_round(
     config: SoundConfig,
     inputs: dict,
     evaluators: list[Evaluator] | None = None,
+    llm_profiles: Mapping | None = None,  # 功能 016：档案与价目口径随快照冻结（声音不消费 LLM）
 ) -> SoundRoundResult:
     """执行一轮声音线上探索（全流程幂等）。"""
     # 0) 输入校验先于一切副作用（适配器 0 调用、0 成本、0 落库）
@@ -136,7 +139,7 @@ def run_sound_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=_config_snapshot(config, evaluators),
+        config_snapshot=with_llm_profiles(_config_snapshot(config, evaluators), llm_profiles),
     )
     try:
         store.create_tree(tree)

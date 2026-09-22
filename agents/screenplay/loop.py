@@ -46,6 +46,10 @@ from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import GatewayError, LLMGateway
+from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
+    gateway_profile_snapshot,
+    with_llm_profiles,
+)
 from core.tree.artifacts import ArtifactStore
 from core.tree.errors import DuplicateError, ValidationError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
@@ -539,7 +543,10 @@ def run_screenplay_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=_config_snapshot(config, evaluators),
+        config_snapshot=with_llm_profiles(
+            _config_snapshot(config, evaluators),
+            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        ),
     )
     # ---- 幂等：树锚点已存在 → 直接重建首轮结果返回（0 重复生成 0 重复扣费）----
     try:
