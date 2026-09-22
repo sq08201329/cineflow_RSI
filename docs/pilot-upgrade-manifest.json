@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.3.0",
+  "schema_version": "1.4.0",
   "title": "试水作品升级路径（A → B/C）结构化清单",
-  "generated_by": "功能 015（短剧形态试水作品）T1523；1.1.0 由凭证核查批次纠偏；1.2.0 由「后端选择配置化」批次升级（切换成为配置动作，见 switch_mechanism）；1.3.0 由「媒体适配器协议实现」批次升级：视觉/分镜/剪辑三环节的真实适配器由骨架落地为协议实现（core/platform_http.py）并加 protocol_implementation 登记",
+  "generated_by": "功能 015（短剧形态试水作品）T1523；1.1.0 由凭证核查批次纠偏；1.2.0 由「后端选择配置化」批次升级（切换成为配置动作，见 switch_mechanism）；1.4.0 由「剩余适配器族协议实现」批次升级：声音×3 / 宣发投放 / LLM 网关 http 后端落地为协议实现，protocol_implementation 覆盖全部适配器族",
   "credential_authority": "环境变量名以代码为权威：取自各适配器实现类的真实读取点（from_env() 或构造器）。tests/unit/test_credential_env_lock.py 逐项机检（清单 ⇄ 代码双向比对），改坏即红。命名不加强制前缀：平台侧怎么叫就怎么登记。",
   "switch_mechanism": {
     "config_section": "pilot",
@@ -102,10 +102,10 @@
       },
       "notes": "真实凭证仅经环境变量注入（不落盘）；切换 = **改配置 `pilot` 段或加两个 CLI 标志**（装配层按取值替换实现类，代码与形态配置结构不变）。真实 LLM 亦经网关 http 后端（HttpBackend 直接读 OPENAI_*，无 from_env）。声明 http 而凭证缺失 = 装配期失败（报错指出缺哪个环境变量，零落树零扣费，不回落模拟）；`ops/pilot.py precheck` 只验配置完整性（不验凭证，报告字段 pilot_backend.credentials_checked=false），凭证面由 ops/check_credentials.py 负责｜1.3.0：视觉/分镜/剪辑三环节适配器已由骨架落地为协议实现（本地 stub 端到端验证），status 仍为 not_delivered——真实厂商对接待凭证、真实计费未跑过（见 protocol_implementation）",
       "protocol_implementation": {
-        "scope": "视觉生成 / 分镜预演 / 剪辑渲染三个媒体环节：请求形态 + 错误映射 + 成本纪律，语义钉死在 core/platform_http.py 模块 docstring",
-        "adapter_state": "已落地（非骨架）：submit/get_status/fetch_artifact/job_actual_cost/cancel（视觉）与 estimate/render（分镜/剪辑）",
-        "verified_by": "tests/integration/test_http_real_stub.py（本地 loopback stub，31 条端到端：submit→poll→取件→成本→取消 / estimate→render、幂等键透传、429/5xx/超时/404/409/不可解析/actual>estimated 错误映射、契约镜像断言）+ 既有契约套件真实分支实跑（CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract/test_video_gen_adapter.py tests/contract/test_storyboard_platform_contract.py tests/contract/test_editing_platform_contract.py -q → 59 passed）",
-        "not_verified": "真实厂商 API/鉴权/字段、真实凭证、真实计费均未跑过——**能连本地 stub 不等于 B 路径已验证**；声音（TTS/SFX/音乐）、投放、LLM 适配器仍为骨架",
+        "scope": "**全部适配器族**：视觉生成 / 分镜预演 / 声音×3（TTS/SFX/音乐）/ 剪辑渲染 / LLM 网关 http 后端——请求形态 + 错误映射 + 成本与 token 纪律，语义钉死在 core/platform_http.py 模块 docstring（LLM 走 core/llm_gateway/backends/http.py 的 OpenAI 兼容口径）",
+        "adapter_state": "已落地（非骨架）：submit/get_status/fetch_artifact/job_actual_cost/cancel（视觉）、estimate/render（分镜、剪辑）、estimate/generate（声音×3，wav 工件 + 声学属性元数据）、complete（LLM，usage 以响应为准、成本由网关按 price_book 折算）",
+        "verified_by": "tests/integration/test_http_real_stub.py（本地 loopback stub，62 条端到端：三环节 + 声音×3 + 宣发 + LLM 的提交→轮询→取件→成本/token 断言、幂等键透传、429/5xx/超时/404/409/不可解析/actual>estimated 错误映射、契约镜像断言）+ 既有契约套件真实分支实跑（CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q → 309 passed）+ LLM 后端等价契约（tests/integration/test_http_real_stub.py::TestLLM后端协议）",
+        "not_verified": "真实厂商 API/鉴权/字段、真实凭证、真实计费均未跑过——**能连本地 stub 不等于 B 路径已验证**；声音的注入标记（错字率/事件时间/情绪向量）与剪辑的渲染规格依赖平台侧承载/回传",
         "vendor_onboarding": "按厂商 API 调整路径/鉴权/字段（配置或小改）；状态机取值不同则在适配器的状态映射表登记（未登记状态一律 UnavailableError）；剪辑环节的渲染规格由平台侧配置承载（接口签名无 cfg 注入点）"
       }
     },
@@ -133,7 +133,14 @@
         "campaign_cap_formula": "promo.exploration_per_round_usd × promo.promo_pilot_ratio",
         "real_spend": "真实投放扣费由平台回执对账；单轮申请额超门禁即拒投（不静默超投）"
       },
-      "notes": "真实投放属运营动作：需人工确认账户与预算，且不得由自动进化路径触发。C 建立在 B 之上（先满足 B 的真实生成凭证）——上面这条 run 命令的 `--backend http` 同时覆盖宣发环节（五个环节共享该全局取值）；**只切投放、生成仍走模拟**时改用配置 `pilot: {overrides: {promo: http}}`（逐环节声明优先于全局取值）。回流管道另需生产库 DSN CINEFLOW_PG_DSN（由 ops/ingest_metrics.py 读取，非适配器凭证，故不入 credential_envs）"
+      "notes": "真实投放属运营动作：需人工确认账户与预算，且不得由自动进化路径触发。C 建立在 B 之上（先满足 B 的真实生成凭证）——上面这条 run 命令的 `--backend http` 同时覆盖宣发环节（五个环节共享该全局取值）；**只切投放、生成仍走模拟**时改用配置 `pilot: {overrides: {promo: http}}`（逐环节声明优先于全局取值）。回流管道另需生产库 DSN CINEFLOW_PG_DSN（由 ops/ingest_metrics.py 读取，非适配器凭证，故不入 credential_envs）｜1.4.0：宣发适配器已由骨架落地为协议实现（本地 stub 端到端验证），status 仍为 not_delivered——真实账户/预算与真实指标口径未跑过（见 protocol_implementation）",
+      "protocol_implementation": {
+        "scope": "宣发投放适配器（HttpRealPlatform）：创建/状态/指标/暂停四端点协议 + 幂等键 + 花费上限纪律",
+        "adapter_state": "已落地（非骨架）：create_campaign/get_status/fetch_metrics/pause；指标未就绪抛 MetricsNotReadyError（绝不返 0），指标越界经 validate_metrics 拒为 MetricValidationError",
+        "verified_by": "tests/integration/test_http_real_stub.py::Test宣发投放协议（14 条）+ tests/contract/test_platform_adapter.py 真实分支实跑（CINEFLOW_CONTRACT_STUB=1）；防回归实证：把 fetch_metrics 改回返 0 → 该组 9 条立刻变红",
+        "not_verified": "真实投放账户/预算/扣费与真实指标口径未跑过（属运营动作）；distribution 不接线（真实指标取自平台）",
+        "vendor_onboarding": "按平台 API 调整路径/字段与指标口径（如百分比 vs 比率）；真实投放需人工确认账户与预算，不得由自动进化路径触发"
+      }
     }
   ],
   "honesty_boundary": [

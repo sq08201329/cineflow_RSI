@@ -679,13 +679,14 @@ uv run python ops/pilot.py precheck ... --backend http                 # prechec
 - **本特性产出为模拟生成**：模拟视频/音频生成器 + 模拟投放平台 + Mock LLM 后端，
   零外部计费、零凭证、零真实投放；样片包与清单均强制标注「模拟生成」，**不得作为对外发布素材**；
 - **不使用版权素材**：夹具与全部生成内容均为合成（程序化帧/波形/伪文本）；
-- **真实生成与投放（B/C 路径）未交付**：切换开关（`pilot` 段 / `--backend`）已配置化；视觉/分镜/剪辑
-  三环节的真实适配器已落地为**协议实现**并用本地 stub 端到端验证（`uv run pytest
-  tests/integration/test_http_real_stub.py -q`；`CINEFLOW_CONTRACT_STUB=1` 可让契约套件真实分支实跑），
-  但**真实厂商对接与真实计费未跑过**（能连 stub ≠ B 路径已验证），声音/投放/LLM 适配器仍是骨架
-  （`…本期未接入`）——**装配成功 ≠ 链路可用**，另登记切换方式与凭证清单
-  （见 [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
-  [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)，字段可机检）；
+- **真实生成与投放（B/C 路径）未交付**：切换开关（`pilot` 段 / `--backend`）已配置化；**全部适配器族**
+  （视觉/分镜/声音×3/剪辑/宣发/LLM）已落地为**协议实现**并用本地 stub 端到端验证（`uv run pytest
+  tests/integration/test_http_real_stub.py -q`；`CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract`
+  可让契约套件真实分支实跑），但**真实厂商对接与真实计费未跑过**（能连 stub ≠ B/C 路径已验证）——
+  另有一处如实拒绝：声音响度标定基于模拟合成器口径，切 `sound: http` 时直接拒绝（零生成零扣费，
+  替代做法见升级路径文档）——**装配成功 ≠ 链路可用**，切换方式与凭证清单见
+  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
+  [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)（字段可机检）；
 - 上游不合格 → 下游**拒绝启动**（不静默降级）；环节候选全败 → 运行终止并记录全部判 0 理由。
 
 ### 短剧形态配置约束（切换/改配置前必读）
