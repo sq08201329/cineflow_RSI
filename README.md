@@ -156,7 +156,8 @@ uv run python ops/demo_visual_loop.py
 # 单元测试（执行器/TimingSheet/音频合成/配置/四评估器/合成/回放/做梦接入）
 uv run pytest tests/unit -k sound
 
-# 生成适配器契约套件（三类型 × 双实现同构；真实骨架无凭证跳过）
+# 生成适配器契约套件（三类型 × 双实现同构；真实实现无凭证跳过，置 CINEFLOW_CONTRACT_STUB=1
+# 可让真实实现分支对着本地 stub 实跑）
 uv run pytest tests/contract -k sound
 
 # PG 集成（0005 迁移真实执行 + 两段式落盘全链路 + 分账对账，需 Docker PG）
@@ -190,7 +191,7 @@ ASR/情绪匹配，实现哈希入版本号，quantize 6 位定点归一；类�
 # 单元测试（镜头库/场景分区/EDL 四层校验/确定性渲染/配置/五评估器/合成/执行器/回放/做梦接入）
 uv run pytest tests/unit -k editing
 
-# 渲染适配器契约套件（双实现同构；真实骨架无凭证跳过）
+# 渲染适配器契约套件（双实现同构；真实实现无凭证跳过，置 CINEFLOW_CONTRACT_STUB=1 可实跑）
 uv run pytest tests/contract -k editing
 
 # PG 集成（0006 迁移真实执行 + 唯一键 (round_id, edl_hash) 幂等 + 两段式全链路 + 对账，需 Docker PG）
@@ -226,7 +227,7 @@ meta.json 谱系）。
 # 单元测试（剧本/ShotList 三层校验/分镜卡渲染/配置/摘要/五评估器/合成/执行器/回放/schema 快照）
 uv run pytest tests/unit -k "storyboard or shotlist"
 
-# 预演渲染适配器契约套件（双实现同构；真实骨架无凭证跳过）
+# 预演渲染适配器契约套件（双实现同构；真实实现无凭证跳过，置 CINEFLOW_CONTRACT_STUB=1 可实跑）
 uv run pytest tests/contract -k storyboard
 
 # PG 集成（0007 迁移真实执行 + 唯一键 (round_id, shotlist_hash) 幂等 + 两段式全链路 + 对账，需 Docker PG）
@@ -678,9 +679,12 @@ uv run python ops/pilot.py precheck ... --backend http                 # prechec
 - **本特性产出为模拟生成**：模拟视频/音频生成器 + 模拟投放平台 + Mock LLM 后端，
   零外部计费、零凭证、零真实投放；样片包与清单均强制标注「模拟生成」，**不得作为对外发布素材**；
 - **不使用版权素材**：夹具与全部生成内容均为合成（程序化帧/波形/伪文本）；
-- **真实生成与投放（B/C 路径）未交付**：切换开关（`pilot` 段 / `--backend`）已配置化，但真实
-  适配器的业务方法仍是骨架（`…本期未接入`）——**装配成功 ≠ 链路可用**，只登记切换方式与
-  凭证清单（见 [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
+- **真实生成与投放（B/C 路径）未交付**：切换开关（`pilot` 段 / `--backend`）已配置化；视觉/分镜/剪辑
+  三环节的真实适配器已落地为**协议实现**并用本地 stub 端到端验证（`uv run pytest
+  tests/integration/test_http_real_stub.py -q`；`CINEFLOW_CONTRACT_STUB=1` 可让契约套件真实分支实跑），
+  但**真实厂商对接与真实计费未跑过**（能连 stub ≠ B 路径已验证），声音/投放/LLM 适配器仍是骨架
+  （`…本期未接入`）——**装配成功 ≠ 链路可用**，另登记切换方式与凭证清单
+  （见 [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
   [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)，字段可机检）；
 - 上游不合格 → 下游**拒绝启动**（不静默降级）；环节候选全败 → 运行终止并记录全部判 0 理由。
 
