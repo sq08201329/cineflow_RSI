@@ -1,7 +1,8 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "title": "试水作品升级路径（A → B/C）结构化清单",
-  "generated_by": "功能 015（短剧形态试水作品）T1523",
+  "generated_by": "功能 015（短剧形态试水作品）T1523；1.1.0 由凭证核查批次纠偏",
+  "credential_authority": "环境变量名以代码为权威：取自各适配器实现类的真实读取点（from_env() 或构造器）。tests/unit/test_credential_env_lock.py 逐项机检（清单 ⇄ 代码双向比对），改坏即红。命名不加强制前缀：平台侧怎么叫就怎么登记。",
   "paths": [
     {
       "path_id": "A",
@@ -41,20 +42,33 @@
       "name": "B 路径：真实视频/音频生成（凭证到位后切换）",
       "status": "not_delivered",
       "credential_envs": [
-        "CINEFLOW_VIDEO_API_KEY",
-        "CINEFLOW_VIDEO_API_BASE",
-        "CINEFLOW_AUDIO_API_KEY",
-        "CINEFLOW_AUDIO_API_BASE"
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "VISUAL_GEN_BASE_URL",
+        "VISUAL_GEN_API_KEY",
+        "STORYBOARD_RENDER_BASE_URL",
+        "STORYBOARD_RENDER_API_KEY",
+        "SOUND_TTS_BASE_URL",
+        "SOUND_TTS_API_KEY",
+        "SOUND_SFX_BASE_URL",
+        "SOUND_SFX_API_KEY",
+        "SOUND_MUSIC_BASE_URL",
+        "SOUND_MUSIC_API_KEY",
+        "EDIT_RENDER_BASE_URL",
+        "EDIT_RENDER_API_KEY"
       ],
       "adapters": [
+        "core.llm_gateway.backends.http.HttpBackend",
         "agents.visual.platform.http_real.HttpRealVideoGen",
         "agents.storyboard.platform.http_real.HttpRealStoryboardRender",
         "agents.sound.platform.http_real.HttpRealTTSGen",
         "agents.sound.platform.http_real.HttpRealSFXGen",
-        "agents.sound.platform.http_real.HttpRealMusicGen"
+        "agents.sound.platform.http_real.HttpRealMusicGen",
+        "agents.editing.platform.http_real.HttpRealEditRender"
       ],
       "switch_commands": [
-        "CINEFLOW_VIDEO_API_KEY=... CINEFLOW_AUDIO_API_KEY=... uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id real-run"
+        "uv run python ops/check_credentials.py --probe --path B",
+        "uv run python ops/pilot.py precheck --form shortdrama --config configs/shortdrama.yaml --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot"
       ],
       "budget_policy": {
         "unit": "USD",
@@ -65,22 +79,21 @@
         "campaign_cap_formula": "promo.exploration_per_round_usd × promo.promo_pilot_ratio",
         "real_spend": "按各平台价目表实扣；编排层账目（cost.json）与各 Agent 落盘账目逐项对账，零差异才装配样片包"
       },
-      "notes": "真实凭证仅经环境变量注入（不落盘）；切换只在装配层替换适配器实现类，代码路径与形态配置不变"
+      "notes": "真实凭证仅经环境变量注入（不落盘）；切换只在装配层替换适配器实现类，代码路径与形态配置不变。真实 LLM 亦经网关 http 后端（HttpBackend 直接读 OPENAI_*，无 from_env）；`ops/pilot.py precheck` 只验配置完整性，凭证面由 ops/check_credentials.py 负责"
     },
     {
       "path_id": "C",
       "name": "C 路径：真实投放（平台凭证到位后切换）",
       "status": "not_delivered",
       "credential_envs": [
-        "CINEFLOW_PROMO_API_KEY",
-        "CINEFLOW_PROMO_API_BASE",
-        "CINEFLOW_PROMO_ACCOUNT_ID"
+        "PROMO_PLATFORM_BASE_URL",
+        "PROMO_PLATFORM_API_KEY"
       ],
       "adapters": [
         "agents.promo.platform.http_real.HttpRealPlatform"
       ],
       "switch_commands": [
-        "uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id live-run",
+        "uv run python ops/check_credentials.py --probe --path C",
         "uv run python ops/ingest_metrics.py --round-id live-run --dsn $CINEFLOW_PG_DSN"
       ],
       "budget_policy": {
@@ -91,12 +104,14 @@
         "campaign_cap_formula": "promo.exploration_per_round_usd × promo.promo_pilot_ratio",
         "real_spend": "真实投放扣费由平台回执对账；单轮申请额超门禁即拒投（不静默超投）"
       },
-      "notes": "真实投放属运营动作：需人工确认账户与预算，且不得由自动进化路径触发"
+      "notes": "真实投放属运营动作：需人工确认账户与预算，且不得由自动进化路径触发。C 建立在 B 之上（先满足 B 的真实生成凭证）；回流管道另需生产库 DSN CINEFLOW_PG_DSN（由 ops/ingest_metrics.py 读取，非适配器凭证，故不入 credential_envs）"
     }
   ],
   "honesty_boundary": [
     "A 路径产出为「模拟生成」，不构成对外发布素材",
     "不使用版权素材（夹具与生成内容均为合成）",
-    "B/C 的切换属于装配层替换：形态差异仍只在 configs/*.yaml，代码零形态分支"
+    "B/C 的切换属于装配层替换：形态差异仍只在 configs/*.yaml，代码零形态分支",
+    "凭证名以代码为权威（1.1.0 纠偏：原 CINEFLOW_VIDEO_*/CINEFLOW_AUDIO_*/CINEFLOW_PROMO_* 在代码中不存在，按它注入会静默无效）",
+    "核查器 ops/check_credentials.py 默认零网络；--probe 只发 GET 只读端点，绝不触发付费生成"
   ]
 }
