@@ -77,6 +77,7 @@ def _run_payload(result) -> dict:
         "precheck": {
             "loaders": list(result.precheck_report.get("loaders", ())),
             "config_fingerprint": result.precheck_report.get("config_fingerprint"),
+            "backend": result.precheck_report.get("pilot_backend"),
         },
     }
 
@@ -92,6 +93,8 @@ def _cmd_run(args) -> int:
             artifacts_root=args.artifacts_root,
             run_id=args.run_id,
             clock=clock,
+            backend=args.backend,
+            llm_backend=args.llm_backend,
         )
     except (PilotError, OrchestrationError, PackageError) as exc:
         _print({"status": "rejected", "error": str(exc)})
@@ -112,6 +115,8 @@ def _cmd_resume(args) -> int:
             artifacts_root=args.artifacts_root,
             run_id=args.run_id,
             clock=clock,
+            backend=args.backend,
+            llm_backend=args.llm_backend,
         )
     except (PilotError, OrchestrationError, PackageError) as exc:
         _print({"status": "rejected", "error": str(exc)})
@@ -168,6 +173,8 @@ def _cmd_precheck(args) -> int:
             config_path=args.config,
             inputs=_parse_inputs(args),
             data_dir=args.data_dir,
+            backend=args.backend,
+            llm_backend=args.llm_backend,
         )
     except (PilotError, OrchestrationError) as exc:
         _print({"status": "rejected", "error": str(exc)})
@@ -186,6 +193,20 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-dir", required=True, help="数据目录（runs/ 与 packages/ 所在根）")
     parser.add_argument(
         "--artifacts-root", default=None, help="工件根目录（默认 <data-dir>/artifacts）"
+    )
+    # 后端选择：缺省取形态配置 `pilot` 段（段缺失即 simulated/mock，A 路径零配置可跑）。
+    # 逐环节覆盖请改配置 `pilot.overrides`（本 CLI 只做全局覆盖）
+    parser.add_argument(
+        "--backend",
+        choices=("simulated", "http"),
+        default=None,
+        help="五个环节的平台适配器后端（缺省取配置 pilot.backend；http 需凭证，缺则装配期拒绝）",
+    )
+    parser.add_argument(
+        "--llm-backend",
+        choices=("mock", "http"),
+        default=None,
+        help="LLM 网关后端（缺省取配置 pilot.llm_backend；http 读 OPENAI_*，缺则装配期拒绝）",
     )
 
 
