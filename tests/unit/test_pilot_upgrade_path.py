@@ -67,7 +67,12 @@ def test_适配器实现类均可导入():
             assert hasattr(module, class_name), f"{dotted} 不存在（升级路径不得指向空类）"
 
 
-REPO_CLIS = ("ops/pilot.py", "ops/ingest_metrics.py", "ops/check_credentials.py")
+REPO_CLIS = (
+    "ops/pilot.py",
+    "ops/ingest_metrics.py",
+    "ops/check_credentials.py",
+    "ops/smoke_llm.py",  # 真实 LLM 冒烟（1.5.0）
+)
 
 
 def test_切换命令非空且指向本仓_CLI():

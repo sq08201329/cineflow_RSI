@@ -689,6 +689,36 @@ uv run python ops/pilot.py precheck ... --backend http                 # prechec
   [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)（字段可机检）；
 - 上游不合格 → 下游**拒绝启动**（不静默降级）；环节候选全败 → 运行终止并记录全部判 0 理由。
 
+### 真实 LLM 冒烟（DeepSeek 示例，只有 LLM 凭证时）
+
+只拿到 LLM 凭证（OpenAI 兼容）时，可用 `ops/smoke_llm.py` 验证 LLM 腿能否跑通——
+**其余适配器仍无凭证、C 路径与真实生成仍 `not_delivered`**：
+
+```bash
+# 在**你自己的 shell** 里导出（本仓任何文件都不含真实密钥；脚本只报"已设置/未设置 + 长度"）
+export OPENAI_BASE_URL=https://api.deepseek.com
+export OPENAI_API_KEY=...                 # 你的 DeepSeek 密钥
+
+# ① 网关级冒烟：一次调用，打印模型 / base host（脱敏）/ tokens / 按价目折算的成本 / 缓存命中
+uv run python ops/smoke_llm.py --config configs/movie.yaml --model deepseek-flash
+
+# ② 最小规模的真实试水单轮（剧本线真实，平台适配器仍模拟）：会真的计费
+uv run python ops/smoke_llm.py --config configs/shortdrama.yaml --round
+
+# ③ 零真实调用的装配校验（同一最小档，LLM 走 mock；不需要凭证）
+uv run python ops/smoke_llm.py --config configs/shortdrama.yaml --round --dry-run
+```
+
+- **退出码**：`0` 成功｜`1` 凭证缺失（并指向 `ops/check_credentials.py`）｜`2` 其它失败；
+- **只切 LLM 后哪些环节变真实**：剧本线（生成 + judge）整体真实；分镜/视觉/剪辑的 judge 与
+  宣发文案生成也走真实 LLM（共用网关）；**平台侧（渲染/生成/投放）仍是模拟**，账面金额零外部计费；
+- **价目口径**：`screenplay.model_prices` 的 `deepseek-flash` / `deepseek-v4-pro` 按
+  **峰时缓存未命中上限**折算（保守高估；真实账单因缓存命中与错峰只会更低），
+  模型名/价目变动由运维按官方口径更新（详见
+  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 第七节）；
+- **成本量级**（估算，非保证）：最小档 `--round` 约 48 次 LLM 调用、prompt ≈ 39k tokens、
+  completion 千 token 量级 → 按 `deepseek-flash` 折算 **$0.02 上下**，`deepseek-v4-pro` **$0.1 上下**。
+
 ### 短剧形态配置约束（切换/改配置前必读）
 
 | 约束 | 原因 |
