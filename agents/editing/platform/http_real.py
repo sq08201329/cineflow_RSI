@@ -157,7 +157,8 @@ class HttpRealEditRender:
         external_id = required_str(submitted, "external_id", errors=_ERRORS, where=where)
         estimated = required_cost(submitted, "estimated_cost_usd", errors=_ERRORS, where=where)
 
-        final = await_succeeded(
+        # 轮询至终态（failed 抛 RenderError）；实际扣费在取件后查询——取件即入账
+        await_succeeded(
             self._client,
             external_id,
             errors=_ERRORS,
@@ -165,7 +166,6 @@ class HttpRealEditRender:
             poll_interval_s=self._poll_interval_s,
             poll_deadline_s=self._poll_deadline_s,
         )
-        del final  # 终态已确认；实际扣费在取件后查询（取件即入账，见下）
         raw, headers = self._client.get_bytes(f"/jobs/{external_id}/artifact")
         metadata = decode_artifact_meta(
             headers,
