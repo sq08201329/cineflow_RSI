@@ -653,7 +653,17 @@ uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yam
 uv run python ops/pilot.py inspect --data-dir pilot --run-id demo-run --package
 uv run python ops/pilot.py resume  --form shortdrama --config configs/shortdrama.yaml \
     --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run
+
+# 后端切换（A → B 是一行命令，不是改装配代码）：缺省取配置 pilot 段，此处为运行时覆盖
+uv run python ops/pilot.py run ... --backend http --llm-backend http   # 缺凭证 → 装配期明确报错，零落树零扣费
+uv run python ops/pilot.py precheck ... --backend http                 # precheck 不验凭证（只报配置完整性）
 ```
+
+**后端选择（配置驱动）**：形态配置 `pilot` 段（`backend: simulated|http`、
+`llm_backend: mock|http`、`overrides: {环节: 取值}`）决定六个后端（网关 + 分镜/视觉/声音/
+剪辑/宣发适配器）的装配，唯一装配点是 `agents/pilot/backends.py`；段缺失即默认模拟
+（A 路径零配置可跑）。声明 `http` 而凭证缺失 = **装配期显式失败**（指出缺哪个环境变量，
+先于落树/生成，**不静默回落模拟**）；取值非法同样装配期拒绝。
 
 **分层**（宪章原则五）：`core/orchestration/` 通用执行器（**零业务概念**：DAG/状态机/断点续跑
 /账目，静态断言机检）→ `agents/pilot/` 四段交接纯映射 + 六阶段定义 + 样片包装配 →
@@ -668,8 +678,9 @@ uv run python ops/pilot.py resume  --form shortdrama --config configs/shortdrama
 - **本特性产出为模拟生成**：模拟视频/音频生成器 + 模拟投放平台 + Mock LLM 后端，
   零外部计费、零凭证、零真实投放；样片包与清单均强制标注「模拟生成」，**不得作为对外发布素材**；
 - **不使用版权素材**：夹具与全部生成内容均为合成（程序化帧/波形/伪文本）；
-- **真实生成与投放（B/C 路径）未交付**：只登记切换方式与凭证清单（见
-  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
+- **真实生成与投放（B/C 路径）未交付**：切换开关（`pilot` 段 / `--backend`）已配置化，但真实
+  适配器的业务方法仍是骨架（`…本期未接入`）——**装配成功 ≠ 链路可用**，只登记切换方式与
+  凭证清单（见 [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
   [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)，字段可机检）；
 - 上游不合格 → 下游**拒绝启动**（不静默降级）；环节候选全败 → 运行终止并记录全部判 0 理由。
 
