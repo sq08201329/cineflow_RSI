@@ -3383,3 +3383,134 @@ deployment:
   screenplay:
     current_policy_version: fa6b7bca77ed
 """
+
+
+# ---------------------------------------------------------------------------
+# 功能 016（LLM 模型档案与角色路由）夹具：配置片段工厂 + 假环境变量
+# ---------------------------------------------------------------------------
+
+_LLM_DEEPSEEK = {
+    "base_url": "https://api.deepseek.com",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "prices": {"prompt_per_1k": 0.0003, "completion_per_1k": 0.0012},
+    "price_note": "峰时缓存未命中上限（保守高估）",
+}
+_LLM_LOCAL = {
+    "base_url_env": "LOCAL_LLM_BASE_URL",
+    "api_key_env": "LOCAL_LLM_API_KEY",
+    "prices": {"prompt_per_1k": 0.0, "completion_per_1k": 0.0},
+    "zero_marginal": True,
+    "price_note": "自建推理：零边际成本（仍非免费）",
+}
+_LLM_LEGACY_PRICES = {"mock-copy-v1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}}
+
+
+@pytest.fixture()
+def llm_profiles_config_factory():
+    """LLM 配置片段工厂（功能 016 / T1602）：返回 `_make(variant=..., **overrides)` → config dict。
+
+    变体（覆盖契约 C1~C3 的场景与全部"缺项即报错"分支）：
+
+    - `single`：单档案（自动认定默认，注释记入 notes）
+    - `multi`：双档案 + 显式默认 + 逐角色映射
+    - `multi_no_default`：双档案但缺 `default_profile`（报错路径）
+    - `missing_prices` / `missing_endpoint` / `missing_key_env`：三类缺项（各报错）
+    - `zero_not_declared`：价目全 0 但未声明 `zero_marginal`（报错路径）
+    - `unknown_role`：角色名拼错（枚举外，报错并列合法枚举）
+    - `multi_level` / `self_reference` / `unknown_profile`：映射多层 / 自指 / 指向不存在档案
+    - `orphan`：多一个未被任何角色引用的档案（notes 列出）
+    - `legacy_flat`：**只有**旧扁平写法（`screenplay.model` + `model_prices`）
+    - `legacy_and_new`：新旧并存（以新为准 + "旧键被忽略"入 notes）
+    - `no_llm_section`：既无 llm 段也无旧写法（报错路径）
+    """
+
+    def _make(variant: str = "single", **overrides) -> dict:
+        import copy
+
+        if variant == "legacy_flat":
+            return {
+                "form": "movie",
+                "screenplay": {
+                    "model": "mock-copy-v1",
+                    "model_prices": copy.deepcopy(_LLM_LEGACY_PRICES),
+                },
+            }
+        if variant == "legacy_missing_prices":
+            return {"form": "movie", "screenplay": {"model": "ghost-model", "model_prices": {}}}
+        if variant == "no_llm_section":
+            return {"form": "movie", "screenplay": {"model": "mock-copy-v1"}}
+
+        profiles: dict = {"deepseek-flash": copy.deepcopy(_LLM_DEEPSEEK)}
+        roles: dict = {"generation": "deepseek-flash", "judge": "deepseek-flash"}
+        default: object = None
+        if variant in {"multi", "multi_no_default", "orphan"}:
+            profiles["local-qwen"] = copy.deepcopy(_LLM_LOCAL)
+            roles["dreaming_candidates"] = "local-qwen"
+            default = "deepseek-flash"
+            if variant == "multi_no_default":
+                default = None
+            if variant == "orphan":
+                profiles["unused-profile"] = {
+                    "base_url": "https://unused.example.com",
+                    "api_key_env": "UNUSED_KEY",
+                    "prices": {"prompt_per_1k": 0.01, "completion_per_1k": 0.02},
+                    "price_note": "未被任何角色引用",
+                }
+        elif variant == "missing_prices":
+            profiles["deepseek-flash"].pop("prices")
+        elif variant == "missing_endpoint":
+            profiles["deepseek-flash"].pop("base_url")
+        elif variant == "missing_key_env":
+            profiles["deepseek-flash"].pop("api_key_env")
+        elif variant == "zero_not_declared":
+            profiles["deepseek-flash"]["prices"] = {
+                "prompt_per_1k": 0.0,
+                "completion_per_1k": 0.0,
+            }
+        elif variant == "unknown_role":
+            roles["judeg"] = "deepseek-flash"
+        elif variant == "multi_level":
+            roles["judge"] = {"primary": "deepseek-flash"}
+        elif variant == "self_reference":
+            roles["judge"] = "judge"
+        elif variant == "unknown_profile":
+            roles["judge"] = "ghost-profile"
+
+        section: dict = {"profiles": profiles, "roles": roles}
+        if default is not None:
+            section["default_profile"] = default
+        config: dict = {"form": "movie", "llm": section}
+        if variant == "legacy_and_new":
+            config["screenplay"] = {
+                "model": "mock-copy-v1",
+                "model_prices": copy.deepcopy(_LLM_LEGACY_PRICES),
+            }
+        config.update(overrides)
+        return config
+
+    return _make
+
+
+@pytest.fixture()
+def llm_env(monkeypatch):
+    """假环境变量夹具（功能 016 / T1602）：显式设置/清除档案相关变量。
+
+    返回 `_set(**flags)`：flags 里 `unrelated_openai=True` 模拟**环境中存在无关
+    `OPENAI_API_KEY`**（本机真实事故：平台自带变量被误判为档案就绪）；其余键值按名设置。
+    """
+
+    def _set(*, unrelated_openai: bool = False, **values: str) -> None:
+        for name in (
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "DEEPSEEK_API_KEY",
+            "LOCAL_LLM_BASE_URL",
+            "LOCAL_LLM_API_KEY",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        if unrelated_openai:
+            monkeypatch.setenv("OPENAI_API_KEY", "unrelated-value-from-host")
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+
+    return _set

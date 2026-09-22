@@ -395,6 +395,31 @@ web:
 # 段缺失即取默认（backend=simulated / llm_backend=mock）：A 路径零配置可跑；
 # 声明 http 而凭证缺失 = 装配期显式拒绝（不静默回落模拟、不落树、不扣费）。
 # 取值非法（未知环节名/未知取值）同样在装配期拒绝。逐环节覆盖写在 overrides。
+# LLM 模型档案与角色路由（功能 016）：**端点与价目只在本配置里**——码内不内置任何厂商
+# 价目（价目内置即历史成本不可复现，宪章原则一）；档案集合随 config_snapshot["llm_profiles"]
+# 冻结，改价只影响新节点。roles 为单层映射（角色 → 档案 id）；角色枚举固定四个
+# （generation/judge/dreaming_candidates/copywriting，见 core/llm_gateway/routing.py 的调用点盘点）。
+llm:
+  profiles:
+    deepseek-flash: # 云端厂商（OpenAI 兼容）：价目迁自 screenplay.model_prices（015 登记值）
+      base_url: https://api.deepseek.com
+      api_key_env: OPENAI_API_KEY # 沿用旧变量名（报告标注 legacy_env=true；端点/密钥按档案声明读取）
+      legacy_env: true
+      prices: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
+      price_note: "峰时缓存未命中上限（保守高估；缓存命中与错峰更低；记账 ≠ 厂商账单）"
+    local-qwen: # 本地/自建示例：零边际成本（仍非免费：机器/电/运维成本不在本表）
+      base_url_env: LOCAL_LLM_BASE_URL
+      api_key_env: LOCAL_LLM_API_KEY
+      prices: {prompt_per_1k: 0.0, completion_per_1k: 0.0}
+      zero_marginal: true
+      price_note: "自建推理：零边际成本（机器/电/运维成本不在本表）"
+  roles: # 角色 → 档案（单层；未映射的枚举内角色回落 default_profile）
+    generation: deepseek-flash
+    judge: deepseek-flash
+    copywriting: deepseek-flash
+    dreaming_candidates: local-qwen
+  default_profile: deepseek-flash # 多档案必须显式声明（单档案才可省略并自动认定）
+
 pilot:
   backend: simulated # simulated | http：五个环节的平台适配器（分镜/视觉/声音/剪辑/宣发）
   llm_backend: mock # mock | http：LLM 网关后端（http 读 OPENAI_BASE_URL / OPENAI_API_KEY）
