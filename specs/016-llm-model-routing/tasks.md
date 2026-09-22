@@ -80,28 +80,28 @@
 
 ### 用户故事 3 的测试（先写，确认失败后再实现）
 
-- [ ] T1619 [P] [US3] tests/unit/test_http_backend_injection.py（端点/密钥由路由层注入；**不隐式读 `OPENAI_*`**；档案显式声明旧变量名时报告标注"沿用旧变量名"）
-- [ ] T1620 [P] [US3] tests/unit/test_check_credentials_profiles.py（**假阳性归零**：环境存在无关 `OPENAI_API_KEY` 时不影响任何档案判定；unset vs unreachable 分型；档案/用途标注）
-- [ ] T1621 [P] [US3] tests/unit/test_smoke_llm_profile.py（`--profile` 生效与不存在报错；`--round` 改写**角色映射**而非散落模型名；缺凭证退出码 1）
-- [ ] T1622 [P] [US3] tests/unit/test_upgrade_manifest_lock.py（清单变量名 ⇄ 配置档案逐项一致；**改坏即红**且列出差异；配置加档案未登记即红）
-- [ ] T1623 [P] [US3] tests/contract/test_llm_profile_contracts.py 的 readiness 段（C8~C10 聚合）
+- [X] T1619 [P] [US3] tests/unit/test_http_backend_injection.py（端点/密钥由路由层注入；**不隐式读 `OPENAI_*`**；档案显式声明旧变量名时报告标注"沿用旧变量名"）
+- [X] T1620 [P] [US3] tests/unit/test_check_credentials_profiles.py（**假阳性归零**：环境存在无关 `OPENAI_API_KEY` 时不影响任何档案判定；unset vs unreachable 分型；档案/用途标注）
+- [X] T1621 [P] [US3] tests/unit/test_smoke_llm_profile.py（`--profile` 生效与不存在报错；`--round` 改写**角色映射**而非散落模型名；缺凭证退出码 1）
+- [X] T1622 [P] [US3] tests/unit/test_upgrade_manifest_lock.py（清单变量名 ⇄ 配置档案逐项一致；**改坏即红**且列出差异；配置加档案未登记即红）
+- [X] T1623 [P] [US3] tests/contract/test_llm_profile_contracts.py 的 readiness 段（C8~C10 聚合）
 
 ### 用户故事 3 的实现
 
-- [ ] T1624 [US3] `core/llm_gateway/backends/http.py` 构造入参化（端点/密钥注入）
-- [ ] T1625 [US3] `ops/check_credentials.py` 改为读配置档案生成就绪矩阵
-- [ ] T1626 [US3] `ops/smoke_llm.py` 支持 `--profile`（`--model` 兼容）与 `--round` 改角色映射
-- [ ] T1627 [US3] `docs/pilot-upgrade-manifest.json`（schema 递增）+ 机检锁以配置为权威
+- [X] T1624 [US3] `core/llm_gateway/backends/http.py` 构造入参化（端点/密钥注入）
+- [X] T1625 [US3] `ops/check_credentials.py` 改为读配置档案生成就绪矩阵
+- [X] T1626 [US3] `ops/smoke_llm.py` 支持 `--profile`（`--model` 兼容）与 `--round` 改角色映射
+- [X] T1627 [US3] `docs/pilot-upgrade-manifest.json`（schema 递增）+ 机检锁以配置为权威
 
-**检查点**: 凭证假阳性归零；工具三件套与配置同源——里程碑验收线成立
+**检查点**: ✅ 凭证假阳性归零（`test_http_backend_injection.py` 10 条 / `test_check_credentials_profiles.py` 7 条）；工具三件套与配置同源（`test_smoke_llm_profile.py` 8 条 / `test_upgrade_manifest_lock.py` 6 条）——里程碑验收线成立
 
 ---
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T1628 契约 C1~C10 全量聚合与 SC 机检（SC-001 零厂商字面量 / SC-002 改价不漂移 / SC-003 缺项与枚举外 100% 报错 / SC-004 假阳性归零 / SC-005 单档案等价现状 / SC-006 清单锁可证伪）
-- [ ] T1629 运行 quickstart.md 全部验证命令并回填"验证记录"（含无凭证下的核查器与 `--round --dry-run` 输出；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
-- [ ] T1630 [P] 文档同步：README（档案与角色路由用法 + "价目为何不内置"的设计理由）+ `docs/二期升级路径-真实生成与投放.md`（§七 改为按档案/角色）+ `docs/二期交付总览.md`（诚实边界与遗留更新）
+- [X] T1628 契约 C1~C10 全量聚合与 SC 机检（SC-001 零厂商字面量 / SC-002 改价不漂移 / SC-003 缺项与枚举外 100% 报错 / SC-004 假阳性归零 / SC-005 单档案等价现状 / SC-006 清单锁可证伪）
+- [X] T1629 运行 quickstart.md 全部验证命令并回填"验证记录"（含无凭证下的核查器与 `--round --dry-run` 输出；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
+- [X] T1630 [P] 文档同步：README（档案与角色路由用法 + "价目为何不内置"的设计理由）+ `docs/二期升级路径-真实生成与投放.md`（§七 改为按档案/角色）+ `docs/二期交付总览.md`（诚实边界与遗留更新）
 
 ---
 

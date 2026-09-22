@@ -689,6 +689,51 @@ uv run python ops/pilot.py precheck ... --backend http                 # prechec
   [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)（字段可机检）；
 - 上游不合格 → 下游**拒绝启动**（不静默降级）；环节候选全败 → 运行终止并记录全部判 0 理由。
 
+### LLM 模型档案与角色路由（功能 016）
+
+LLM 的**端点、凭证变量名、价目**全部写在形态配置的 `llm` 段，业务代码零厂商字面量
+（静态断言 `tests/unit/test_no_vendor_literals.py` 守）：
+
+```yaml
+llm:
+  profiles:
+    deepseek-flash:
+      base_url: https://api.deepseek.com      # 或 base_url_env: <变量名>
+      api_key_env: OPENAI_API_KEY             # 凭证变量名按档案声明读取（不隐式采纳环境里的同名变量）
+      legacy_env: true                        # 沿用旧变量名（报告会标注"建议改中立名"）
+      prices: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
+      price_note: "峰时缓存未命中上限（保守高估）"   # 价目口径备注：随快照冻结、进账目报告
+    local-qwen:
+      base_url_env: LOCAL_LLM_BASE_URL
+      api_key_env: LOCAL_LLM_API_KEY
+      prices: {prompt_per_1k: 0.0, completion_per_1k: 0.0}
+      zero_marginal: true                     # 零价目必须显式声明（自建：零边际成本仍非免费）
+  roles:                                      # 固定四角色（按既有调用点盘点定稿，单层映射）
+    generation: deepseek-flash                # 剧本三阶段生成
+    judge: deepseek-flash                     # 四家 LLM judge 委员会
+    copywriting: deepseek-flash               # 宣发文案
+    dreaming_candidates: local-qwen           # 做梦层候选生成
+  default_profile: deepseek-flash             # 单档案可省略（自动认定）；未映射角色回落它
+```
+
+- **换厂商 = 只改配置**：路由只在网关（`LLMGateway` 按 `role` 取档案 → 端点 + 价目），
+  调用点只传 `role`；枚举外角色/缺项/多层映射**在配置解析期即报错**（不静默降级）；
+- **凭证中立**（消除"环境里无关 `OPENAI_API_KEY` 被当成就绪"的假阳性）：
+  `HttpBackend` 构造入参化、端点与密钥按档案声明注入（`from_profile` / `from_profiles`，
+  多档案按档案 id 分派端点）；核查器 `uv run python ops/check_credentials.py` 的
+  `llm_profiles` 块给出"变量名 + 档案 + 用途 + 端点（只记 host）"，未被子档案声明的环境变量
+  记入 `ignored_environ`；`--probe-profiles` 才探档案端点（缺省零网络）；
+- **冒烟按档案**：`uv run python ops/smoke_llm.py --profile deepseek-flash`
+  （`--model` 为等价别名）；`--round` 改写 **`llm.roles`**（角色的唯一路由入口）而不再散落改模型名；
+- **成本可分解**：`gateway.cost_breakdown()` → `{角色: {档案: {调用数, tokens, 金额}}}`；
+  `gateway.cost_report()` 附**价目口径备注**与**"记账 ≠ 厂商账单"**声明；
+- **价目为何不内置进代码**（本特性的核心纪律，防回潮）：价目一旦写死在代码里，历史节点的
+  "当时价目"就不可复现——改一次价目，全部历史成本与审计复算都会漂移（宪章原则一：版本冻结）。
+  因此档案与价目**只存在于配置**，并随 `config_snapshot["llm_profiles"]` 冻结进树；
+  机检断言"改配置价目后历史节点成本与快照口径逐字段不变、新节点用新价目"
+  （`tests/unit/test_llm_price_freeze.py`）。清单一致性由
+  `tests/unit/test_upgrade_manifest_lock.py` 双向锁（配置 ⇄ `docs/pilot-upgrade-manifest.json`）。
+
 ### 真实 LLM 冒烟（DeepSeek 示例，只有 LLM 凭证时）
 
 只拿到 LLM 凭证（OpenAI 兼容）时，可用 `ops/smoke_llm.py` 验证 LLM 腿能否跑通——

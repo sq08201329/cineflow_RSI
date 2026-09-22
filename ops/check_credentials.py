@@ -182,9 +182,7 @@ def profile_matrix(
         declared.update(variables)
         # 探测**每档案一次**（同一档案的端点唯一）：先看变量是否齐备，再决定是否发 GET
         all_set = all(env.get(variable) for variable in variables)
-        probe_result = (
-            _probe_endpoint(profile, env, timeout) if (all_set and probe) else None
-        )
+        probe_result = _probe_endpoint(profile, env, timeout) if (all_set and probe) else None
         statuses: dict[str, dict] = {}
         for variable in variables:
             if not env.get(variable):
