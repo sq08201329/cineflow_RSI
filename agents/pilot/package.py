@@ -232,10 +232,36 @@ def build_state(record: RunRecord, runtime: Any = None) -> dict:
             "status": "not_applicable",
             "note": "试水运行为单轮链路，未接做梦层塌缩检测（不做无据推断）",
         },
-        "drift": {
+        "drift": _drift_summary(runtime),
+    }
+
+
+def _drift_summary(runtime: Any) -> dict:
+    """漂移摘要：runtime 装配了 012 门禁即**如实报告**登记状态与处置口径。
+
+    未装配 → 如实"不适用"（不伪造）。只记状态与阈值快照（不含路径/墙钟），
+    故两次同输入同配置运行仍逐字节一致。
+    """
+    gate = getattr(runtime, "drift_gate", None)
+    if gate is None:
+        return {
             "status": "not_applicable",
-            "note": "试水运行未接 012 漂移状态（校准/漂移数据面在形态配置中另行启用）",
-        },
+            "note": "本次运行未装配 012 漂移门禁（无状态来源）",
+        }
+    registered = {
+        key: status.status.value for key, status in sorted(gate.registry.current().items())
+    }
+    disposition = "排除出合成" if gate.cfg.confirmed_exclude else "降权"
+    return {
+        "status": "wired",
+        "registered": registered,
+        "thresholds": gate.cfg.thresholds_snapshot(),
+        "note": (
+            "012 漂移门禁在 runtime 装配一次并透传给四个 judge 阶段"
+            "（script/storyboard/visual/editing）；"
+            f"当前登记 {len(registered)} 个评估器版本："
+            f"suspect → 该分量权重 ×{gate.cfg.suspect_weight}，confirmed_drift → {disposition}"
+        ),
     }
 
 

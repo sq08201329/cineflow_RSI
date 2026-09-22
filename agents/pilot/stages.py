@@ -6,6 +6,14 @@
 **编排层不新增落树路径**（FR-011）；本模块只负责装配（引擎/树库/工件库/网关/模拟平台）
 与"上游产物 → 下游输入"的交接接线（交接口径全在 `handoffs.py`）。
 
+**漂移门禁在 runtime 装配一次并透传（012 → 015 接线）**：`build_runtime` 用
+`DriftGate.load(<校准数据根>, DriftConfig.from_yaml(config))` 建**一个**实例存进
+`PilotRuntime.drift_gate`，再由四个有 judge 层的阶段入口（script/storyboard/visual/editing）
+原样传给各 loop 的 `drift_gate` 形参——judge 处于 `suspect`/`confirmed_drift` 时，
+合成前一处降权/排除才在**生产路径**上真正生效（promo/sound 无 judge 层，其 loop 也不接受
+该参数，故不接线：不硬塞语义不符的门禁）。校准数据根取形态配置 `web.data_dirs.calibration`
+（与 web 只读视图、012/014 CLI 同源，不另立目录约定），缺声明即拒绝装配（不静默回落）。
+
 候选语义（澄清 Q1 落地）：每个环节由既有 loop 一轮产多候选并择优（**环节内换候选**），
 环节的全部候选都未达标 → `StageFailedError`（带**全部候选判 0 理由**）→ 运行终止、
 下游 skipped（不静默降级）。判 0 理由取自冻结树节点的评估分量明细（判 0 的具体来源）。
@@ -25,6 +33,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import yaml
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
@@ -60,6 +69,8 @@ from agents.visual.config import VisualConfig
 from agents.visual.db import create_gen_jobs_schema as create_visual_jobs_schema
 from agents.visual.loop import run_round as run_visual_round
 from agents.visual.platform.simulated import SimulatedVideoGen
+from core.calibration.drift_config import DriftConfig
+from core.calibration.drift_gate import DriftGate
 from core.evaluators.base import ArtifactRef
 from core.llm_gateway.backends.mock import MockBackend
 from core.llm_gateway.gateway import LLMGateway
@@ -112,15 +123,29 @@ class PilotRuntime:
     configs: AgentConfigs
     config_fingerprint: str
     shot_plan: tuple[dict, ...]
+    calibration_dir: Path
+    drift_gate: DriftGate
 
 
 def build_runtime(
-    *, form: str, config_path: str | Path, data_dir: str | Path, artifacts_root: str | Path
+    *,
+    form: str,
+    config_path: str | Path,
+    data_dir: str | Path,
+    artifacts_root: str | Path,
+    calibration_dir: str | Path | None = None,
 ) -> PilotRuntime:
-    """装配运行时：SQLite 引擎（含全部既有 schema）+ 树库 + 工件库 + 确定性网关。"""
+    """装配运行时：SQLite 引擎（含全部既有 schema）+ 树库 + 工件库 + 网关 + 漂移门禁。
+
+    `calibration_dir`：判据类数据根（漂移状态登记与报表同根）；缺省按形态配置
+    `web.data_dirs.calibration` 解析（见 `calibration_data_dir`），显式传入可覆盖（测试用）。
+    """
     config_path = Path(config_path)
     data_dir = Path(data_dir)
     artifacts_root = Path(artifacts_root)
+    resolved_calibration = (
+        Path(calibration_dir) if calibration_dir is not None else calibration_data_dir(config_path)
+    )
     configs = AgentConfigs(
         screenplay=ScreenplayConfig.from_yaml(config_path),
         storyboard=StoryboardConfig.from_yaml(config_path),
@@ -138,6 +163,8 @@ def build_runtime(
     create_editing_jobs_schema(engine)
     create_campaigns_schema(engine)
     config_fingerprint = fingerprint_of(config_path.read_bytes())
+    # 漂移门禁**装配一次**（012 → 015 接线）：同一实例透传给各 judge 阶段的 loop
+    drift_gate = DriftGate.load(resolved_calibration, DriftConfig.from_yaml(config_path))
     return PilotRuntime(
         form=form,
         config_path=config_path,
@@ -152,7 +179,38 @@ def build_runtime(
         configs=configs,
         config_fingerprint=config_fingerprint,
         shot_plan=build_shot_plan(configs, scene_count=_DEFAULT_SCENE_COUNT),
+        calibration_dir=resolved_calibration,
+        drift_gate=drift_gate,
     )
+
+
+# 校准数据根在形态配置中的声明位置：`web.data_dirs.calibration`（010/012 消费方同源）
+_CALIBRATION_DIR_KEY = "calibration"
+
+
+def calibration_data_dir(config_path: str | Path) -> Path:
+    """判据类数据根（`drift/status/`、报表与快照所在目录）。
+
+    与既有消费方（web 只读视图、012/014 CLI、demo 脚本）**同源**：取形态配置
+    `web.data_dirs.calibration`；相对路径按"形态配置所在目录的上一级"（仓库根）解析——
+    `configs/*.yaml` 里的 `calibration` 即仓库根下的判据数据目录。缺段/缺键即拒绝装配
+    （不静默回落默认目录：读错数据根会让降权/排除凭空失效，且违反原则五"配置即形态"）。
+    """
+    path = Path(config_path)
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise StageFailedError(f"形态配置文件不可读：{path}（{exc}）") from exc
+    web = payload.get("web") if isinstance(payload, Mapping) else None
+    raw = web.get("data_dirs") if isinstance(web, Mapping) else None
+    declared = raw.get(_CALIBRATION_DIR_KEY) if isinstance(raw, Mapping) else None
+    if not isinstance(declared, str) or not declared:
+        raise StageFailedError(
+            f"形态配置缺少 web.data_dirs.calibration（判据类数据根，012 漂移门禁注册表来源）："
+            f"{path}——缺声明时拒绝装配（不静默回落默认目录）"
+        )
+    root = path.resolve().parent.parent
+    return Path(declared) if Path(declared).is_absolute() else (root / declared)
 
 
 def build_shot_plan(configs: AgentConfigs, *, scene_count: int) -> tuple[dict, ...]:
@@ -303,6 +361,7 @@ def _script_entry(stage_input: StageInput) -> StageOutcome:
         gateway=runtime.gateway,
         config=config,
         inputs=inputs,
+        drift_gate=runtime.drift_gate,  # 012 漂移门禁（装配一次、逐段透传）
     )
     script_jobs = [job for job in result.jobs if job.get("stage") == "script"]
     candidates = tuple(
@@ -358,6 +417,7 @@ def _storyboard_entry(stage_input: StageInput) -> StageOutcome:
         config=config,
         inputs={"script": segment},
         gateway=runtime.gateway,
+        drift_gate=runtime.drift_gate,  # 012 漂移门禁（装配一次、逐段透传）
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=1)
     _require_ok("分镜阶段", outcome, jobs=result.jobs)
@@ -426,6 +486,7 @@ def _visual_entry(stage_input: StageInput) -> StageOutcome:
         gateway=runtime.gateway,
         engine=runtime.engine,
         config=config,
+        drift_gate=runtime.drift_gate,  # 012 漂移门禁（装配一次、逐段透传）
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=len(params_list))
     _require_ok("视觉阶段", outcome, jobs=result.clips)
@@ -579,6 +640,7 @@ def _editing_entry(stage_input: StageInput) -> StageOutcome:
             "scene_structure": edits.scene_structure,
         },
         gateway=runtime.gateway,
+        drift_gate=runtime.drift_gate,  # 012 漂移门禁（装配一次、逐段透传）
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=1)
     _require_ok("剪辑阶段", outcome, jobs=result.jobs)
