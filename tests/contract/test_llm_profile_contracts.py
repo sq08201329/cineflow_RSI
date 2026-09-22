@@ -128,7 +128,12 @@ class TestC3旧扁平迁移:
             assert loaded.routing.profile_for("dreaming_candidates") == "local-qwen"
             snapshot = loaded.snapshot().to_dict()
             assert snapshot["profiles"][0]["prices"]  # 价目随快照冻结
-            assert "OPENAI_API_KEY" == loaded.profiles["deepseek-flash"].api_key_env
+            # 档案声明的凭证变量名与配置逐字一致（同源；改名即跟随，不硬编码具体名）
+            for profile_id, raw_profile in payload["llm"]["profiles"].items():
+                assert loaded.profiles[profile_id].api_key_env == raw_profile["api_key_env"]
+            # 中立化纪律：默认档案不再沿用旧变量名（legacy_env 为假）
+            default = loaded.routing.default_profile
+            assert loaded.profiles[default].legacy_env is False
 
 
 # ---------------------------------------------------------------------------
@@ -426,21 +431,63 @@ class TestC8就绪矩阵:
         assert entry["status"] == check_credentials.PROBE_OK and entry["legacy_env"] is True
         assert "沿用旧变量名" in entry["note"]
 
-    def test_仓库配置在本机真实环境下的判定(self):
-        """真实配置驱动：deepseek-flash 声明 OPENAI_API_KEY（本机有）→ ok 且标注沿用旧名；
-        local-qwen 的中立名未设置 → missing；无关变量（如 DEEPSEEK_API_KEY）被忽略。"""
+    def test_仓库配置读取声明变量并忽略未声明变量(self):
+        """**不依赖宿主环境**（结构性断言）：档案声明的变量被读取；未声明的（含旧变量名
+        与宿主里真实存在的无关变量）一律忽略——注入与被忽略两侧都显式构造。"""
         import pathlib
+
+        import yaml
 
         from ops import check_credentials
 
         repo_root = pathlib.Path(__file__).resolve().parents[2]
-        report = check_credentials.profile_matrix(
-            repo_root / "configs" / "movie.yaml", environ={"OPENAI_API_KEY": "k"}
-        )
-        entries = {e["profile_id"]: e for e in report["profiles"]}
+        config_path = repo_root / "configs" / "movie.yaml"
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        declared = {
+            str(profile_id): str(profile["api_key_env"])
+            for profile_id, profile in payload["llm"]["profiles"].items()
+        }
+        # 只注入 deepseek-flash 声明的变量；另外**显式放入**两个未声明的变量（其中一个就剩旧变量名）
+        environ = {
+            declared["deepseek-flash"]: "injected-value",
+            "OPENAI_API_KEY": "unrelated-legacy-host-var",
+            "UNRELATED_VENDOR_API_KEY": "unrelated-host-var",
+        }
+        report = check_credentials.profile_matrix(config_path, environ=environ)
+        entries = {entry["profile_id"]: entry for entry in report["profiles"]}
         assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_OK
         assert entries["local-qwen"]["status"] == check_credentials.PROBE_MISSING
-        assert entries["deepseek-flash"]["endpoint"] == "https://api.deepseek.com"
+        assert entries["deepseek-flash"]["endpoint"] == "https://api.deepseek.com"  # 只记 host
+        # 未声明的变量（含旧变量名）不参与判定，且被显式登记为已忽略
+        assert {"OPENAI_API_KEY", "UNRELATED_VENDOR_API_KEY"} <= set(report["ignored_environ"])
+
+    def test_档案变量改名时用例跟随配置(self, tmp_path):
+        """**同源自检**：把档案声明的变量名改掉后，就绪判定随配置走（用例不硬编码变量名）。"""
+        import pathlib
+
+        import yaml
+
+        from ops import check_credentials
+
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        payload = yaml.safe_load((repo_root / "configs" / "movie.yaml").read_text(encoding="utf-8"))
+        renamed = "RENAMED_PROVIDER_API_KEY"
+        payload["llm"]["profiles"]["deepseek-flash"]["api_key_env"] = renamed
+        temp_config = tmp_path / "movie-renamed.yaml"
+        temp_config.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+
+        # 旧变量名存在也不参与（改名后它已是"未声明变量"）；新名注入才就绪
+        stale = check_credentials.profile_matrix(
+            temp_config, environ={"OPENAI_API_KEY": "stale", "DEEPSEEK_API_KEY": "stale"}
+        )
+        stale_entry = {entry["profile_id"]: entry for entry in stale["profiles"]}["deepseek-flash"]
+        assert stale_entry["status"] == check_credentials.PROBE_MISSING
+        assert renamed in set(stale_entry["variables"])  # 判定跟随新变量名
+        assert renamed in set(stale_entry["missing"])
+
+        fresh = check_credentials.profile_matrix(temp_config, environ={renamed: "injected"})
+        entries = {entry["profile_id"]: entry for entry in fresh["profiles"]}
+        assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_OK
 
 
 class TestC9冒烟按档案:
@@ -468,10 +515,10 @@ class TestC9冒烟按档案:
         with pytest.raises(smoke_llm.SmokeError, match="档案不存在"):
             smoke_llm.resolve_profile("configs/movie.yaml", "ghost")
 
-    def test_场景3_缺凭证退出码1(self, monkeypatch, capsys):
+    def test_场景3_缺凭证退出码1(self, llm_credentials, capsys):
         from ops import smoke_llm
 
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        llm_credentials.clear("configs/movie.yaml")  # 按配置声明清空（同源）
         code = smoke_llm.main(["--config", "configs/movie.yaml", "--profile", "deepseek-flash"])
         payload = json.loads(capsys.readouterr().out)
         assert code == 1 and payload["reason"] == "credentials_missing"

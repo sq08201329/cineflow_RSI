@@ -12,6 +12,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -3534,3 +3535,103 @@ def stub_factory():
     yield _make
     for server in servers:
         server.stop()
+
+
+# ---------------------------------------------------------------------------
+# 功能 016 收尾：档案变量的"同源"环境控制
+#
+# 为什么要这套助手：凭证中立化（把 `api_key_env` 从旧变量名换成中立名）之后，
+# "只清 `OPENAI_API_KEY` 就假设凭证缺失"的环境依赖型用例会失效——宿主机恰好导出了
+# 中立名的变量（如 `DEEPSEEK_API_KEY`）就会误判为"就绪"。**不放宽断言语义**，
+# 改为按**配置档案声明的变量名**（`llm.profiles[*].api_key_env` / `base_url_env`）
+# 显式清空/注入：配置改名 → 用例自动跟随（同源），且**同时清/注入 `OPENAI_*`**
+# 以顺带证明它们不参与判定（这正是本特性的语义）。
+# ---------------------------------------------------------------------------
+
+DEFAULT_LLM_CONFIGS = ("configs/movie.yaml", "configs/shortdrama.yaml")
+
+
+def declared_profile_variables(
+    config_path: "str | Path | None" = None,
+) -> "dict[str, frozenset[str]]":
+    """从形态配置读出各档案**声明的变量名**：`{profile_id: {变量名, ...}}`（配置是唯一权威）。
+
+    含 `api_key_env`，以及 env 形态端点的 `base_url_env`（URL 形态端点无变量）。
+    `config_path=None` → 取仓库两套形态配置的并集（两套当前一致）。
+    """
+    import pathlib
+
+    import yaml
+
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    paths = (
+        [pathlib.Path(config_path)]
+        if config_path is not None
+        else [repo_root / name for name in DEFAULT_LLM_CONFIGS]
+    )
+    declared: dict[str, frozenset[str]] = {}
+    for path in paths:
+        payload = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8"))
+        for profile_id, profile in payload["llm"]["profiles"].items():
+            names = {str(profile["api_key_env"])}
+            if not profile.get("base_url") and profile.get("base_url_env"):
+                names.add(str(profile["base_url_env"]))
+            declared.setdefault(str(profile_id), frozenset())
+            declared[str(profile_id)] = declared[str(profile_id)] | frozenset(names)
+    return declared
+
+
+@pytest.fixture()
+def llm_profile_vars():
+    """只读助手：`_declared(config_path=None)` → 同 `declared_profile_variables`；
+    `_flat(config_path=None)` → 全部声明变量名集合；`_of(profile_id)` → 该档案的变量集合。"""
+
+    def _declared(config_path=None) -> "dict[str, frozenset[str]]":
+        return declared_profile_variables(config_path)
+
+    def _flat(config_path=None) -> set[str]:
+        return {name for names in _declared(config_path).values() for name in names}
+
+    def _of(profile_id: str, config_path=None) -> set[str]:
+        return set(_declared(config_path).get(profile_id, ()))
+
+    _declared.__doc__ = declared_profile_variables.__doc__
+    return SimpleNamespace(declared=_declared, flat=_flat, of=_of)
+
+
+@pytest.fixture()
+def llm_credentials(monkeypatch):
+    """同源环境控制：按配置声明清空/注入档案变量（并显式处理旧变量名 `OPENAI_*`）。
+
+    - `clear(config_path=None)`：清空全部**声明**变量 + `OPENAI_BASE_URL` / `OPENAI_API_KEY`，
+      返回被清空的变量集合（供断言 `missing == sorted(...)` 同源推导）；
+    - `inject(config_path=None, **overrides)`：给全部声明变量注入假值（可逐名覆盖），返回
+      {变量名: 注入值}；同时清掉 `OPENAI_*`（证明旧变量名不参与判定）；
+    - 假值形如 `"fake-value-for-tests"`（**不是真实密钥**，仅用于让"已设置"分支可测）。
+    """
+    FAKE = "fake-value-for-tests"
+    legacy_names = ("OPENAI_BASE_URL", "OPENAI_API_KEY")
+
+    state: dict = {"declared": set(), "injected": {}}
+
+    def clear(config_path=None) -> set[str]:
+        names = {
+            name for names in declared_profile_variables(config_path).values() for name in names
+        }
+        for name in sorted(names | set(legacy_names)):
+            monkeypatch.delenv(name, raising=False)
+        state["declared"], state["injected"] = set(names), {}
+        return set(names)
+
+    def inject(config_path=None, **overrides: str) -> dict[str, str]:
+        declared = declared_profile_variables(config_path)
+        names = {name for group in declared.values() for name in group}
+        values = {name: overrides.get(name, FAKE) for name in sorted(names)}
+        for name in sorted(set(values) | set(legacy_names)):
+            monkeypatch.delenv(name, raising=False)  # 旧变量名一律清掉：不参与判定
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        state["declared"], state["injected"] = set(names), dict(values)
+        return dict(values)
+
+    return SimpleNamespace(clear=clear, inject=inject, legacy_names=legacy_names, state=state)

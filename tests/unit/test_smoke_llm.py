@@ -78,16 +78,19 @@ def _fake_state(stage_id: str, *, cost_usd=0.01, status="done"):
 
 
 class Test凭证就位:
-    def test_缺失即退出码1且指向核查器(self, monkeypatch, capsys):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    def test_缺失即退出码1且指向核查器(self, llm_credentials, llm_profile_vars, capsys):
+        """缺凭证分支：按**配置档案声明的变量名**清空（同源），并断言缺失项正是它。"""
+        cleared = llm_credentials.clear(MOVIE_CONFIG)
         code = smoke_llm.main(["--config", str(MOVIE_CONFIG)])
         payload = json.loads(capsys.readouterr().out)
         assert code == smoke_llm.EXIT_NO_CREDENTIALS == 1
         assert payload["reason"] == "credentials_missing"
-        assert payload["missing"] == [
-            "OPENAI_API_KEY"
-        ]  # deepseek-flash 声明的是它（端点写在档案里）
+        # 默认档案（配置声明）声明的变量，逐个被清空 → missing 与配置同源
+        default_profile = yaml.safe_load(MOVIE_CONFIG.read_text(encoding="utf-8"))["llm"][
+            "default_profile"
+        ]
+        assert set(payload["missing"]) == llm_profile_vars.of(default_profile, MOVIE_CONFIG)
+        assert set(payload["missing"]) <= cleared
         assert "check_credentials" in payload["hint"]
         assert payload["ok"] is False
 
@@ -293,9 +296,10 @@ class Test单轮装配路径:
 
 
 class Test命令行与退出码:
-    def test_dry_run_不要求凭证且走_mock(self, monkeypatch, capsys, tmp_path):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    def test_dry_run_不要求凭证且走_mock(
+        self, monkeypatch, llm_credentials, llm_profile_vars, capsys, tmp_path
+    ):
+        cleared = llm_credentials.clear(SHORTDRAMA_CONFIG)  # 按配置声明清空（同源）
         captured: dict = {}
 
         def _fake_runner(**kwargs):
@@ -317,7 +321,14 @@ class Test命令行与退出码:
         assert code == smoke_llm.EXIT_OK == 0
         assert payload["ok"] is True and payload["llm_backend"] == "mock"
         assert captured["llm_backend"] == "mock"  # 零真实调用
-        assert payload["credentials"]["OPENAI_API_KEY"] == {"set": False, "length": 0}
+        # 只报"已设置/未设置 + 长度"：清空后该档案声明的变量均为未设置（变量名与配置同源）
+        default_profile = yaml.safe_load(SHORTDRAMA_CONFIG.read_text(encoding="utf-8"))["llm"][
+            "default_profile"
+        ]
+        declared = llm_profile_vars.of(default_profile, SHORTDRAMA_CONFIG)
+        assert declared <= cleared
+        for name in sorted(declared):
+            assert payload["credentials"][name] == {"set": False, "length": 0}
 
     def test_档案不存在归退出码2(self, monkeypatch, capsys):
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")

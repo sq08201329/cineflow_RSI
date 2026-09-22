@@ -71,7 +71,8 @@ class Test配置清单一致:
     def test_变量名与档案逐项一致(self):
         assert _declared_from_config() == _registered_in_manifest(), _diff()
 
-    def test_登记含用途且标注沿用旧变量名(self):
+    def test_登记含用途且标注与声明形态一致(self):
+        """登记必须带用途；`legacy_env` 标注与说明文字一致（沿用旧名 / 中立名两态都可）。"""
         payload = json.loads(MANIFEST.read_text(encoding="utf-8"))["llm_profiles"]
         assert payload["authority"] == "configs/*.yaml 的 llm.profiles（配置即权威）"
         for entry in payload["profiles"]:
@@ -81,13 +82,23 @@ class Test配置清单一致:
                 assert entry["purpose"]  # 每个变量都有用途说明（同一档案共用一条用途）
             if entry.get("legacy_env"):
                 assert "沿用旧变量名" in entry["note"]
+            else:
+                assert "中立" in entry["note"] or "沿用旧变量名" not in entry["note"]
 
-    def test_新增变量名已登记(self):
-        """本批新增的本地档案变量必须登记（否则按设计红）：
-        LOCAL_LLM_BASE_URL / LOCAL_LLM_API_KEY。"""
+    def test_每条档案的登记项与配置形态一致(self):
+        """**不硬编码变量名**（凭证中立化改名后依然通过）：登记的变量集合逐档案等于配置声明，
+        且 env 形态端点（`base_url_env`）在配置里出现时，登记里必然含该端点变量。"""
+        import yaml
+
         registered = _registered_in_manifest()
-        assert registered["local-qwen"] == {"LOCAL_LLM_BASE_URL", "LOCAL_LLM_API_KEY"}
-        assert registered["deepseek-flash"] == {"OPENAI_API_KEY"}  # 端点写在档案里（URL 形态）
+        declared = _declared_from_config()
+        for profile_id, names in declared.items():
+            assert registered[profile_id] == names
+        for name in CONFIGS:
+            payload = yaml.safe_load((REPO_ROOT / name).read_text(encoding="utf-8"))
+            for profile_id, profile in payload["llm"]["profiles"].items():
+                if profile.get("base_url_env"):
+                    assert profile["base_url_env"] in registered[profile_id]
 
     def test_schema_已递增(self):
         payload = json.loads(MANIFEST.read_text(encoding="utf-8"))

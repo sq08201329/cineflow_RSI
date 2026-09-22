@@ -37,6 +37,8 @@ from agents.pilot.pilot import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = REPO_ROOT / "docs" / "pilot-upgrade-manifest.json"
 
+from tests.conftest import declared_profile_variables  # noqa: E402 - 功能 016 同源助手
+
 # 六个后端槽位（`llm` 为网关后端，其余为五个环节的平台适配器）
 SLOTS = ("llm", "storyboard", "visual", "sound", "editing", "promo")
 
@@ -65,17 +67,30 @@ def _credential_envs() -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def _llm_profile_envs() -> tuple[str, ...]:
+    """配置档案声明的 LLM 变量名（功能 016：**配置即权威**，与适配器代码读取点清单并列）。
+
+    凭证中立化（`api_key_env` 改为中立厂商名）后，只清清单里的旧变量名会漏掉实际读取点——
+    本函数让"缺凭证/注入假凭证"两套夹具与配置同源（改名即跟随，不硬编码变量名）。
+    """
+    declared = declared_profile_variables()
+    names = {name for group in declared.values() for name in group}
+    return tuple(sorted(names))
+
+
 @pytest.fixture()
 def no_credentials(monkeypatch):
-    """清空全部真实渠道凭证（缺凭证路径的对照环境）。"""
-    for name in _credential_envs():
+    """清空全部真实渠道凭证 + **配置档案声明的 LLM 变量**（缺凭证路径的对照环境）。"""
+    for name in sorted(
+        set(_credential_envs()) | set(_llm_profile_envs()) | {"OPENAI_BASE_URL", "OPENAI_API_KEY"}
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture()
 def fake_credentials(monkeypatch):
     """注入假凭证（构造即校验通过；基址刻意指向不可解析域名，构造不发任何请求）。"""
-    for name in _credential_envs():
+    for name in sorted(set(_credential_envs()) | set(_llm_profile_envs())):
         value = "https://example.invalid/v1" if name.endswith("_BASE_URL") else "fake-api-key"
         monkeypatch.setenv(name, value)
 
@@ -237,7 +252,8 @@ class Test缺凭证零成本失败:
         )
         with pytest.raises(BackendAssemblyError) as excinfo:
             _runtime(config, tmp_path)
-        assert "OPENAI_BASE_URL" in str(excinfo.value) or "OPENAI_API_KEY" in str(excinfo.value)
+        # 报错必须指出**配置档案声明的**缺失变量（同源：中立化改名后依然成立）
+        assert any(name in str(excinfo.value) for name in _llm_profile_envs()), str(excinfo.value)
 
     def test_零落树零扣费(self, pilot_demo_config_path, no_credentials, tmp_path, monkeypatch):
         """端到端：命令在装配期失败时，DAG 一次都没跑（零节点、零账目、零样片包）。"""
@@ -333,7 +349,8 @@ class TestCLI后端覆盖:
         )
         payload = json.loads(capsys.readouterr().out)
         assert code == 1
-        assert "OPENAI_BASE_URL" in payload["error"] or "OPENAI_API_KEY" in payload["error"]
+        # 报错必须指出**配置档案声明的**缺失变量（同源；中立化改名后依然成立）
+        assert any(name in payload["error"] for name in _llm_profile_envs()), payload["error"]
 
     def test_cli_precheck体现后端选择且不验凭证(
         self, pilot_demo_config_path, no_credentials, tmp_path, capsys

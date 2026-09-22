@@ -33,7 +33,8 @@ class _FakeBackend:
 
 
 class Test按档案冒烟:
-    def test_指定档案_打印档案与口径(self):
+    def test_指定档案_打印档案与口径(self, llm_credentials):
+        llm_credentials.inject()  # 注入假凭证（不再依赖宿主环境）
         payload = smoke_llm.run_gateway_smoke(
             MOVIE,
             profile_id="deepseek-flash",
@@ -42,20 +43,23 @@ class Test按档案冒烟:
         )
         assert payload["profile_id"] == "deepseek-flash"
         assert payload["endpoint"] == "https://api.deepseek.com"  # 只记 host
-        assert payload["legacy_env"] is True  # 沿用旧变量名的档案如实标注
+        assert payload["legacy_env"] is False  # 中立化后不再沿用旧变量名
+        assert payload["legacy_env_note"] == ""
         assert payload["prices"] == {"prompt_per_1k": 0.0003, "completion_per_1k": 0.0012}
         assert payload["price_note"] and "峰时缓存未命中" in payload["price_note"]
         assert payload["cost_usd"] == pytest.approx(0.0003 + 0.0006)
         assert payload["role"] == "generation"
 
-    def test_零边际成本档案(self):
+    def test_零边际成本档案(self, llm_credentials):
+        llm_credentials.inject()
         payload = smoke_llm.run_gateway_smoke(
             MOVIE, profile_id="local-qwen", prompt="打个招呼", backend=_FakeBackend()
         )
         assert payload["cost_usd"] == 0.0 and payload["zero_marginal"] is True
         assert payload["endpoint"] == "LOCAL_LLM_BASE_URL"  # env 形态记变量名
 
-    def test_档案不存在列出可用(self):
+    def test_档案不存在列出可用(self, llm_credentials):
+        llm_credentials.inject()  # 档案解析先于凭证检查；注入以免宿主环境干扰
         with pytest.raises(smoke_llm.SmokeError) as excinfo:
             smoke_llm.run_gateway_smoke(MOVIE, profile_id="ghost", backend=_FakeBackend())
         message = str(excinfo.value)
@@ -63,9 +67,8 @@ class Test按档案冒烟:
 
 
 class Test命令行:
-    def test_profile_与_model_别名一致(self, monkeypatch, capsys):
-        monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:9")
-        monkeypatch.setenv("LOCAL_LLM_API_KEY", "k")
+    def test_profile_与_model_别名一致(self, monkeypatch, llm_credentials, capsys):
+        llm_credentials.inject()
         monkeypatch.setattr(
             smoke_llm,
             "run_gateway_smoke",
@@ -84,26 +87,29 @@ class Test命令行:
         payload = json.loads(capsys.readouterr().out)
         assert code == smoke_llm.EXIT_FAILED and payload["reason"] == "usage_error"
 
-    def test_缺凭证退出码1且指名变量(self, monkeypatch, capsys):
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    def test_缺凭证退出码1且指名变量(self, llm_credentials, llm_profile_vars, capsys):
+        """清空**该档案声明的变量**（同源）→ 退出码 1 且 missing 正是这些变量名。"""
+        declared = llm_profile_vars.of("deepseek-flash", MOVIE)
+        cleared = llm_credentials.clear(MOVIE)
+        assert declared <= cleared
         code = smoke_llm.main(["--config", MOVIE, "--profile", "deepseek-flash"])
         payload = json.loads(capsys.readouterr().out)
         assert code == smoke_llm.EXIT_NO_CREDENTIALS == 1
-        assert payload["missing"] == ["OPENAI_API_KEY"]  # 该档案声明的变量
+        assert set(payload["missing"]) == declared  # 该档案声明的变量（配置改名即跟随）
         assert payload["profile_id"] == "deepseek-flash"
         assert "check_credentials" in payload["hint"]
 
-    def test_本地档案缺变量也如实报(self, monkeypatch, capsys):
-        monkeypatch.delenv("LOCAL_LLM_BASE_URL", raising=False)
-        monkeypatch.delenv("LOCAL_LLM_API_KEY", raising=False)
+    def test_本地档案缺变量也如实报(self, llm_credentials, llm_profile_vars, capsys):
+        declared = llm_profile_vars.of("local-qwen", MOVIE)
+        llm_credentials.clear(MOVIE)
         code = smoke_llm.main(["--config", MOVIE, "--profile", "local-qwen"])
         payload = json.loads(capsys.readouterr().out)
         assert code == 1
-        assert set(payload["missing"]) == {"LOCAL_LLM_BASE_URL", "LOCAL_LLM_API_KEY"}
+        assert set(payload["missing"]) == declared
 
 
 class TestRound改角色映射:
-    def test_round_改写角色映射且不动模型名(self, tmp_path, monkeypatch):
+    def test_round_改写角色映射且不动模型名(self, tmp_path, monkeypatch, llm_credentials):
         import yaml
 
         captured: dict = {}
@@ -123,8 +129,7 @@ class TestRound改角色映射:
             )()
 
         monkeypatch.setattr(smoke_llm, "run_pilot", _fake_run)
-        monkeypatch.setenv("LOCAL_LLM_API_KEY", "k")
-        monkeypatch.setenv("LOCAL_LLM_BASE_URL", "http://127.0.0.1:9")
+        llm_credentials.inject()
         payload = smoke_llm.run_round_smoke(
             MOVIE,
             profile_id="local-qwen",
@@ -141,3 +146,57 @@ class TestRound改角色映射:
         assert temp_config["screenplay"]["model"] == original["screenplay"]["model"]
         assert temp_config["screenplay"]["model_prices"] == original["screenplay"]["model_prices"]
         assert payload["profile_id"] == "local-qwen" and payload["status"] == "done"
+
+
+class Test环境助手同源自检:
+    """自检：用例使用的变量集合**来自配置**，改名即跟随（不硬编码变量名、不依赖宿主环境）。"""
+
+    def test_助手变量集合与配置档案逐项一致(self, llm_profile_vars):
+        import yaml
+
+        for name in ("movie", "shortdrama"):
+            payload = yaml.safe_load(open(f"configs/{name}.yaml", encoding="utf-8"))
+            expected = {
+                str(profile_id): {
+                    str(profile["api_key_env"]),
+                    *([str(profile["base_url_env"])] if profile.get("base_url_env") else []),
+                }
+                for profile_id, profile in payload["llm"]["profiles"].items()
+            }
+            declared = llm_profile_vars.declared(f"configs/{name}.yaml")
+            assert {pid: set(names) for pid, names in declared.items()} == expected
+
+    def test_改名后助手与清空操作同步跟随(
+        self, tmp_path, monkeypatch, llm_profile_vars, llm_credentials
+    ):
+        """把配置里的变量名改掉 → 助手读到的集合与清空行为都跟着变（真正的同源）。"""
+        import yaml
+
+        payload = yaml.safe_load(open("configs/movie.yaml", encoding="utf-8"))
+        renamed = "RENAMED_PROVIDER_KEY"
+        payload["llm"]["profiles"]["deepseek-flash"]["api_key_env"] = renamed
+        for profile in payload["llm"]["profiles"].values():
+            profile.pop("base_url_env", None)  # 端点写在档案里 → 只留 api_key_env
+        temp_config = tmp_path / "renamed.yaml"
+        temp_config.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+
+        declared = llm_profile_vars.declared(temp_config)
+        assert renamed in declared["deepseek-flash"]
+        monkeypatch.setenv(renamed, "injected")
+        cleared = llm_credentials.clear(temp_config)
+        assert renamed in cleared
+        import os
+
+        assert renamed not in os.environ  # 清空按配置声明生效（改名即跟随）
+
+    def test_助手不碰未声明的变量(self, llm_profile_vars, llm_credentials, monkeypatch):
+        """旧变量名（`OPENAI_*`）不属于任何档案声明 → 既不清也不注入（不参与判定）。"""
+        monkeypatch.setenv("OPENAI_API_KEY", "host-var-must-survive")
+        declared_names = llm_profile_vars.flat()
+        assert "OPENAI_API_KEY" not in {
+            name for group in llm_profile_vars.declared().values() for name in group
+        }
+        injected = llm_credentials.inject()
+        assert set(injected) == set(declared_names)
+
+        assert "OPENAI_API_KEY" not in injected
