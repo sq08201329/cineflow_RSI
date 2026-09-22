@@ -498,7 +498,8 @@ class Test清单切换口径与代码一致:
         import importlib
 
         data = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        assert data["schema_version"] == "1.2.0"  # 1.2.0 = 后端选择配置化
+        # 1.3.0 = 媒体适配器协议实现登记（protocol_implementation）；1.2.0 = 后端选择配置化
+        assert data["schema_version"] == "1.3.0"
         module_name, attr = self._mechanism()["assembly_point"].split("::")
         assert callable(getattr(importlib.import_module(module_name), attr))
 
