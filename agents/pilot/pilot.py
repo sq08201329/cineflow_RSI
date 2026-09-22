@@ -20,6 +20,7 @@ from typing import Any
 
 from agents.pilot import package as package_module
 from agents.pilot import stages as stages_module
+from agents.pilot.backends import BackendAssemblyError, BackendSelection
 from core.orchestration.executor import ExecutionContext
 from core.orchestration.executor import run as run_dag
 from core.orchestration.models import RunRecord, RunStatus, fingerprint_of
@@ -138,9 +139,20 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
 
 
 def precheck(
-    *, form: str, config_path: str | Path, inputs: PilotInputs, data_dir: str | Path
+    *,
+    form: str,
+    config_path: str | Path,
+    inputs: PilotInputs,
+    data_dir: str | Path,
+    backend: str | None = None,
+    llm_backend: str | None = None,
 ) -> dict:
-    """启动前预检：输入下限 + 配置完整性 + 预算/并行度可用（不合格即拒绝）。"""
+    """启动前预检：输入下限 + 配置完整性 + 预算/并行度可用（不合格即拒绝）。
+
+    后端面（`pilot` 段）在此**只做取值校验与如实登记**：取值非法即拒绝（与配置完整性同
+    口径），但**不验凭证**——`backend: http` 而凭证缺失由装配期（`build_runtime`）显式失败，
+    本报告以 `credentials_checked: false` 明确标注这条边界。
+    """
     if not isinstance(inputs, PilotInputs):
         raise PrecheckError(f"试水输入必须为 PilotInputs，实际为 {inputs!r}")
     if not inputs.topic:
@@ -153,6 +165,12 @@ def precheck(
     if not path.is_file():
         raise PrecheckError(f"形态配置不存在：{path}")
     loaders = config_completeness(path)
+    try:
+        selection = BackendSelection.from_yaml(path).with_runtime_overrides(
+            backend=backend, llm_backend=llm_backend
+        )
+    except BackendAssemblyError as exc:
+        raise PrecheckError(f"配置完整性预检失败（pilot 后端声明）：{exc}") from exc
     configs = stages_module.AgentConfigs(
         screenplay=stages_module.ScreenplayConfig.from_yaml(path),
         storyboard=stages_module.StoryboardConfig.from_yaml(path),
@@ -186,6 +204,22 @@ def precheck(
         "input_fingerprint": inputs.fingerprint(),
         "loaders": list(loaders),
         "budgets": budgets,
+        "pilot_backend": _backend_report(selection),
+    }
+
+
+def _backend_report(selection) -> dict:
+    """预检里的后端声明视图（如实登记取值；凭证面不在本函数职责内）。"""
+    return {
+        "backend": selection.backend,
+        "llm_backend": selection.llm_backend,
+        "overrides": dict(selection.overrides),
+        "resolved": selection.resolved(),
+        "credentials_checked": False,
+        "note": (
+            "precheck 只验配置完整性，**不验凭证**：声明 http 而凭证缺失将在装配期"
+            "（落树/生成之前）显式失败，不静默回落模拟"
+        ),
     }
 
 
@@ -208,15 +242,33 @@ def run_pilot(
     artifacts_root: str | Path | None = None,
     run_id: str | None = None,
     clock=None,
+    backend: str | None = None,
+    llm_backend: str | None = None,
 ) -> PilotRun:
-    """跑一次试水：预检 → 六阶段 DAG 执行 → 样片包（含运行记录落盘）。"""
-    report = precheck(form=form, config_path=config_path, inputs=inputs, data_dir=data_dir)
+    """跑一次试水：预检 → 六阶段 DAG 执行 → 样片包（含运行记录落盘）。
+
+    `backend` / `llm_backend`：运行时后端覆盖（缺省取形态配置 `pilot` 段）；装配在预检
+    之后、DAG 之前，声明真实后端而凭证缺失即在此失败（零成本、零落树）。
+    """
+    report = precheck(
+        form=form,
+        config_path=config_path,
+        inputs=inputs,
+        data_dir=data_dir,
+        backend=backend,
+        llm_backend=llm_backend,
+    )
     run_id = run_id or (
         "pilot-" + fingerprint_of(report["config_fingerprint"] + report["input_fingerprint"])[:12]
     )
     root = Path(artifacts_root) if artifacts_root is not None else Path(data_dir) / "artifacts"
     runtime = stages_module.build_runtime(
-        form=form, config_path=config_path, data_dir=data_dir, artifacts_root=root
+        form=form,
+        config_path=config_path,
+        data_dir=data_dir,
+        artifacts_root=root,
+        backend=backend,
+        llm_backend=llm_backend,
     )
     stages_module.bind_runtime(runtime)
     store = FileRunStore(data_dir)
@@ -260,12 +312,30 @@ def resume_pilot(
     artifacts_root: str | Path | None = None,
     run_id: str,
     clock=None,
+    backend: str | None = None,
+    llm_backend: str | None = None,
 ) -> PilotRun:
-    """断点续跑：读运行记录 → 校验指纹 → 续跑未完成阶段 → 重出样片包。"""
-    report = precheck(form=form, config_path=config_path, inputs=inputs, data_dir=data_dir)
+    """断点续跑：读运行记录 → 校验指纹 → 续跑未完成阶段 → 重出样片包。
+
+    后端覆盖口径与 `run_pilot` 一致（缺省取配置）：续跑必须**重装配**同一份后端声明，
+    否则"续跑的阶段"与"已完成的阶段"可能出自不同渠道（配置指纹会先一步拒绝这种分叉）。
+    """
+    report = precheck(
+        form=form,
+        config_path=config_path,
+        inputs=inputs,
+        data_dir=data_dir,
+        backend=backend,
+        llm_backend=llm_backend,
+    )
     root = Path(artifacts_root) if artifacts_root is not None else Path(data_dir) / "artifacts"
     runtime = stages_module.build_runtime(
-        form=form, config_path=config_path, data_dir=data_dir, artifacts_root=root
+        form=form,
+        config_path=config_path,
+        data_dir=data_dir,
+        artifacts_root=root,
+        backend=backend,
+        llm_backend=llm_backend,
     )
     stages_module.bind_runtime(runtime)
     store = FileRunStore(data_dir)

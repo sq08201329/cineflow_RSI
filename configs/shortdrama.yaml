@@ -380,6 +380,15 @@ web:
     pools: replay/pools # 011 合并池构建快照（跨项目归属）
   export_dir: web/dist # 静态导出目录（同一查询层预生成 JSON + 资产拷贝）
 
+# 试水链后端选择（功能 015 升级：A → B 一行切换）——**装配层的唯一开关**。
+# 段缺失即取默认（backend=simulated / llm_backend=mock）：A 路径零配置可跑；
+# 声明 http 而凭证缺失 = 装配期显式拒绝（不静默回落模拟、不落树、不扣费）。
+# 取值非法（未知环节名/未知取值）同样在装配期拒绝。逐环节覆盖写在 overrides。
+pilot:
+  backend: simulated # simulated | http：五个环节的平台适配器（分镜/视觉/声音/剪辑/宣发）
+  llm_backend: mock # mock | http：LLM 网关后端（http 读 OPENAI_BASE_URL / OPENAI_API_KEY）
+  overrides: {} # 逐环节覆盖（优先于全局取值），如 {visual: http, llm: http}
+
 # 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
 # （值 = policies/history/screenplay/ 下的策略版本）。部署自动化（功能 014）：
 # 模式状态机 + 证据门槛（三要件）+ 影子期下限 + 渐进抽检策略。

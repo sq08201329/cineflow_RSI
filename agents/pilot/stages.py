@@ -21,8 +21,15 @@
 **形态无关**（宪章原则五）：配置全部来自 `configs/*.yaml`（预算/规格/时长/节拍表），
 本模块不做形态分支；`form` 只作参数透传。
 
-**诚实边界**：全链路为**确定性模拟生成器**产出（"模拟生成"标注见样片包清单），
-零真实凭证、零真实投放；编排产物 JSON 化后随运行记录落盘（续跑据此恢复）。
+**后端由配置装配**（A → B 一行切换）：本模块**不再出现任何实现类字面量**——六个后端
+（网关 + 五环节平台适配器）全部由 `agents/pilot/backends.py` 的 `build_backends` 按形态配置
+`pilot` 段**一次装配**并放进 `PilotRuntime.backends`，各阶段从 runtime 取用
+（`runtime.gateway` 为 `backends.gateway` 的只读视图）。声明 `http` 而凭证缺失即在装配期
+显式拒绝（先于落树/生成，零成本失败、不静默回落模拟）。
+
+**诚实边界**：默认（`pilot` 段缺失或 `backend: simulated`）为**确定性模拟生成器**产出
+（"模拟生成"标注见样片包清单），零真实凭证、零真实投放；编排产物 JSON 化后随运行记录落盘
+（续跑据此恢复）。
 """
 
 import json
@@ -41,13 +48,12 @@ from agents.editing.config import EditingConfig
 from agents.editing.db import create_render_jobs_schema as create_editing_jobs_schema
 from agents.editing.edl import EditDecisionList
 from agents.editing.loop import run_editing_round
-from agents.editing.platform.simulated import SimulatedEditRenderer
 from agents.editing.shots import ShotLibrary
 from agents.pilot import handoffs
+from agents.pilot.backends import PilotBackends, build_backends
 from agents.promo.config import PromoConfig
 from agents.promo.db import create_campaigns_schema
 from agents.promo.loop import run_round as run_promo_round
-from agents.promo.platform.simulated import SimulatedPlatform
 from agents.screenplay.config import ScreenplayConfig
 from agents.screenplay.db import create_jobs_schema as create_screenplay_jobs_schema
 from agents.screenplay.loop import run_screenplay_round
@@ -56,23 +62,19 @@ from agents.sound.config import SoundConfig
 from agents.sound.db import create_gen_jobs_schema as create_sound_jobs_schema
 from agents.sound.evaluators.loudness import measure_loudness_lufs
 from agents.sound.loop import run_sound_round
-from agents.sound.platform.simulated import SimulatedMusicGen, SimulatedSFXGen, SimulatedTTSGen
 from agents.sound.timing import TimingSheet
 from agents.storyboard.config import StoryboardConfig
 from agents.storyboard.db import create_render_jobs_schema as create_storyboard_jobs_schema
 from agents.storyboard.loop import run_storyboard_round
-from agents.storyboard.platform.simulated import SimulatedStoryboardRenderer
 from agents.storyboard.script import ScriptSegment
 from agents.storyboard.shotlist import ShotEntry as BoardShotEntry
 from agents.storyboard.shotlist import ShotList
 from agents.visual.config import VisualConfig
 from agents.visual.db import create_gen_jobs_schema as create_visual_jobs_schema
 from agents.visual.loop import run_round as run_visual_round
-from agents.visual.platform.simulated import SimulatedVideoGen
 from core.calibration.drift_config import DriftConfig
 from core.calibration.drift_gate import DriftGate
 from core.evaluators.base import ArtifactRef
-from core.llm_gateway.backends.mock import MockBackend
 from core.llm_gateway.gateway import LLMGateway
 from core.orchestration.errors import StageFailedError
 from core.orchestration.models import (
@@ -110,7 +112,7 @@ class AgentConfigs:
 
 @dataclass(frozen=True)
 class PilotRuntime:
-    """试水运行运行时：既有基建装配（一次性）+ 各 Agent 配置 + 配置指纹。"""
+    """试水运行运行时：既有基建装配（一次性）+ 各 Agent 配置 + 后端装配 + 配置指纹。"""
 
     form: str
     config_path: Path
@@ -119,12 +121,17 @@ class PilotRuntime:
     engine: Engine
     store: Any
     artifacts: LocalArtifactStore
-    gateway: LLMGateway
+    backends: PilotBackends
     configs: AgentConfigs
     config_fingerprint: str
     shot_plan: tuple[dict, ...]
     calibration_dir: Path
     drift_gate: DriftGate
+
+    @property
+    def gateway(self) -> LLMGateway:
+        """LLM 网关视图（后端由 `backends` 装配；各阶段只读，不另造网关）。"""
+        return self.backends.gateway
 
 
 def build_runtime(
@@ -134,11 +141,17 @@ def build_runtime(
     data_dir: str | Path,
     artifacts_root: str | Path,
     calibration_dir: str | Path | None = None,
+    backend: str | None = None,
+    llm_backend: str | None = None,
 ) -> PilotRuntime:
-    """装配运行时：SQLite 引擎（含全部既有 schema）+ 树库 + 工件库 + 网关 + 漂移门禁。
+    """装配运行时：SQLite 引擎（含全部既有 schema）+ 树库 + 工件库 + 后端 + 漂移门禁。
 
     `calibration_dir`：判据类数据根（漂移状态登记与报表同根）；缺省按形态配置
     `web.data_dirs.calibration` 解析（见 `calibration_data_dir`），显式传入可覆盖（测试用）。
+
+    `backend` / `llm_backend`：运行时全局覆盖（CLI `--backend` / `--llm-backend`）；
+    缺省取形态配置 `pilot` 段（缺段即 `simulated`/`mock`）。**后端在落树/生成之前装配**：
+    声明真实后端而凭证缺失时在这里就失败（零成本、零落树）。
     """
     config_path = Path(config_path)
     data_dir = Path(data_dir)
@@ -154,6 +167,8 @@ def build_runtime(
         editing=EditingConfig.from_yaml(config_path),
         promo=PromoConfig.from_yaml(config_path),
     )
+    # 唯一后端装配点（配置驱动；缺凭证即在此显式拒绝，先于任何落树/生成）
+    backends = build_backends(configs, config_path, backend=backend, llm_backend=llm_backend)
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)  # 001 发现树
     create_screenplay_jobs_schema(engine)
@@ -173,9 +188,7 @@ def build_runtime(
         engine=engine,
         store=create_tree_store(engine),
         artifacts=LocalArtifactStore(artifacts_root),
-        gateway=LLMGateway(
-            MockBackend(), price_book=configs.screenplay.model_prices, sleep=lambda _: None
-        ),
+        backends=backends,
         configs=configs,
         config_fingerprint=config_fingerprint,
         shot_plan=build_shot_plan(configs, scene_count=_DEFAULT_SCENE_COUNT),
@@ -417,7 +430,7 @@ def _storyboard_entry(stage_input: StageInput) -> StageOutcome:
         policy=_StoryboardPolicy(shotlists=(shotlist,)),
         store=runtime.store,
         artifacts=runtime.artifacts,
-        adapter=SimulatedStoryboardRenderer(),
+        adapter=runtime.backends.storyboard,
         engine=runtime.engine,
         config=config,
         inputs={"script": segment},
@@ -486,7 +499,7 @@ def _visual_entry(stage_input: StageInput) -> StageOutcome:
     config = runtime.configs.visual
     round_id = _round_id(runtime, stage_input)
     params_list = stage_input.handoff_input or ()
-    adapter = SimulatedVideoGen(config.simulated_gen)
+    adapter = runtime.backends.visual
     result = run_visual_round(
         round_id=round_id,
         policy=_VisualPolicy(params_list=params_list),
@@ -536,11 +549,7 @@ def _sound_entry(stage_input: StageInput) -> StageOutcome:
     round_id = _round_id(runtime, stage_input)
     timing_sheet = stage_input.handoff_input
     plans = build_sound_plans(runtime, timing_sheet)
-    adapters = {
-        "tts": SimulatedTTSGen(config.simulated_gen, config.sample_rate),
-        "sfx": SimulatedSFXGen(config.simulated_gen, config.sample_rate),
-        "music": SimulatedMusicGen(config.simulated_gen, config.sample_rate),
-    }
+    adapters = dict(runtime.backends.sound)  # tts/sfx/music 三类（装配点一次构造）
     result = run_sound_round(
         round_id=round_id,
         policy=_SoundPolicy(plans=plans),
@@ -636,7 +645,7 @@ def _editing_entry(stage_input: StageInput) -> StageOutcome:
     round_id = _round_id(runtime, stage_input)
     edits: handoffs.EditInputs = stage_input.handoff_input
     edl = build_edl(runtime, edits.shot_library)
-    adapter = SimulatedEditRenderer(config.render)
+    adapter = runtime.backends.editing
     result = run_editing_round(
         round_id=round_id,
         policy=_EditingPolicy(edls=(edl,)),
@@ -702,7 +711,7 @@ def _promo_entry(stage_input: StageInput) -> StageOutcome:
     round_id = _round_id(runtime, stage_input)
     material_specs: handoffs.PromoMaterials = stage_input.handoff_input
     briefs = build_material_briefs(runtime, material_specs)
-    adapter = SimulatedPlatform(config.simulated_platform)
+    adapter = runtime.backends.promo
     result = run_promo_round(
         round_id=round_id,
         policy=_PromoPolicy(briefs=briefs),
