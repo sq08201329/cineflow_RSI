@@ -198,7 +198,11 @@ def build_backends(
         backend=backend, llm_backend=llm_backend
     )
     resolved = selection.resolved()
-    llm = _guard(LLM_SLOT, resolved[LLM_SLOT], lambda: _llm_backend(resolved[LLM_SLOT]))
+    # 功能 016：LLM 端点/密钥由**配置档案**注入（不再隐式读 OPENAI_*）
+    llm_profiles = _llm_profiles_for(config_path)
+    llm = _guard(
+        LLM_SLOT, resolved[LLM_SLOT], lambda: _llm_backend(resolved[LLM_SLOT], llm_profiles)
+    )
     return PilotBackends(
         selection=selection,
         resolved=resolved,
@@ -207,7 +211,7 @@ def build_backends(
             llm,
             price_book=configs.screenplay.model_prices,
             sleep=lambda _: None,
-            profiles=_llm_profiles_for(config_path),  # 功能 016：档案与价目随快照冻结
+            profiles=llm_profiles,  # 功能 016：档案与价目随快照冻结
         ),
         storyboard=_guard(
             "storyboard", resolved["storyboard"], lambda: _storyboard(resolved["storyboard"])
@@ -239,14 +243,15 @@ def _guard(slot: str, kind: str, factory):
         ) from exc
 
 
-def _llm_backend(kind: str):
+def _llm_backend(kind: str, profiles=None):
     if kind == MOCK:
         from core.llm_gateway.backends.mock import MockBackend
 
         return MockBackend()
     from core.llm_gateway.backends.http import HttpBackend
 
-    return HttpBackend()  # 构造器直接读环境变量（变量名由配置档案登记，见 llm.profiles）
+    # 功能 016 / C5：端点与密钥**按配置档案注入**（多档案按 model 分派），构造器不读环境变量
+    return HttpBackend.from_profiles(profiles)
 
 
 def _storyboard(kind: str):

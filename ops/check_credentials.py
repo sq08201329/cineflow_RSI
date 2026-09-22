@@ -99,8 +99,8 @@ class AdapterHint:
 ADAPTER_HINTS = {
     "OPENAI": AdapterHint(
         "core.llm_gateway.backends.http.HttpBackend",
-        has_from_env=False,
-        extra="真实 LLM 走网关 http 后端；`ops/pilot.py precheck` 只验配置不验凭证",
+        has_from_env=True,  # 功能 016：显式 from_env()（旧路径）；正规路径按配置档案注入
+        extra="真实 LLM 走网关 http 后端（端点/密钥按配置档案注入）；precheck 只验配置不验凭证",
     ),
     "VISUAL_GEN": AdapterHint(
         "agents.visual.platform.http_real.HttpRealVideoGen", has_from_env=True
@@ -140,6 +140,135 @@ PROBE_PATHS = {
     "EDIT_RENDER": "/health",
     "PROMO_PLATFORM": "/health",
 }
+
+
+# ---------------------------------------------------------------------------
+# 档案化就绪矩阵（功能 016 / 契约 C8）：**以配置档案为权威**
+# ---------------------------------------------------------------------------
+
+
+def _profile_config_payload(config) -> dict:
+    """配置载荷：给路径就读文件；直接给 dict 即用（便于以配置片段驱动机检）。"""
+    import yaml
+
+    if isinstance(config, dict):
+        return config
+    return yaml.safe_load(Path(config).read_text(encoding="utf-8"))
+
+
+def profile_matrix(
+    config,
+    *,
+    environ: dict[str, str] | None = None,
+    probe: bool = False,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict:
+    """按配置档案生成就绪矩阵：**变量名 + 所属档案 + 用途**（凭证只按档案声明读取）。
+
+    假阳性归零：环境里存在但与任何档案声明无关的 `OPENAI_*` **不参与判定**，并记入
+    `ignored_environ` 显式说明；`legacy_env=True` 的档案标注"沿用旧变量名（建议改中立名）"。
+    `probe=True` 才发只读 GET（未注入的档案零网络）；分型沿用 unset/reachable 既有口径。
+    """
+    from core.llm_gateway.profiles import load_or_migrate
+
+    env = os.environ if environ is None else environ
+    loaded = load_or_migrate(_profile_config_payload(config))
+    declared: set[str] = set()
+    entries: list[dict] = []
+    for profile_id, profile in sorted(loaded.profiles.items()):
+        variables = [str(profile.api_key_env)]
+        if not profile.base_url and profile.base_url_env:
+            variables.append(str(profile.base_url_env))
+        declared.update(variables)
+        # 探测**每档案一次**（同一档案的端点唯一）：先看变量是否齐备，再决定是否发 GET
+        all_set = all(env.get(variable) for variable in variables)
+        probe_result = (
+            _probe_endpoint(profile, env, timeout) if (all_set and probe) else None
+        )
+        statuses: dict[str, dict] = {}
+        for variable in variables:
+            if not env.get(variable):
+                statuses[variable] = {"status": PROBE_MISSING, "set": False, "detail": "环境未注入"}
+            elif probe_result is not None:
+                statuses[variable] = dict(probe_result)
+            else:
+                statuses[variable] = {"status": PROBE_OK, "set": True, "detail": "已注入（未探测）"}
+        ready = all(item["status"] == PROBE_OK for item in statuses.values())
+        # 档案级状态沿用既有分型词表：连不通优先于未注入（处置动作不同）
+        if ready:
+            profile_status = PROBE_OK
+        elif any(item["status"] == PROBE_UNREACHABLE for item in statuses.values()):
+            profile_status = PROBE_UNREACHABLE
+        elif any(item["status"] == PROBE_AUTH_REJECTED for item in statuses.values()):
+            profile_status = PROBE_AUTH_REJECTED
+        else:
+            profile_status = PROBE_MISSING
+        roles = sorted(
+            str(role) for role, target in loaded.routing.roles.items() if target == profile_id
+        )
+        entry = {
+            "profile_id": profile_id,
+            "endpoint": profile.endpoint_ref,  # 只记 host 或变量名（不含密钥）
+            "endpoint_source": "base_url" if profile.base_url else "base_url_env",
+            "variables": statuses,
+            "status": profile_status,
+            "runnable": ready,
+            "zero_marginal": profile.zero_marginal,
+            "legacy_env": profile.legacy_env,
+            "roles": roles,
+            "purpose": f"LLM 调用（档案 {profile_id}"
+            + (f"；承担角色 {', '.join(roles)}" if roles else "")
+            + "）",
+            "note": EVIDENCE_LEGACY_NOTE if profile.legacy_env else "",
+        }
+        if not ready:
+            entry["missing"] = sorted(
+                name for name, item in statuses.items() if item["status"] == PROBE_MISSING
+            )
+        entries.append(entry)
+    ignored = sorted(
+        name for name in env if name.endswith((_BASE_SUFFIX, _KEY_SUFFIX)) and name not in declared
+    )
+    notes = [
+        "凭证只按配置档案（llm.profiles）声明读取：环境里未被子档案声明的变量不参与判定"
+        "（假阳性归零）"
+    ]
+    if ignored:
+        notes.append(f"以下环境变量未被任何档案声明，已忽略：{ignored}")
+    return {
+        "config": str(config) if not isinstance(config, dict) else "<inline config>",
+        "probe": probe,
+        "profiles": entries,
+        "ignored_environ": ignored,
+        "notes": notes,
+        "summary": {
+            "ready": [entry["profile_id"] for entry in entries if entry["runnable"]],
+            "blocked": [entry["profile_id"] for entry in entries if not entry["runnable"]],
+        },
+    }
+
+
+EVIDENCE_LEGACY_NOTE = "沿用旧变量名（建议改中立名，如 <VENDOR>_API_KEY，避免与其它供应商同名混淆）"
+
+
+def _probe_endpoint(profile, env: dict[str, str], timeout: float) -> dict:
+    """探测某档案的端点（只读 GET /health；端点取档案声明的 URL 或 endpoint 变量）。"""
+    base_url = profile.base_url or env.get(str(profile.base_url_env), "")
+    target = f"{str(base_url).rstrip('/')}/health"
+    headers = {"Authorization": f"Bearer {env.get(str(profile.api_key_env), '')}"}
+    try:
+        status, reason = _http_get(target, headers, timeout)
+    except (OSError, http.client.HTTPException) as exc:
+        return {"status": PROBE_UNREACHABLE, "set": True, "detail": f"连不通：{exc}"}
+    if 200 <= status < 300:
+        return {"status": PROBE_OK, "set": True, "detail": f"HTTP {status} {reason}"}
+    if status in _PROBE_STATUS_BY_HTTP:
+        return {
+            "status": _PROBE_STATUS_BY_HTTP[status],
+            "set": True,
+            "detail": f"HTTP {status} {reason}",
+        }
+    return {"status": PROBE_HTTP_OTHER, "set": True, "detail": f"HTTP {status} {reason}"}
 
 
 class CredentialCheckError(Exception):
@@ -378,9 +507,17 @@ def evaluate(
     probe_paths: dict[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     environ: dict[str, str] | None = None,
+    config_path: str | Path | None = None,
+    probe_profiles: bool = False,
 ) -> dict:
-    """核查并产出就绪矩阵（纯读：默认零网络；`probe=True` 才发只读 GET）。"""
+    """核查并产出就绪矩阵（纯读：默认零网络）。
+
+    两套探测各自显式开启，**互不牵连**：`probe=True` 探清单路径（既有口径）；
+    `probe_profiles=True` 探配置档案声明的端点。缺省两者皆为关（零网络）。
+    """
     manifest_file = Path(manifest_path) if manifest_path is not None else DEFAULT_MANIFEST
+    if config_path is None:
+        config_path = REPO_ROOT / "configs" / "movie.yaml"
     manifest = _load_manifest(manifest_file)
     env = os.environ if environ is None else environ
     wanted = [path_id.upper() for path_id in path_ids] if path_ids else None
@@ -392,10 +529,17 @@ def evaluate(
     ]
     runnable = [r["path_id"] for r in reports if r["runnable"]]
     blocked = [r["path_id"] for r in reports if not r["runnable"]]
+    profile_block = (
+        profile_matrix(config_path, environ=env, probe=probe_profiles, timeout=timeout)
+        if config_path is not None
+        else {"profiles": [], "notes": ["未给出配置路径：跳过档案化就绪矩阵"]}
+    )
     return {
         "manifest": str(manifest_file),
         "schema_version": manifest.get("schema_version"),
+        "llm_profiles": profile_block,
         "probe": probe,
+        "probe_profiles": probe_profiles,
         "checked_paths": [r["path_id"] for r in reports],
         "paths": reports,
         "free_checks": list(FREE_CHECKS),
@@ -413,6 +557,11 @@ def main(argv: list[str] | None = None) -> int:
         description="凭证就绪核查器：就绪矩阵（A 恒可跑；B/C 缺凭证即列出）"
     )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="升级清单路径")
+    parser.add_argument(
+        "--config",
+        default=str(REPO_ROOT / "configs" / "movie.yaml"),
+        help="形态配置路径（档案化就绪矩阵的来源；llm.profiles 声明变量名与用途）",
+    )
     parser.add_argument(
         "--path",
         action="append",
@@ -437,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
         probe_paths = _parse_probe_paths(args.probe_path)
         report = evaluate(
             manifest_path=args.manifest,
+            config_path=getattr(args, "config", None),
+            probe_profiles=getattr(args, "probe_profiles", False),
             path_ids=args.path,
             probe=args.probe,
             probe_paths=probe_paths,

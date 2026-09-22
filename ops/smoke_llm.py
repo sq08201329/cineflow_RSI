@@ -3,6 +3,10 @@
 
 用法（在**自己的 shell** 里导出凭证；密钥只读环境变量，脚本不打印、不落盘）：
 
+**按档案调用（功能 016）**：端点/密钥/价目都取自配置 `llm.profiles` 的**档案声明**——
+`--profile deepseek-flash`（`--model` 保留为等价别名）；环境里无关的 `OPENAI_*`
+只在某档案**显式声明**它时才参与（假阳性归零）。
+
 ```bash
 export OPENAI_BASE_URL=https://api.deepseek.com
 export OPENAI_API_KEY=...           # 你自己的密钥（本仓任何文件都不含真实密钥）
@@ -48,7 +52,6 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import yaml
 
@@ -58,14 +61,24 @@ sys.path.insert(0, str(REPO_ROOT))
 from agents.pilot.pilot import PilotInputs, run_pilot  # noqa: E402
 from core.llm_gateway.backends.http import HttpBackend  # noqa: E402
 from core.llm_gateway.gateway import GatewayError, LLMGateway  # noqa: E402
+from core.llm_gateway.profiles import (  # noqa: E402
+    ProfileConfigError,
+    host_of_url,
+    load_or_migrate,
+)
+from core.llm_gateway.routing import Role  # noqa: E402
 from core.yaml_edit import upsert_section_entries  # noqa: E402
+
+# 端点展示口径（遗留 4 收敛）：与 core 的档案快照口径同一实现，不再各写一份
+base_host = host_of_url
 
 EXIT_OK = 0
 EXIT_NO_CREDENTIALS = 1
 EXIT_FAILED = 2
 
 REQUIRED_ENV = ("OPENAI_BASE_URL", "OPENAI_API_KEY")
-DEFAULT_MODEL = "deepseek-flash"
+DEFAULT_MODEL = "deepseek-flash"  # 兼容别名：等价于 --profile deepseek-flash
+_ALL_ROLES = tuple(role for role in Role)  # 四个角色：--round 改写 llm.roles 用
 DEFAULT_PROMPT = "用一句话写出「雨夜便利店」的开场镜头（中文，不超过 40 字）。"
 DEFAULT_ROUND_TOPIC = "雨夜便利店"
 DEFAULT_ROUND_CHARACTERS = "林静,陈默"
@@ -121,56 +134,99 @@ def missing_credentials(environ: dict[str, str] | None = None) -> tuple[str, ...
     return tuple(name for name in REQUIRED_ENV if not report[name]["set"])
 
 
-def base_host(base_url: str) -> str:
-    """base 的展示形态：只保留 `scheme://host[:port]`（**不含**路径、查询串、凭证）。"""
-    parts = urlsplit(base_url)
-    if not parts.scheme or not parts.hostname:
-        raise SmokeError(f"OPENAI_BASE_URL 形态不合法（期望 http(s)://host[:port]）：{base_url!r}")
-    port = f":{parts.port}" if parts.port else ""
-    return f"{parts.scheme}://{parts.hostname}{port}"
+def load_profile_set(config_path: str | Path):
+    """读配置档案（功能 016）：有 `llm` 段用新写法，否则按旧扁平写法迁移为单档案。"""
+    payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    return load_or_migrate(payload if isinstance(payload, dict) else {})
+
+
+def resolve_profile(config_path: str | Path, requested: str | None):
+    """定位要冒烟的档案：显式 id 必须存在（缺失即列出可用档案）；缺省取默认档案。"""
+    loaded = load_profile_set(config_path)
+    profile_id = requested or loaded.routing.default_profile
+    if profile_id not in loaded.profiles:
+        raise SmokeError(
+            f"档案不存在：{profile_id!r}；可用档案为 {sorted(loaded.profiles)}"
+            "（档案定义在形态配置 llm.profiles）"
+        )
+    return loaded, loaded.profiles[profile_id]
+
+
+def profile_env_status(profile, environ: dict | None = None) -> dict:
+    """档案各自的凭证就位状态（只报设置与否 + 长度，不回显值）。"""
+    env = os.environ if environ is None else environ
+    names = [profile.api_key_env]
+    if not profile.base_url and profile.base_url_env:
+        names.append(profile.base_url_env)
+    report: dict[str, dict] = {}
+    for name in names:
+        value = env.get(name) or ""
+        report[name] = {"set": bool(value), "length": len(value)}
+    return report
+
+
+def restricted_profile_set(loaded, profile_id: str):
+    """只保留目标档案的视图（角色空 → 任何角色都回落该档案）：冒烟只打这一条档案。"""
+    from core.llm_gateway.profiles import ProfileLoad
+    from core.llm_gateway.routing import RoleRouting
+
+    return ProfileLoad(
+        profiles={profile_id: loaded.profiles[profile_id]},
+        routing=RoleRouting(roles={}, default_profile=profile_id, default_reason="single_profile"),
+        notes=(),
+        source=loaded.source,
+    )
 
 
 def load_price_book(config_path: str | Path) -> dict:
-    """价目表：取形态配置 `screenplay.model_prices`（= 网关价目表的唯一来源）。"""
-    from agents.screenplay.config import ScreenplayConfig
-
-    return dict(ScreenplayConfig.from_yaml(Path(config_path)).model_prices)
+    """价目表视图（兼容入口）：返回 `{profile_id: {prompt_per_1k, completion_per_1k}}`。"""
+    return load_profile_set(config_path).snapshot().price_book()
 
 
-def build_gateway(config_path: str | Path, *, backend=None) -> LLMGateway:
-    """按配置价目表装配网关（**LLM 必须过网关**：脚本不直连后端）。"""
+def build_gateway(
+    config_path: str | Path, *, backend=None, profile_id: str | None = None, environ=None
+) -> LLMGateway:
+    """按目标**档案**装配网关（只含该档案的视图；LLM 必须过网关，脚本不直连后端）。"""
+    loaded, profile = resolve_profile(config_path, profile_id)
+    scoped = restricted_profile_set(loaded, profile.profile_id)
     return LLMGateway(
-        backend if backend is not None else HttpBackend(),
-        price_book=load_price_book(config_path),
+        backend if backend is not None else HttpBackend.from_profile(profile, environ=environ),
+        price_book=scoped.snapshot().price_book(),
         sleep=lambda _: None,
+        profiles=scoped,
     )
 
 
 def run_gateway_smoke(
     config_path: str | Path,
     *,
-    model: str = DEFAULT_MODEL,
+    profile_id: str | None = None,
     prompt: str = DEFAULT_PROMPT,
     backend=None,
+    environ: dict | None = None,
 ) -> dict:
-    """网关级冒烟：一次真实调用；返回可打印的结果字典（成本按价目表折算）。"""
-    price_book = load_price_book(config_path)
-    if model not in price_book:
-        raise SmokeError(
-            f"价目表缺少模型 {model!r}：请在形态配置 screenplay.model_prices 登记"
-            f"（现有：{sorted(price_book)}）——不允许静默零成本"
-        )
-    gateway = build_gateway(config_path, backend=backend)
-    result = gateway.chat(prompt, model=model)
+    """网关级冒烟：按**档案**调用一次；打印 tokens / 按档案价目折算的成本 / 缓存命中 / 口径备注。"""
+    _, profile = resolve_profile(config_path, profile_id)
+    if backend is None:
+        # 凭证按**档案声明**注入（不隐式读 OPENAI_*；未声明/未设置即报错）
+        backend = HttpBackend.from_profile(profile, environ=environ)
+    gateway = build_gateway(config_path, backend=backend, profile_id=profile.profile_id)
+    result = gateway.chat(prompt, role=Role.GENERATION)  # 角色回落唯一档案
+    _, price = gateway.prices_for(role=Role.GENERATION)
     return {
         "mode": "gateway",
-        "model": model,
-        "base_host": base_host(os.environ.get("OPENAI_BASE_URL", "http://unset")),
-        "price_book_entry": price_book[model],
+        "profile_id": profile.profile_id,
+        "endpoint": profile.endpoint_ref,  # 只记 host 或变量名（不含密钥）
+        "legacy_env": profile.legacy_env,
+        "legacy_env_note": getattr(backend, "legacy_env_note", ""),
+        "prices": price,
+        "price_note": profile.price_note,
         "prompt_tokens": result.usage["prompt_tokens"],
         "completion_tokens": result.usage["completion_tokens"],
         "cost_usd": round(result.cost_usd, 8),
+        "zero_marginal": bool(profile.zero_marginal),
         "cached": result.cached,
+        "role": result.role,
         "gateway_call_count": gateway.call_count,
         "text_preview": result.text[:80],
     }
@@ -203,19 +259,24 @@ def rewrite_config(
     config_path: str | Path,
     target_path: str | Path,
     *,
-    model: str,
+    profile_id: str,
     llm_backend: str,
     minimal: bool = True,
 ) -> Path:
     """复制形态配置到 target_path 并**定点改写**（`core.yaml_edit`，注释逐字保留）。
 
-    改写三项：① 全部模型引用 → `model`；② （`minimal`）规模与预算压到最小；
+    改写三项（功能 016：路由只在配置，**不再散落改写模型名**）：
+    ① `llm.roles`：四个角色全部指向 `profile_id`（角色映射是唯一路由入口）；
+    ② （`minimal`）规模与预算压到最小；
     ③ `pilot.llm_backend` → `llm_backend`（让临时配置如实声明本次实际后端）。
     """
     source = Path(config_path).read_text(encoding="utf-8")
     text = source
-    for path in MODEL_PATHS:
-        text = upsert_section_entries(text, path, {MODEL_KEYS[path]: model})
+    assert profile_id in load_profile_set(config_path).profiles, profile_id
+    text = upsert_section_entries(
+        text, ("llm", "roles"), {str(role): profile_id for role in _ALL_ROLES}
+    )
+    text = upsert_section_entries(text, ("llm",), {"default_profile": profile_id})
     if minimal:
         payload = yaml.safe_load(source)
         for path, updates in minimal_scale_entries(payload):
@@ -230,7 +291,7 @@ def rewrite_config(
 def run_round_smoke(
     config_path: str | Path,
     *,
-    model: str = DEFAULT_MODEL,
+    profile_id: str | None = None,
     llm_backend: str = "http",
     work_dir: str | Path = DEFAULT_WORK_DIR,
     topic: str = DEFAULT_ROUND_TOPIC,
@@ -244,10 +305,11 @@ def run_round_smoke(
     工作目录只放临时配置与运行数据（`--work-dir`，默认 `.smoke-llm`，可随时删除）。
     """
     work = Path(work_dir)
+    _, profile = resolve_profile(config_path, profile_id)
     temp_config = rewrite_config(
         config_path,
         work / "configs" / f"{Path(config_path).stem}-smoke.yaml",
-        model=model,
+        profile_id=profile.profile_id,
         llm_backend=llm_backend,
     )
     form = str(yaml.safe_load(temp_config.read_text(encoding="utf-8")).get("form", "shortdrama"))
@@ -268,7 +330,7 @@ def run_round_smoke(
     )
     return {
         "mode": "round",
-        "model": model,
+        "profile_id": profile.profile_id,
         "llm_backend": llm_backend,
         "temp_config": str(temp_config),
         "work_dir": str(work),
@@ -350,7 +412,16 @@ def build_parser() -> argparse.ArgumentParser:
         description="真实 LLM 冒烟器（DeepSeek 示例）：网关级一次调用，或最小规模真实试水单轮"
     )
     parser.add_argument("--config", required=True, help="形态配置路径（价目表与形态取值来源）")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"模型名（默认 {DEFAULT_MODEL}）")
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="模型档案 id（端点/凭证/价目都取自该档案；缺省取配置的 default_profile）",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=f"档案 id 的等价别名（兼容旧用法，如 --model {DEFAULT_MODEL}）",
+    )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="网关级冒烟的提示词")
     parser.add_argument(
         "--round",
@@ -375,17 +446,44 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     # --dry-run（LLM 走 mock、零真实调用）不要求凭证：校验装配与最小规模用
-    # --dry-run：LLM 走 mock（零真实调用）→ 不要求凭证，用于校验装配与最小规模
     dry = bool(args.round and args.dry_run)
-    missing = () if dry else missing_credentials()
-    if missing:
+    requested = args.profile or args.model
+    if args.profile and args.model and args.profile != args.model:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "reason": "usage_error",
+                    "error": "--profile 与 --model 必须一致（后者是别名）",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return EXIT_FAILED
+    try:
+        _, profile = resolve_profile(args.config, requested)
+    except (SmokeError, ProfileConfigError) as exc:
+        print(
+            json.dumps(
+                {"ok": False, "reason": "profile_error", "error": str(exc)},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return EXIT_FAILED
+    status = profile_env_status(profile)
+    missing = tuple(name for name, item in status.items() if not item["set"])
+    if missing and not dry:
         print(
             json.dumps(
                 {
                     "ok": False,
                     "reason": "credentials_missing",
+                    "profile_id": profile.profile_id,
                     "missing": list(missing),
-                    "present": credential_report(),
+                    "present": status,
+                    "legacy_env": profile.legacy_env,
                     "hint": CREDENTIAL_HINT,
                 },
                 ensure_ascii=False,
@@ -397,19 +495,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not args.round:
             payload = run_gateway_smoke(
-                args.config, model=args.model, prompt=args.prompt, backend=HttpBackend()
+                args.config, profile_id=requested, prompt=args.prompt, backend=None
             )
         else:
             payload = run_round_smoke(
                 args.config,
-                model=args.model,
+                profile_id=requested,
                 llm_backend="mock" if args.dry_run else "http",
                 work_dir=args.work_dir,
                 topic=args.topic,
                 characters=args.characters,
                 run_id=args.run_id,
             )
-    except (SmokeError, GatewayError) as exc:
+    except (SmokeError, GatewayError, ProfileConfigError) as exc:
         print(
             json.dumps(
                 {"ok": False, "reason": "smoke_failed", "error": str(exc)},
@@ -433,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(Path(args.work_dir), ignore_errors=True)  # 冒烟产物不留在仓库里
         payload["work_dir"] = f"{args.work_dir}（已清理；--keep-work-dir 可保留）"
     payload["ok"] = True
-    payload["credentials"] = credential_report()  # 只报是否设置与长度
+    payload["credentials"] = status  # 只报是否设置与长度
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return EXIT_OK
 

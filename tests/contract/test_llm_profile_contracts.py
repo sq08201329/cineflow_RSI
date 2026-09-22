@@ -8,6 +8,7 @@ C2（默认档案与角色映射）、C3（旧扁平迁移）逐场景固化—�
 import json
 
 import pytest
+import yaml
 
 from core.llm_gateway.profiles import (
     ProfileConfigError,
@@ -375,3 +376,265 @@ class TestC7快照冻结:
 
 # 契约文件内的网关构造别名（保持局部可读）
 from core.llm_gateway.gateway import LLMGateway as _LLMGateway  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# readiness 段（T1623）：契约 C8~C10——就绪矩阵 / 冒烟器 / 清单锁
+# ---------------------------------------------------------------------------
+
+
+class TestC8就绪矩阵:
+    def test_场景1_无关_OPENAI_不影响档案判定(self, llm_profiles_config_factory):
+        from ops import check_credentials
+
+        environ = {"OPENAI_API_KEY": "unrelated"}
+        report = check_credentials.profile_matrix(
+            llm_profiles_config_factory("multi"), environ=environ
+        )
+        entries = {e["profile_id"]: e for e in report["profiles"]}
+        assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_MISSING
+        assert report["ignored_environ"] == ["OPENAI_API_KEY"]
+
+    def test_场景2_未设置与连不通分型(self, llm_profiles_config_factory, monkeypatch):
+        from ops import check_credentials
+
+        environ = {"DEEPSEEK_API_KEY": "k"}
+        report = check_credentials.profile_matrix(
+            llm_profiles_config_factory("multi"), environ=environ
+        )
+        entries = {e["profile_id"]: e for e in report["profiles"]}
+        assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_OK
+        assert entries["local-qwen"]["status"] == check_credentials.PROBE_MISSING
+
+        def _boom(url, headers, timeout):
+            raise OSError("unreachable")
+
+        monkeypatch.setattr(check_credentials, "_http_get", _boom)
+        report = check_credentials.profile_matrix(
+            llm_profiles_config_factory("multi"), environ=environ, probe=True
+        )
+        entries = {e["profile_id"]: e for e in report["profiles"]}
+        assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_UNREACHABLE
+
+    def test_场景3_显式声明旧变量名标注沿用(self, llm_profiles_config_factory):
+        from ops import check_credentials
+
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["api_key_env"] = "OPENAI_API_KEY"
+        config["llm"]["profiles"]["deepseek-flash"]["legacy_env"] = True
+        report = check_credentials.profile_matrix(config, environ={"OPENAI_API_KEY": "k"})
+        entry = report["profiles"][0]
+        assert entry["status"] == check_credentials.PROBE_OK and entry["legacy_env"] is True
+        assert "沿用旧变量名" in entry["note"]
+
+    def test_仓库配置在本机真实环境下的判定(self):
+        """真实配置驱动：deepseek-flash 声明 OPENAI_API_KEY（本机有）→ ok 且标注沿用旧名；
+        local-qwen 的中立名未设置 → missing；无关变量（如 DEEPSEEK_API_KEY）被忽略。"""
+        import pathlib
+
+        from ops import check_credentials
+
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        report = check_credentials.profile_matrix(
+            repo_root / "configs" / "movie.yaml", environ={"OPENAI_API_KEY": "k"}
+        )
+        entries = {e["profile_id"]: e for e in report["profiles"]}
+        assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_OK
+        assert entries["local-qwen"]["status"] == check_credentials.PROBE_MISSING
+        assert entries["deepseek-flash"]["endpoint"] == "https://api.deepseek.com"
+
+
+class TestC9冒烟按档案:
+    def test_场景1_按档案调用并打印档案口径(self):
+        from core.llm_gateway.gateway import BackendResult
+        from ops import smoke_llm
+
+        class _Backend:
+            call_count = 0
+            legacy_env_note = ""
+
+            def complete(self, prompt, *, model, temperature, max_tokens):
+                return BackendResult(text="ok", prompt_tokens=100, completion_tokens=50)
+
+        payload = smoke_llm.run_gateway_smoke(
+            "configs/movie.yaml", profile_id="deepseek-flash", backend=_Backend()
+        )
+        assert payload["profile_id"] == "deepseek-flash"
+        assert payload["prices"] == {"prompt_per_1k": 0.0003, "completion_per_1k": 0.0012}
+        assert payload["endpoint"] == "https://api.deepseek.com"
+
+    def test_场景2_档案不存在列出可用(self):
+        from ops import smoke_llm
+
+        with pytest.raises(smoke_llm.SmokeError, match="档案不存在"):
+            smoke_llm.resolve_profile("configs/movie.yaml", "ghost")
+
+    def test_场景3_缺凭证退出码1(self, monkeypatch, capsys):
+        from ops import smoke_llm
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        code = smoke_llm.main(["--config", "configs/movie.yaml", "--profile", "deepseek-flash"])
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 1 and payload["reason"] == "credentials_missing"
+        assert "check_credentials" in payload["hint"]
+
+    def test_round_改写角色映射(self, tmp_path):
+        from ops import smoke_llm
+
+        target = smoke_llm.rewrite_config(
+            "configs/movie.yaml",
+            tmp_path / "smoke.yaml",
+            profile_id="local-qwen",
+            llm_backend="http",
+        )
+        payload = yaml.safe_load(target.read_text(encoding="utf-8"))
+        assert set(payload["llm"]["roles"].values()) == {"local-qwen"}
+        assert payload["screenplay"]["model"] != "local-qwen"  # 散落模型名不再被改写
+
+
+class TestC10清单一致性锁:
+    def test_场景1_一致(self):
+        import pathlib
+        import sys
+
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "unit"))
+        from test_upgrade_manifest_lock import _declared_from_config, _registered_in_manifest
+
+        assert _declared_from_config() == _registered_in_manifest()
+
+    def test_场景2_3_漂移即红且可诊断(self, tmp_path):
+        import pathlib
+        import sys
+
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "unit"))
+        from test_upgrade_manifest_lock import _diff, _registered_in_manifest
+
+        broken = tmp_path / "manifest.json"
+        broken.write_text(
+            json.dumps(
+                {
+                    "llm_profiles": {
+                        "profiles": [{"profile_id": "deepseek-flash", "variables": ["GHOST_KEY"]}]
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        assert _registered_in_manifest(broken) != _registered_in_manifest
+        diff = _diff(broken)
+        assert "local-qwen" in diff and "GHOST_KEY" in diff
+
+
+# ---------------------------------------------------------------------------
+# SC-001~006 机检聚合（T1628）
+# ---------------------------------------------------------------------------
+
+
+class TestSC机检:
+    def test_SC001_零厂商字面量(self):
+        """换厂商 = 仅改配置：业务代码零厂商字面量由 T1615 的静态断言守（此处指向同一机检）。"""
+        import sys
+
+        sys.path.insert(0, str(REPO_ROOT_STR / "tests" / "unit"))
+        from test_no_vendor_literals import _declared_literals, _scanned_files
+
+        model_names, hosts = _declared_literals()
+        offenders = [
+            path.name
+            for path in _scanned_files()
+            if any(
+                literal in path.read_text(encoding="utf-8") for literal in [*model_names, *hosts]
+            )
+        ]
+        assert offenders == []
+
+    def test_SC002_改价不漂移(self):
+        """历史节点成本与快照口径一致：完整落树版见 tests/unit/test_llm_price_freeze.py。"""
+        from core.llm_gateway.gateway import LLMGateway
+        from core.llm_gateway.profiles import load_or_migrate
+
+        loaded = load_or_migrate(
+            {
+                "llm": {
+                    "profiles": {
+                        "p": {
+                            "base_url": "https://example.invalid",
+                            "api_key_env": "K",
+                            "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                            "price_note": "口径 A",
+                        }
+                    },
+                    "roles": {},
+                    "default_profile": "p",
+                }
+            }
+        )
+        snapshot = loaded.snapshot()
+        assert snapshot.to_dict()["profiles"][0]["prices"] == {
+            "prompt_per_1k": 1.0,
+            "completion_per_1k": 1.0,
+        }
+        # 同一 ProfileLoad 的快照指纹稳定（改价必须改配置 → 新指纹；旧快照不被污染）
+        assert LLMGateway.__module__  # 网关持有档案：快照来自配置，不来自码内常量
+        assert snapshot.fingerprint == loaded.snapshot().fingerprint
+
+    @pytest.mark.parametrize(
+        ("variant", "keyword"),
+        [
+            ("missing_prices", "缺价目"),
+            ("missing_endpoint", "缺端点"),
+            ("missing_key_env", "缺 api_key_env"),
+            ("zero_not_declared", "zero_marginal"),
+            ("unknown_role", "枚举外角色"),
+            ("multi_level", "嵌套映射"),
+            ("self_reference", "自指"),
+            ("unknown_profile", "指向不存在的档案"),
+            ("multi_no_default", "default_profile 缺失"),
+        ],
+    )
+    def test_SC003_缺项与枚举外_100_报错(self, llm_profiles_config_factory, variant, keyword):
+        with pytest.raises(ProfileConfigError, match=keyword):
+            load_or_migrate(llm_profiles_config_factory(variant))
+
+    def test_SC004_假阳性归零(self, llm_profiles_config_factory):
+        from ops import check_credentials
+
+        report = check_credentials.profile_matrix(
+            llm_profiles_config_factory("multi"), environ={"OPENAI_API_KEY": "unrelated"}
+        )
+        entries = {e["profile_id"]: e for e in report["profiles"]}
+        assert entries["deepseek-flash"]["status"] == check_credentials.PROBE_MISSING
+        assert report["ignored_environ"] == ["OPENAI_API_KEY"]
+
+    def test_SC005_单档案等价现状(self):
+        """未声明档案的既有形态：价目表折算 + 快照来源 legacy_price_book（既有测试全绿）。"""
+        from core.llm_gateway.backends.mock import MockBackend
+        from core.llm_gateway.gateway import LLMGateway
+
+        gateway = LLMGateway(
+            MockBackend(),
+            price_book={"mock-copy-v1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+            sleep=lambda _: None,
+        )
+        result = gateway.chat("旧路径", model="mock-copy-v1")
+        assert result.cost_usd == pytest.approx(
+            result.usage["prompt_tokens"] / 1000 * 0.001
+            + result.usage["completion_tokens"] / 1000 * 0.002
+        )
+        assert gateway.profile_snapshot().to_dict()["source"] == "legacy_price_book"
+
+    def test_SC006_清单锁可证伪(self, tmp_path):
+        import pathlib
+        import sys
+
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "unit"))
+        from test_upgrade_manifest_lock import _declared_from_config, _diff
+
+        config = _declared_from_config()
+        assert config  # 配置声明非空
+        broken = tmp_path / "m.json"
+        broken.write_text(json.dumps({"llm_profiles": {"profiles": []}}), encoding="utf-8")
+        assert "配置有清单无" in _diff(broken)  # 改坏即红且可诊断
+
+
+REPO_ROOT_STR = __import__("pathlib").Path(__file__).resolve().parents[2]

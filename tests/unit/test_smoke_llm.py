@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 from core.llm_gateway.gateway import BackendResult
+from core.llm_gateway.routing import ProfileConfigError
 from ops import smoke_llm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -84,7 +85,9 @@ class Test凭证就位:
         payload = json.loads(capsys.readouterr().out)
         assert code == smoke_llm.EXIT_NO_CREDENTIALS == 1
         assert payload["reason"] == "credentials_missing"
-        assert payload["missing"] == ["OPENAI_BASE_URL", "OPENAI_API_KEY"]
+        assert payload["missing"] == [
+            "OPENAI_API_KEY"
+        ]  # deepseek-flash 声明的是它（端点写在档案里）
         assert "check_credentials" in payload["hint"]
         assert payload["ok"] is False
 
@@ -107,72 +110,85 @@ class Test凭证就位:
         assert smoke_llm.base_host(raw) == expected
 
     def test_base_形态非法即拒(self):
-        with pytest.raises(smoke_llm.SmokeError, match="形态不合法"):
+        """遗留 4 收敛：base_host 就是 core 档案层的 host_of_url（同一实现，不再各写一份）。"""
+        from core.llm_gateway.profiles import host_of_url
+
+        assert smoke_llm.base_host is host_of_url
+        with pytest.raises(ProfileConfigError, match="形态非法"):
             smoke_llm.base_host("api.deepseek.com")
 
 
 class Test网关级冒烟:
-    def test_按配置价目表折算成本(self):
+    def test_按档案价目折算成本(self):
         backend = _FakeBackend(prompt_tokens=1000, completion_tokens=500)
         payload = smoke_llm.run_gateway_smoke(
-            MOVIE_CONFIG, model="deepseek-flash", prompt="打招呼", backend=backend
+            MOVIE_CONFIG, profile_id="deepseek-flash", prompt="打招呼", backend=backend
         )
         # deepseek-flash：prompt 0.0003/1k、completion 0.0012/1k（峰时缓存未命中上限）
         assert payload["cost_usd"] == pytest.approx(1000 / 1000 * 0.0003 + 500 / 1000 * 0.0012)
-        assert payload["price_book_entry"] == {"prompt_per_1k": 0.0003, "completion_per_1k": 0.0012}
+        assert payload["prices"] == {"prompt_per_1k": 0.0003, "completion_per_1k": 0.0012}
+        assert payload["profile_id"] == "deepseek-flash"
         assert payload["prompt_tokens"] == 1000 and payload["completion_tokens"] == 500
         assert payload["cached"] is False and payload["gateway_call_count"] == 1
 
-    def test_pro_档位价目(self):
+    def test_另一档案的价目(self):
+        """配置里没有第二条 deepseek 档案（价目不同）→ 用 local-qwen（零价目）验证按档案取值。"""
         payload = smoke_llm.run_gateway_smoke(
             MOVIE_CONFIG,
-            model="deepseek-v4-pro",
+            profile_id="local-qwen",
             prompt="打招呼",
             backend=_FakeBackend(prompt_tokens=1000, completion_tokens=1000),
         )
-        assert payload["cost_usd"] == pytest.approx(0.00132 + 0.00396)
+        assert payload["cost_usd"] == 0.0 and payload["zero_marginal"] is True
+        assert payload["prices"] == {"prompt_per_1k": 0.0, "completion_per_1k": 0.0}
 
-    def test_价目表缺模型即拒(self):
-        with pytest.raises(smoke_llm.SmokeError, match="价目表缺少模型"):
-            smoke_llm.run_gateway_smoke(MOVIE_CONFIG, model="ghost-model", backend=_FakeBackend())
+    def test_档案不存在即拒并列可用(self):
+        with pytest.raises(smoke_llm.SmokeError, match="档案不存在"):
+            smoke_llm.run_gateway_smoke(
+                MOVIE_CONFIG, profile_id="ghost-profile", backend=_FakeBackend()
+            )
 
     def test_同提示词二次调用命中缓存(self):
         backend = _FakeBackend()
-        gateway = smoke_llm.build_gateway(MOVIE_CONFIG, backend=backend)
+        gateway = smoke_llm.build_gateway(
+            MOVIE_CONFIG, backend=backend, profile_id="deepseek-flash"
+        )
         price = smoke_llm.load_price_book(MOVIE_CONFIG)
-        assert "deepseek-flash" in price and "mock-copy-v1" in price  # 既有条目保留
-        first = gateway.chat("同一个提示词", model="deepseek-flash")
-        second = gateway.chat("同一个提示词", model="deepseek-flash")
+        assert "deepseek-flash" in price and "local-qwen" in price  # 档案即价目来源
+        from core.llm_gateway.routing import Role
+
+        first = gateway.chat("同一个提示词", role=Role.GENERATION)
+        second = gateway.chat("同一个提示词", role=Role.GENERATION)
         assert first.cached is False and second.cached is True
         assert second.cost_usd == 0.0 and backend.call_count == 1
 
 
 class Test配置改写:
-    def test_四处模型引用与后端声明(self, tmp_path):
+    def test_改写角色映射而非散落模型名(self, tmp_path):
+        """功能 016（T1626）：`--round` 改写 `llm.roles` + 默认档案 + pilot 后端声明；
+        散落的模型名（`screenplay.model` / `promo.default_model`）**原样保留**（不再被改写）。"""
         target = smoke_llm.rewrite_config(
             SHORTDRAMA_CONFIG,
             tmp_path / "smoke.yaml",
-            model="deepseek-flash",
+            profile_id="local-qwen",
             llm_backend="http",
         )
         payload = yaml.safe_load(target.read_text(encoding="utf-8"))
-        assert payload["screenplay"]["model"] == "deepseek-flash"
-        assert payload["screenplay"]["judge"]["model"] == "deepseek-flash"
-        assert payload["storyboard"]["judge"]["model"] == "deepseek-flash"
-        assert payload["promo"]["default_model"] == "deepseek-flash"
+        original = yaml.safe_load(SHORTDRAMA_CONFIG.read_text(encoding="utf-8"))
+        assert set(payload["llm"]["roles"].values()) == {"local-qwen"}  # 四角色全指向目标档案
+        assert payload["llm"]["default_profile"] == "local-qwen"
         assert payload["pilot"]["llm_backend"] == "http"
         assert payload["pilot"]["backend"] == "simulated"  # 平台适配器保持模拟
-        # 注释放行：价目表里的 mock 条目与 DeepSeek 登记逐字保留
-        text = target.read_text(encoding="utf-8")
-        assert "mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}" in text
-        assert "# DeepSeek 真实 LLM（OpenAI 兼容" in text
+        assert payload["screenplay"]["model"] == original["screenplay"]["model"]  # 未改
+        assert payload["promo"]["default_model"] == original["promo"]["default_model"]  # 未改
+        assert "# DeepSeek 真实 LLM（OpenAI 兼容" in target.read_text(encoding="utf-8")
 
     def test_改写幂等(self, tmp_path):
         first = smoke_llm.rewrite_config(
-            MOVIE_CONFIG, tmp_path / "a.yaml", model="deepseek-flash", llm_backend="mock"
+            MOVIE_CONFIG, tmp_path / "a.yaml", profile_id="deepseek-flash", llm_backend="mock"
         ).read_text(encoding="utf-8")
         second = smoke_llm.rewrite_config(
-            MOVIE_CONFIG, tmp_path / "b.yaml", model="deepseek-flash", llm_backend="mock"
+            MOVIE_CONFIG, tmp_path / "b.yaml", profile_id="deepseek-flash", llm_backend="mock"
         ).read_text(encoding="utf-8")
         assert first == second
         assert yaml.safe_load(first)["pilot"]["llm_backend"] == "mock"
@@ -181,7 +197,7 @@ class Test配置改写:
         from agents.pilot.stages import build_shot_plan
 
         target = smoke_llm.rewrite_config(
-            MOVIE_CONFIG, tmp_path / "min.yaml", model="deepseek-flash", llm_backend="http"
+            MOVIE_CONFIG, tmp_path / "min.yaml", profile_id="deepseek-flash", llm_backend="http"
         )
         payload = yaml.safe_load(target.read_text(encoding="utf-8"))
         assert payload["screenplay"]["target_duration_min"] == 1
@@ -205,14 +221,14 @@ class Test配置改写:
         target = smoke_llm.rewrite_config(
             MOVIE_CONFIG,
             tmp_path / "full.yaml",
-            model="deepseek-flash",
+            profile_id="local-qwen",
             llm_backend="http",
             minimal=False,
         )
         payload = yaml.safe_load(target.read_text(encoding="utf-8"))
         original = yaml.safe_load(MOVIE_CONFIG.read_text(encoding="utf-8"))
         assert payload["visual"]["clips_per_round"] == original["visual"]["clips_per_round"]
-        assert payload["screenplay"]["model"] == "deepseek-flash"
+        assert payload["llm"]["default_profile"] == "local-qwen"
 
 
 class Test单轮装配路径:
@@ -227,7 +243,7 @@ class Test单轮装配路径:
         captured: dict = {}
         payload = smoke_llm.run_round_smoke(
             SHORTDRAMA_CONFIG,
-            model="deepseek-flash",
+            profile_id="deepseek-flash",
             llm_backend="http",
             work_dir=tmp_path,
             run_id="smoke-1",
@@ -251,7 +267,7 @@ class Test单轮装配路径:
         assert [stage["stage_id"] for stage in payload["stages"]] == ["script", "promo"]
         assert payload["cost"]["total_usd"] == pytest.approx(0.03)
         assert payload["products"][0]["kind"] == "script"
-        assert payload["model"] == "deepseek-flash"
+        assert payload["profile_id"] == "deepseek-flash"
 
     def test_账目优先读样片包(self, tmp_path):
         package_dir = tmp_path / "packages" / "smoke-1"
@@ -303,21 +319,23 @@ class Test命令行与退出码:
         assert captured["llm_backend"] == "mock"  # 零真实调用
         assert payload["credentials"]["OPENAI_API_KEY"] == {"set": False, "length": 0}
 
-    def test_冒烟失败归退出码2(self, monkeypatch, capsys):
+    def test_档案不存在归退出码2(self, monkeypatch, capsys):
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-real-key")
-        code = smoke_llm.main(["--config", str(MOVIE_CONFIG), "--model", "ghost-model"])
+        code = smoke_llm.main(["--config", str(MOVIE_CONFIG), "--profile", "ghost-profile"])
         payload = json.loads(capsys.readouterr().out)
         assert code == smoke_llm.EXIT_FAILED == 2
-        assert payload["reason"] == "smoke_failed" and "价目表缺少模型" in payload["error"]
+        assert payload["reason"] == "profile_error" and "档案不存在" in payload["error"]
 
     def test_网关级成功路径_注入假后端(self, monkeypatch, capsys):
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-real-key")
-        monkeypatch.setattr(smoke_llm, "HttpBackend", lambda *a, **k: _FakeBackend())
+        monkeypatch.setattr(
+            smoke_llm.HttpBackend, "from_profile", classmethod(lambda cls, *a, **k: _FakeBackend())
+        )
         code = smoke_llm.main(["--config", str(MOVIE_CONFIG), "--prompt", "打个招呼"])
         payload = json.loads(capsys.readouterr().out)
         assert code == 0 and payload["ok"] is True
-        assert payload["base_host"] == "https://api.deepseek.com"
+        assert payload["endpoint"] == "https://api.deepseek.com"
         assert payload["cost_usd"] > 0
         assert "sk-not-a-real-key" not in json.dumps(payload)  # 绝不回显密钥

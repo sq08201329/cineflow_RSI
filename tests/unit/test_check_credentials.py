@@ -262,7 +262,7 @@ def test_缺失项给出最小验证方式(no_credentials, forbid_network, capsy
     steps = {s["env"]: s for s in _path(payload, "B")["next_steps"]}
     assert "uv run python -c" in steps["VISUAL_GEN_API_KEY"]["verify"]
     assert "HttpRealVideoGen.from_env()" in steps["VISUAL_GEN_API_KEY"]["verify"]
-    assert "HttpBackend()" in steps["OPENAI_API_KEY"]["verify"]  # 无 from_env，直接构造
+    assert "HttpBackend.from_env()" in steps["OPENAI_API_KEY"]["verify"]  # 显式旧路径入口
     assert all(s["verify_note"] for s in steps.values())
     # 提示里点名的适配器就是清单登记的真实实现类（不是手抄幻觉）
     for path_id in ("B", "C"):

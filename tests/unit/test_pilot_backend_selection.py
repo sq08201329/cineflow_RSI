@@ -170,7 +170,8 @@ class Test声明驱动装配:
             section="pilot:\n  backend: simulated\n  overrides: {llm: http}\n",
         )
         runtime = _runtime(config, tmp_path)
-        assert _class_name(runtime.backends.llm) == "HttpBackend"
+        # 功能 016：多档案下 LLM 后端是 HttpBackend 的按 model 分派子类（单档案仍为 HttpBackend）
+        assert _class_name(runtime.backends.llm) in {"HttpBackend", "_RoutedHttpBackend"}
         assert _class_name(runtime.backends.visual) == "SimulatedVideoGen"
 
     def test_取值非法即装配期拒绝(self, pilot_demo_config_path, tmp_path):
@@ -196,7 +197,8 @@ class Test声明驱动装配:
             section="pilot:\n  backend: http\n  llm_backend: http\n",
         )
         runtime = _runtime(config, tmp_path)
-        assert _class_name(runtime.backends.llm) == "HttpBackend"
+        # 功能 016：多档案下 LLM 后端是 HttpBackend 的按 model 分派子类（单档案仍为 HttpBackend）
+        assert _class_name(runtime.backends.llm) in {"HttpBackend", "_RoutedHttpBackend"}
         assert _class_name(runtime.backends.storyboard) == "HttpRealStoryboardRender"
         assert _class_name(runtime.backends.visual) == "HttpRealVideoGen"
         assert {_class_name(a) for a in runtime.backends.sound.values()} == {

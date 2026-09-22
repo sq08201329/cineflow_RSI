@@ -3514,3 +3514,23 @@ def llm_env(monkeypatch):
             monkeypatch.setenv(name, value)
 
     return _set
+
+
+@pytest.fixture()
+def stub_factory():
+    """本地 stub 平台工厂（真实监听 127.0.0.1 随机端口；测试结束关闭）。
+
+    供协议/注入类单测共用（渲染/生成/宣发/LLM 端点见 `tests/stubs_http.py`）。
+    """
+    from tests.stubs_http import StubPlatformServer
+
+    servers: list[StubPlatformServer] = []
+
+    def _make(**kwargs) -> StubPlatformServer:
+        server = StubPlatformServer(**kwargs).start()
+        servers.append(server)
+        return server
+
+    yield _make
+    for server in servers:
+        server.stop()

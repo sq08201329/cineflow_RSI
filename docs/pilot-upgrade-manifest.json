@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.5.0",
+  "schema_version": "1.6.0",
   "title": "试水作品升级路径（A → B/C）结构化清单",
-  "generated_by": "功能 015（短剧形态试水作品）T1523；1.1.0 由凭证核查批次纠偏；1.2.0 由「后端选择配置化」批次升级（切换成为配置动作，见 switch_mechanism）；1.5.0 由「真实 LLM 冒烟」批次升级：只有 LLM 凭证时的冒烟通道（ops/smoke_llm.py）与 DeepSeek 价目登记（llm_smoke 块）",
+  "generated_by": "功能 015（短剧形态试水作品）T1523；1.1.0 由凭证核查批次纠偏；1.2.0 由「后端选择配置化」批次升级（切换成为配置动作，见 switch_mechanism）；1.6.0 由「凭证中立与工具同步」批次升级：新增 llm_profiles 块（档案 id → 变量 → 用途，以 configs/*.yaml 的 llm.profiles 为权威，机检锁见 tests/unit/test_upgrade_manifest_lock.py）",
   "credential_authority": "环境变量名以代码为权威：取自各适配器实现类的真实读取点（from_env() 或构造器）。tests/unit/test_credential_env_lock.py 逐项机检（清单 ⇄ 代码双向比对），改坏即红。命名不加强制前缀：平台侧怎么叫就怎么登记。",
   "switch_mechanism": {
     "config_section": "pilot",
@@ -172,5 +172,36 @@
     "凭证名以代码为权威（1.1.0 纠偏：原 CINEFLOW_VIDEO_*/CINEFLOW_AUDIO_*/CINEFLOW_PROMO_* 在代码中不存在，按它注入会静默无效）",
     "核查器 ops/check_credentials.py 默认零网络；--probe 只发 GET 只读端点，绝不触发付费生成",
     "precheck 不验凭证：它只给配置完整性结论（报告里 credentials_checked=false 如实标注）"
-  ]
+  ],
+  "llm_profiles": {
+    "authority": "configs/*.yaml 的 llm.profiles（配置即权威）",
+    "lock": "tests/unit/test_upgrade_manifest_lock.py（配置 ⇄ 本块逐项一致；漂移即红并列出差异）",
+    "profiles": [
+      {
+        "profile_id": "deepseek-flash",
+        "variables": [
+          "OPENAI_API_KEY"
+        ],
+        "endpoint_source": "base_url（配置里写死 URL，故只登记凭证变量名）",
+        "legacy_env": true,
+        "note": "沿用旧变量名（建议改中立名，如 DEEPSEEK_API_KEY）——本机曾因环境里无关的 OPENAI_API_KEY 出现假阳性；档案显式声明它即为唯一准入路径",
+        "purpose": "LLM 调用：generation / judge / copywriting（剧本生成、四家 judge 委员会、宣发文案）"
+      },
+      {
+        "profile_id": "local-qwen",
+        "variables": [
+          "LOCAL_LLM_BASE_URL",
+          "LOCAL_LLM_API_KEY"
+        ],
+        "endpoint_source": "base_url_env（端点由变量注入）",
+        "legacy_env": false,
+        "note": "本地/自建示例档案：零边际成本（zero_marginal），凭证与端点均按中立名声明",
+        "purpose": "LLM 调用：dreaming_candidates（做梦层候选生成）；亦可用作本地推理兜底"
+      }
+    ],
+    "notes": [
+      "B 路径的 credential_envs（14 项）仍为「适配器代码读取点」口径（test_credential_env_lock 守）；本块登记的是**配置档案声明**的变量（含本地档案中立名），两侧各守其职",
+      "新增档案时必须同时更新本块（否则 tests/unit/test_upgrade_manifest_lock.py 红）"
+    ]
+  }
 }

@@ -68,7 +68,21 @@ def _tokens_of(usage: dict, key: str) -> int:
 
 
 class HttpBackend:
-    """OpenAI 兼容 /chat/completions 端点后端（协议实现；本地 stub 已验证）。"""
+    """OpenAI 兼容 /chat/completions 端点后端（协议实现；本地 stub 已验证）。
+
+    ## 凭证中立（功能 016 / FR-006/007）：端点与密钥**由路由层注入**
+
+    - `HttpBackend(base_url, api_key)`：**显式传入即用传入值**——构造函数**不读任何环境变量**
+      （消除"平台自带一个无关 `OPENAI_API_KEY` 被当成档案就绪"的假阳性）；
+    - `HttpBackend.from_profile(profile)`：按档案声明读取——URL 形态用档案里的端点，
+      env 形态读 `base_url_env` 声明的变量名；密钥读 `api_key_env` 声明的变量名；
+      **声明的变量未设置即报错并指名道姓**；`legacy_env=True` 时 `legacy_env_note` 标注
+      "沿用旧变量名（建议改中立名）"（报告层据此提示迁移）；
+    - `HttpBackend.from_profiles(load)`：多档案**按 `model`（= 路由命中的档案 id）分派**到各自端点；
+    - `HttpBackend.from_env()`：旧路径（显式读 `OPENAI_BASE_URL` / `OPENAI_API_KEY`），
+      仅供未接档案的装配点与"代码读取点"机检使用；
+    - 裸构造 `HttpBackend()` 一律报错（不再隐式读环境）。
+    """
 
     def __init__(
         self,
@@ -76,13 +90,102 @@ class HttpBackend:
         api_key: str | None = None,
         *,
         timeout_seconds: float = 30.0,
+        legacy_env_note: str = "",
     ) -> None:
-        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL")
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not self.base_url or not self.api_key:
-            raise GatewayError("HttpBackend 缺凭证：需要 OPENAI_BASE_URL / OPENAI_API_KEY")
+        if not base_url or not api_key:
+            raise GatewayError(
+                "HttpBackend 需要显式注入 base_url 与 api_key（不再隐式读 OPENAI_*）："
+                "请用 HttpBackend.from_profile(档案) / from_profiles(配置档案) 注入，"
+                "或旧路径 HttpBackend.from_env()（显式读 OPENAI_BASE_URL / OPENAI_API_KEY）"
+            )
+        self.base_url = base_url
+        self.api_key = api_key
+        self.legacy_env_note = legacy_env_note
         self._timeout = timeout_seconds
         self.call_count = 0
+
+    # ---- 构造入口（凭证中立）----
+
+    @classmethod
+    def from_env(cls, *, timeout_seconds: float = 30.0) -> "HttpBackend":
+        """旧路径：显式读 `OPENAI_BASE_URL` / `OPENAI_API_KEY`（未接档案时的兼容入口）。"""
+        base_url = os.environ.get("OPENAI_BASE_URL", "")
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not base_url or not api_key:
+            raise GatewayError(
+                "HttpBackend 缺凭证：需要 OPENAI_BASE_URL / OPENAI_API_KEY"
+                "（或用配置档案注入：HttpBackend.from_profile(档案)）"
+            )
+        return cls(base_url, api_key, timeout_seconds=timeout_seconds)
+
+    @classmethod
+    def from_profile(
+        cls, profile, *, timeout_seconds: float = 30.0, environ: dict | None = None
+    ) -> "HttpBackend":
+        """按**档案声明**注入端点与密钥（凭证只按声明读取，不碰其它变量）。"""
+        env = os.environ if environ is None else environ
+        if profile.base_url:
+            base_url = str(profile.base_url)
+        else:
+            base_url = env.get(str(profile.base_url_env), "")
+            if not base_url:
+                raise GatewayError(
+                    f"档案 {profile.profile_id!r} 声明的端点变量 {profile.base_url_env}"
+                    " 未设置——凭证只按档案声明读取（不隐式读 OPENAI_*）"
+                )
+        api_key = env.get(str(profile.api_key_env), "")
+        if not api_key:
+            raise GatewayError(
+                f"档案 {profile.profile_id!r} 声明的凭证变量 {profile.api_key_env}"
+                " 未设置——凭证只按档案声明读取（不隐式读 OPENAI_*）"
+            )
+        note = ""
+        if profile.legacy_env:
+            note = (
+                f"档案 {profile.profile_id!r} 沿用旧变量名（{profile.api_key_env}）："
+                "建议改中立名（如 <VENDOR>_API_KEY）以避免与其它供应商的同名变量混淆"
+            )
+        return cls(base_url, api_key, timeout_seconds=timeout_seconds, legacy_env_note=note)
+
+    @classmethod
+    def from_profiles(
+        cls,
+        load,
+        *,
+        timeout_seconds: float = 30.0,
+        environ: dict | None = None,
+    ) -> "HttpBackend":
+        """多档案：按 `model`（= 路由命中的档案 id）分派到各自端点。
+
+        **只在"被用到的档案"上要求凭证**：已就绪的档案构建端点；缺凭证的档案记入 `pending`
+        并在**被调用时**报错（指名缺哪个变量，绝不静默回落到其它档案）——这样"只拿到一家
+        凭证"的用户仍可启动（未用到的那条档案不阻塞装配）；但**默认档案缺凭证即装配期拒绝**
+        （它几乎必然被用到，fail-fast 更安全），全部档案都缺也直接拒绝。
+        """
+        env = os.environ if environ is None else environ
+        backends: dict = {}
+        pending: dict[str, str] = {}
+        for profile_id, profile in load.profiles.items():
+            try:
+                backends[profile_id] = cls.from_profile(
+                    profile, timeout_seconds=timeout_seconds, environ=env
+                )
+            except GatewayError as exc:
+                pending[profile_id] = str(exc)
+        if not backends:
+            raise GatewayError(
+                "配置档案全部缺凭证（凭证只按档案声明读取）：" + "；".join(sorted(pending.values()))
+            )
+        default = getattr(getattr(load, "routing", None), "default_profile", "")
+        if default and default in pending:
+            raise GatewayError(
+                f"默认档案 {default!r} 缺凭证，装配期即拒绝（不静默回落）：{pending[default]}"
+            )
+        return _RoutedHttpBackend(backends, pending=pending, timeout_seconds=timeout_seconds)
+
+    def _endpoint_for(self, model: str) -> tuple[str, str]:
+        """本次调用的（端点，密钥）：单后端按自身端点；多档案后端按 model 分派（见子类）。"""
+        return self.base_url, self.api_key
 
     def complete(
         self, prompt: str, *, model: str, temperature: float, max_tokens: int
@@ -100,6 +203,7 @@ class HttpBackend:
     # ---- 内部 ----
 
     def _post(self, prompt: str, *, model: str, temperature: float, max_tokens: int) -> bytes:
+        base_url, api_key = self._endpoint_for(model)
         payload = json.dumps(
             {
                 "model": model,
@@ -109,11 +213,11 @@ class HttpBackend:
             }
         ).encode("utf-8")
         request = urllib.request.Request(
-            f"{self.base_url.rstrip('/')}/chat/completions",
+            f"{base_url.rstrip('/')}/chat/completions",
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {api_key}",
             },
         )
         try:
@@ -176,3 +280,41 @@ class HttpBackend:
                 f"响应片段：{_snippet(raw)}"
             )
         return usage
+
+
+class _RoutedHttpBackend(HttpBackend):
+    """按 `model`（= 档案 id）分派到各自端点的后端（多档案配置用）。
+
+    路由决策在网关（角色 → 档案），本类只做"档案 id → 端点"的机械分派：**未知档案即报错**，
+    不静默回落到默认端点（避免把请求打到错误的供应商）。
+    """
+
+    def __init__(
+        self, backends: dict, *, pending: dict | None = None, timeout_seconds: float = 30.0
+    ) -> None:
+        if not backends:
+            raise GatewayError("HttpBackend.from_profiles 需要至少一个档案后端")
+        first = next(iter(backends.values()))
+        super().__init__(first.base_url, first.api_key, timeout_seconds=timeout_seconds)
+        self._backends = dict(backends)
+        self._pending = dict(pending or {})  # 缺凭证的档案：调用时报错（不静默回落）
+        notes = [
+            backend.legacy_env_note for backend in backends.values() if backend.legacy_env_note
+        ]
+        if self._pending:
+            notes.append(f"以下档案缺凭证（调用即失败）：{sorted(self._pending)}")
+        self.legacy_env_note = "；".join(notes)
+
+    def _endpoint_for(self, model: str) -> tuple[str, str]:
+        backend = self._backends.get(model)
+        if backend is None:
+            if model in self._pending:
+                raise GatewayError(
+                    f"档案 {model!r} 缺凭证（凭证只按档案声明读取，调用即失败、"
+                    f"不静默回落到其它档案）：{self._pending[model]}"
+                )
+            raise GatewayError(
+                f"未知档案端点 {model!r}：已注入档案 {sorted(self._backends)}"
+                "（不静默回落到默认端点）"
+            )
+        return backend.base_url, backend.api_key
