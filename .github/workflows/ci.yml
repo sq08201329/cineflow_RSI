@@ -35,6 +35,12 @@ jobs:
       - run: uv sync
       - name: 平台适配器契约套件（双实现同跑）
         run: uv run pytest tests/contract
+      - name: 契约套件真实分支对着本地 stub 实跑（视觉/分镜/剪辑协议实现，零凭证零外部网络）
+        run: >-
+          CINEFLOW_CONTRACT_STUB=1 uv run pytest
+          tests/contract/test_video_gen_adapter.py
+          tests/contract/test_storyboard_platform_contract.py
+          tests/contract/test_editing_platform_contract.py -q
 
   integration:
     runs-on: ubuntu-latest
@@ -44,6 +50,8 @@ jobs:
         with:
           version: "0.11.17"
       - run: uv sync
+      - name: 真实适配器协议实现 stub 集成测试（本地 loopback，无需 Docker/凭证）
+        run: uv run pytest tests/integration/test_http_real_stub.py -q
       - name: 起开发依赖（PostgreSQL 16 + MinIO）
         run: |
           # 只对长驻服务用 --wait；minio-init 是一次性服务，退出会让 --wait 判失败
