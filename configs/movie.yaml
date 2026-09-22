@@ -82,6 +82,14 @@ promo:
   metric_weights: {ctr: 0.5, completion_rate: 0.3, conversions: 0.2} # 真值归一化合成
   model_prices: # 模型价目表（美元/千 token）；缺价目即报错，不允许静默零成本
     mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+    # DeepSeek 真实 LLM（OpenAI 兼容，base = https://api.deepseek.com）——冒烟用；
+    # 口径：按**峰时（UTC 周一至周五 01:00-04:00 / 06:00-10:00）缓存未命中**上限折算，
+    # 保守高估（真实账单因缓存命中与错峰计价只会更低，见 docs/二期升级路径-真实生成与投放.md）；
+    # 价目/模型名变动由运维按官方价目与命名更新（旧名 deepseek-chat 等已退役）。
+    # flash：输入 $0.3/1M → 0.0003/1k；输出 $1.2/1M → 0.0012/1k
+    deepseek-flash: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
+    # pro：输入 $1.32/1M → 0.00132/1k；输出 $3.96/1M → 0.00396/1k
+    deepseek-v4-pro: {prompt_per_1k: 0.00132, completion_per_1k: 0.00396}
   simulated_platform: # 模拟平台分布参数（Beta 先验）
     base_impressions: 1000
     ctr_beta: [2.0, 40.0]
@@ -264,6 +272,14 @@ screenplay:
   model: mock-copy-v1 # 三阶段产出的生成模型（走既有网关；缺价目即报错，原则三）
   model_prices: # 生成与 judge 共用的模型价目表（美元/千 token）
     mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+    # DeepSeek 真实 LLM（OpenAI 兼容，base = https://api.deepseek.com）——冒烟用；
+    # 口径：按**峰时（UTC 周一至周五 01:00-04:00 / 06:00-10:00）缓存未命中**上限折算，
+    # 保守高估（真实账单因缓存命中与错峰计价只会更低，见 docs/二期升级路径-真实生成与投放.md）；
+    # 价目/模型名变动由运维按官方价目与命名更新（旧名 deepseek-chat 等已退役）。
+    # flash：输入 $0.3/1M → 0.0003/1k；输出 $1.2/1M → 0.0012/1k
+    deepseek-flash: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
+    # pro：输入 $1.32/1M → 0.00132/1k；输出 $3.96/1M → 0.00396/1k
+    deepseek-v4-pro: {prompt_per_1k: 0.00132, completion_per_1k: 0.00396}
   judge: # judge.dramatic_tension 委员会（仅 outline 阶段）：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
     model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
     prompts:
