@@ -180,11 +180,11 @@
       {
         "profile_id": "deepseek-flash",
         "variables": [
-          "OPENAI_API_KEY"
+          "DEEPSEEK_API_KEY"
         ],
         "endpoint_source": "base_url（配置里写死 URL，故只登记凭证变量名）",
-        "legacy_env": true,
-        "note": "沿用旧变量名（建议改中立名，如 DEEPSEEK_API_KEY）——本机曾因环境里无关的 OPENAI_API_KEY 出现假阳性；档案显式声明它即为唯一准入路径",
+        "legacy_env": false,
+        "note": "中立厂商名（原 OPENAI_API_KEY 已改正）——档案显式声明它即为唯一准入路径；环境里其它变量（含无关的 OPENAI_API_KEY）不参与判定",
         "purpose": "LLM 调用：generation / judge / copywriting（剧本生成、四家 judge 委员会、宣发文案）"
       },
       {

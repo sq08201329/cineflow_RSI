@@ -408,8 +408,8 @@ llm:
   profiles:
     deepseek-flash: # 云端厂商（OpenAI 兼容）：价目迁自 screenplay.model_prices（015 登记值）
       base_url: https://api.deepseek.com
-      api_key_env: OPENAI_API_KEY # 沿用旧变量名（报告标注 legacy_env=true；端点/密钥按档案声明读取）
-      legacy_env: true
+      api_key_env: DEEPSEEK_API_KEY # 中立厂商名（端点/密钥按档案声明读取；环境里其它变量不参与判定）
+      legacy_env: false
       prices: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
       price_note: "峰时缓存未命中上限（保守高估；缓存命中与错峰更低；记账 ≠ 厂商账单）"
     local-qwen: # 本地/自建示例：零边际成本（仍非免费：机器/电/运维成本不在本表）
