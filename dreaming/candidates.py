@@ -13,6 +13,7 @@ from typing import Protocol
 import blake3
 
 from core.llm_gateway.gateway import LLMGateway
+from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 from dreaming.digest import digest_hash
 
 _TEMPERATURE_RE = re.compile(r'\{"temperature": [0-9.]+\}')
@@ -75,6 +76,11 @@ class LLMGenerator:
             f"{digest.get('note', '')}"
         )
         # 网关失败不重试：网关内部已指数退避 3 次（003 分工约定）
-        result = self._gateway.chat(prompt, model=self._model, temperature=0.0)
+        result = self._gateway.chat(
+            prompt,
+            model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
+            role=Role.DREAMING_CANDIDATES,  # 功能 016：做梦层候选生成角色
+            temperature=0.0,
+        )
         blocks = self._BLOCK_RE.findall(result.text)
         return [block.strip() + "\n" for block in blocks][:m]

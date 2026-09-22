@@ -58,17 +58,17 @@
 
 ### 用户故事 2 的测试（先写，确认失败后再实现）
 
-- [ ] T1613 [P] [US2] tests/unit/test_gateway_routing.py（C4：`judge` 命映射；未映射枚举内角色回落默认 + `reason=default_fallback`；枚举外构造期报错）
-- [ ] T1614 [P] [US2] tests/unit/test_gateway_cost_breakdown.py（C6：两档案各一次调用 → 分解两条目且金额与各自价目相符；同档案多角色分开；零价目 → 0.0 且标注"零边际成本"；**FR-009 报告层两条断言：分解报告含价目口径备注（如"峰时缓存未命中上限"）与"记账 ≠ 厂商账单"的显式声明**）
-- [ ] T1615 [P] [US2] tests/unit/test_no_vendor_literals.py（**静态断言**：`core/`（除 llm_gateway 与配置解析）与 `agents/` 无厂商名/端点/模型名字面量；六个 Agent 调用点均传 `role`）
-- [ ] T1616 [P] [US2] tests/contract/test_llm_profile_contracts.py 的 routing 段（C4~C7 聚合，含错误分型与"不静默回落其它档案"）
+- [X] T1613 [P] [US2] tests/unit/test_gateway_routing.py（C4：`judge` 命映射；未映射枚举内角色回落默认 + `reason=default_fallback`；枚举外构造期报错）
+- [X] T1614 [P] [US2] tests/unit/test_gateway_cost_breakdown.py（C6：两档案各一次调用 → 分解两条目且金额与各自价目相符；同档案多角色分开；零价目 → 0.0 且标注"零边际成本"；**FR-009 报告层两条断言：分解报告含价目口径备注（如"峰时缓存未命中上限"）与"记账 ≠ 厂商账单"的显式声明**）
+- [X] T1615 [P] [US2] tests/unit/test_no_vendor_literals.py（**静态断言**：`core/`（除 llm_gateway 与配置解析）与 `agents/` 无厂商名/端点/模型名字面量；六个 Agent 调用点均传 `role`）
+- [X] T1616 [P] [US2] tests/contract/test_llm_profile_contracts.py 的 routing 段（C4~C7 聚合，含错误分型与"不静默回落其它档案"）
 
 ### 用户故事 2 的实现
 
-- [ ] T1617 [US2] gateway 改造：按角色取档案 → 后端点与价目；`BackendResult` 带 `role`/`profile_id`；`cost_breakdown()` 累积；**mock 路径同样按档案价目折算**（保 mock/http 两路口径一致，断言见 T1614）
-- [ ] T1618 [US2] 六个 Agent 的 LLM 调用点传 `role`（按既有语义归类）+ 各包回归
+- [X] T1617 [US2] gateway 改造：按角色取档案 → 后端点与价目；`BackendResult` 带 `role`/`profile_id`；`cost_breakdown()` 累积；**mock 路径同样按档案价目折算**（保 mock/http 两路口径一致，断言见 T1614）
+- [X] T1618 [US2] 六个 Agent 的 LLM 调用点传 `role`（按既有语义归类）+ 各包回归
 
-**检查点**: 路由与成本分解成立；业务代码零厂商字面量
+**检查点**: ✅ 路由与成本分解成立；业务代码零厂商字面量（`test_gateway_routing.py` 12 条、`test_gateway_cost_breakdown.py` 7 条、`test_no_vendor_literals.py` 5 条、`tests/contract/test_llm_profile_contracts.py` C4~C7 段 11 条；七个调用点均传 `role`）
 
 ---
 

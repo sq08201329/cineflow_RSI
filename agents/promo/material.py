@@ -9,6 +9,7 @@ import time
 
 from agents.promo.platform.base import PromoMaterial
 from core.llm_gateway.gateway import LLMGateway
+from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 from core.tree.artifacts import ArtifactStore
 
 
@@ -25,7 +26,8 @@ def generate_material(
     成本明细：llm_calls / llm_tokens / gateway_usd / wall_clock_seconds。
     """
     start = time.perf_counter()
-    result = gateway.chat(brief["prompt"], model=model, temperature=0.0)
+    # 功能 016：宣发文案角色（接档案后模型/价目由角色路由决定）
+    result = gateway.chat(brief["prompt"], model=model, role=Role.COPYWRITING, temperature=0.0)
     gen_params = brief.get("gen_params", {})
     content = {
         "copy": result.text,

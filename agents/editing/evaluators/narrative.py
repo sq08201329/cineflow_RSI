@@ -24,6 +24,7 @@ from core.evaluators.base import (
 )
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import LLMGateway
+from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 
 EVALUATOR_ID = "judge.narrative_flow"
 
@@ -83,7 +84,8 @@ class NarrativeFlowJudgeEvaluator(Evaluator):
             for prompt in self._prompts:
                 result = self._gateway.chat(
                     f"{prompt}\n候选:\n{candidate}\n锚点:\n{anchor_summary}",
-                    model=self._model,
+                    model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
+                    role=Role.JUDGE,  # 功能 016：LLM judge 委员会角色
                     temperature=0.0,
                 )
                 votes.append(_vote_of(result.text))

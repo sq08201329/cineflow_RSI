@@ -5,6 +5,8 @@ C2（默认档案与角色映射）、C3（旧扁平迁移）逐场景固化—�
 且错误文案要能被运维直接照做（列出合法枚举 / 指出缺哪个键）。
 """
 
+import json
+
 import pytest
 
 from core.llm_gateway.profiles import (
@@ -126,3 +128,250 @@ class TestC3旧扁平迁移:
             snapshot = loaded.snapshot().to_dict()
             assert snapshot["profiles"][0]["prices"]  # 价目随快照冻结
             assert "OPENAI_API_KEY" == loaded.profiles["deepseek-flash"].api_key_env
+
+
+# ---------------------------------------------------------------------------
+# routing 段（T1616）：契约 C4~C7 聚合——路由决策 / 后端选择 / 成本分解 / 快照冻结
+# ---------------------------------------------------------------------------
+
+
+class TestC4路由决策:
+    def _gateway(self, config_factory):
+        from core.llm_gateway.gateway import LLMGateway
+        from core.llm_gateway.profiles import load_or_migrate
+        from tests.unit.test_gateway_routing import _RecordingBackend
+
+        loaded = load_or_migrate(config_factory("multi"))
+        return (
+            LLMGateway(
+                _RecordingBackend(),
+                price_book=loaded.snapshot().price_book(),
+                sleep=lambda _: None,
+                profiles=loaded,
+            ),
+            loaded,
+        )
+
+    def test_场景1_命中角色映射(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+
+        gateway, _ = self._gateway(llm_profiles_config_factory)
+        decision = gateway.route(Role.JUDGE)
+        assert (decision.profile_id, decision.reason) == ("deepseek-flash", "role_mapping")
+        assert decision.profile_snapshot_ref == gateway.profile_snapshot().ref  # 可追溯
+
+    def test_场景2_未映射枚举内角色回落默认档案(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+
+        gateway, loaded = self._gateway(llm_profiles_config_factory)
+        decision = gateway.route(Role.COPYWRITING)  # multi 变体未映射 copywriting
+        assert decision.reason == "default_fallback"
+        assert decision.profile_id == loaded.routing.default_profile
+
+    def test_场景3_枚举外角色在构造期即拦(self, llm_profiles_config_factory):
+        gateway, _ = self._gateway(llm_profiles_config_factory)
+        with pytest.raises(ProfileConfigError, match="必须是 Role 枚举成员"):
+            gateway.route("judeg")
+
+
+class TestC5后端选择与不静默回落:
+    def test_场景1_两档案各自命中端点与价目(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+        from tests.unit.test_gateway_routing import _RecordingBackend
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        backend = _RecordingBackend()
+        gateway = _LLMGateway(
+            backend,
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            profiles=loaded,
+        )
+        gateway.chat("生成", role=Role.GENERATION)
+        gateway.chat("候选", role=Role.DREAMING_CANDIDATES)
+        assert backend.models == ["deepseek-flash", "local-qwen"]  # 端点/模型由档案注入
+
+    def test_场景2_错误分型不变(self, llm_profiles_config_factory):
+        from core.llm_gateway.gateway import PermanentBackendError, TransientBackendError
+        from core.llm_gateway.routing import Role
+
+        loaded = load_or_migrate(llm_profiles_config_factory("single"))
+
+        class _Boom:
+            call_count = 0
+
+            def __init__(self, error):
+                self._error = error
+
+            def complete(self, prompt, *, model, temperature, max_tokens):
+                raise self._error
+
+        for error, expected in (
+            (TransientBackendError("5xx"), TransientBackendError),
+            (PermanentBackendError("4xx"), PermanentBackendError),
+        ):
+            gateway = _LLMGateway(
+                _Boom(error),
+                price_book=loaded.snapshot().price_book(),
+                sleep=lambda _: None,
+                max_retries=0,
+                profiles=loaded,
+            )
+            with pytest.raises(expected):
+                gateway.chat("生成", role=Role.GENERATION)
+
+    def test_场景3_档案不可用时不尝试其它档案(self, llm_profiles_config_factory):
+        """无静默回落：命中档案失败即失败，不换另一条档案重试。"""
+        from core.llm_gateway.gateway import PermanentBackendError
+        from core.llm_gateway.routing import Role
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        seen: list[str] = []
+
+        class _Recorder:
+            call_count = 0
+
+            def complete(self, prompt, *, model, temperature, max_tokens):
+                seen.append(model)
+                raise PermanentBackendError("档案不可用")
+
+        gateway = _LLMGateway(
+            _Recorder(),
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            max_retries=0,
+            profiles=loaded,
+        )
+        with pytest.raises(PermanentBackendError):
+            gateway.chat("候选", role=Role.DREAMING_CANDIDATES)
+        assert seen == ["local-qwen"]  # 只打命中档案一次，未尝试 deepseek-flash
+
+
+class TestC6成本折算与分解:
+    def test_场景1_两档案两条目且金额各按价目(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+        from tests.unit.test_gateway_cost_breakdown import _CountingBackend
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        gateway = _LLMGateway(
+            _CountingBackend(prompt_tokens=1000, completion_tokens=500),
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            profiles=loaded,
+        )
+        gateway.chat("生成", role=Role.GENERATION)
+        gateway.chat("候选", role=Role.DREAMING_CANDIDATES)
+        breakdown = gateway.cost_breakdown()
+        assert breakdown["generation"]["deepseek-flash"]["cost_usd"] == pytest.approx(
+            0.0003 + 0.0006
+        )
+        assert breakdown["dreaming_candidates"]["local-qwen"]["cost_usd"] == 0.0
+        assert breakdown["dreaming_candidates"]["local-qwen"]["zero_marginal"] is True
+
+    def test_场景2_同档案多角色分开且来源可追溯(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+        from tests.unit.test_gateway_cost_breakdown import _CountingBackend
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        gateway = _LLMGateway(
+            _CountingBackend(),
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            profiles=loaded,
+        )
+        gateway.chat("生成", role=Role.GENERATION)
+        gateway.chat("评审", role=Role.JUDGE)
+        report = gateway.cost_report()
+        assert set(gateway.cost_breakdown()) == {"generation", "judge"}
+        assert report["by_profile"]["deepseek-flash"]["calls"] == 2  # 合并展示
+        assert {entry["role"] for entry in report["entries"]} == {"generation", "judge"}  # 来源可溯
+
+    def test_场景3_零价目标注零边际成本(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+        from tests.unit.test_gateway_cost_breakdown import _CountingBackend
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        gateway = _LLMGateway(
+            _CountingBackend(),
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            profiles=loaded,
+        )
+        result = gateway.chat("候选", role=Role.DREAMING_CANDIDATES)
+        assert result.cost_usd == 0.0
+        entry = next(e for e in gateway.cost_report()["entries"] if e["profile_id"] == "local-qwen")
+        assert entry["zero_marginal"] is True and "零边际成本" in entry["price_note"]
+
+    def test_FR009_报告含口径备注与记账非账单声明(self, llm_profiles_config_factory):
+        from core.llm_gateway.routing import Role
+        from tests.unit.test_gateway_cost_breakdown import _CountingBackend
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        gateway = _LLMGateway(
+            _CountingBackend(),
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            profiles=loaded,
+        )
+        gateway.chat("评审", role=Role.JUDGE)
+        report = gateway.cost_report()
+        assert "峰时缓存未命中上限" in report["entries"][0]["price_note"]
+        assert "记账 ≠ 厂商账单" in report["accounting_note"]
+
+
+class TestC7快照冻结:
+    def test_场景1_快照含价目与备注且无密钥(self, llm_profiles_config_factory, llm_env):
+        llm_env(DEEPSEEK_API_KEY="sk-contract-secret")
+        from core.llm_gateway.backends.mock import MockBackend
+        from core.llm_gateway.gateway import LLMGateway
+
+        loaded = load_or_migrate(llm_profiles_config_factory("multi"))
+        gateway = LLMGateway(
+            MockBackend(),
+            price_book=loaded.snapshot().price_book(),
+            sleep=lambda _: None,
+            profiles=loaded,
+        )
+        text = json.dumps(gateway.profile_snapshot().to_dict(), ensure_ascii=False)
+        assert "sk-contract-secret" not in text
+        assert "峰时缓存未命中上限" in text and "DEEPSEEK_API_KEY" in text
+
+    def test_场景2_改价目后新快照与新折算同步变化(self, llm_profiles_config_factory):
+        """C7 场景 2 的最轻量形态：**同一网关配置**改价 → 新快照指纹与新折算值同步变；
+        反之旧快照（历史口径）保持不变（冻结可证伪，完整落树版见 T1610）。"""
+        from core.llm_gateway.routing import Role
+        from tests.unit.test_gateway_cost_breakdown import _CountingBackend
+
+        config = llm_profiles_config_factory("single")
+        before = load_or_migrate(config)
+        config_after = llm_profiles_config_factory("single")
+        config_after["llm"]["profiles"]["deepseek-flash"]["prices"] = {
+            "prompt_per_1k": 0.003,
+            "completion_per_1k": 0.012,
+        }
+        after = load_or_migrate(config_after)
+
+        def _chat(loaded):
+            gateway = _LLMGateway(
+                _CountingBackend(prompt_tokens=1000, completion_tokens=500),
+                price_book=loaded.snapshot().price_book(),
+                sleep=lambda _: None,
+                profiles=loaded,
+            )
+            return gateway, gateway.chat("生成", role=Role.GENERATION)
+
+        gateway_before, result_before = _chat(before)
+        gateway_after, result_after = _chat(after)
+        assert result_after.cost_usd == pytest.approx(10 * result_before.cost_usd)
+        assert gateway_before.profile_snapshot().fingerprint != (
+            gateway_after.profile_snapshot().fingerprint
+        )
+        # 旧快照（历史口径）仍可复现：价目未被后来的配置改动污染
+        assert before.snapshot().to_dict()["profiles"][0]["prices"] == {
+            "prompt_per_1k": 0.0003,
+            "completion_per_1k": 0.0012,
+        }
+
+
+# 契约文件内的网关构造别名（保持局部可读）
+from core.llm_gateway.gateway import LLMGateway as _LLMGateway  # noqa: E402

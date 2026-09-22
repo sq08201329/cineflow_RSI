@@ -246,7 +246,7 @@ def _llm_backend(kind: str):
         return MockBackend()
     from core.llm_gateway.backends.http import HttpBackend
 
-    return HttpBackend()  # 构造器直接读 OPENAI_BASE_URL / OPENAI_API_KEY，缺即报错
+    return HttpBackend()  # 构造器直接读环境变量（变量名由配置档案登记，见 llm.profiles）
 
 
 def _storyboard(kind: str):

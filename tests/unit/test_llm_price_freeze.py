@@ -242,3 +242,113 @@ def test_未接线档案时快照仍齐备_单档案等价现状(
     snapshot = _snapshot_of(tree_store, result.tree_id)
     assert snapshot["source"] == "legacy_price_book"
     assert sum(node.cost.generation_api_cost_usd for node in nodes) > 0
+
+
+def test_估算与折算同源_改档案价目同步变化(
+    tree_store,
+    artifact_store,
+    screenplay_jobs_engine,
+    screenplay_config,
+    make_script_artifacts,
+):
+    """遗留 1 的收敛断言：剧本运营表的 `estimated_cost_usd` 与节点入账成本**同取档案价目**。
+
+    构造刻意让两处价目不一致（price_book 里是旧价目 P1，档案里是新价目 P2，×10）：
+    若估算仍走 `config.price_of`（旧路径），估算会是 P1 口径而实际成本是 P2 口径 → 两者相差 10 倍，
+    断言即红；实现改为经 `gateway.prices_for(role=...)` 取价目后，估算与实际同步为 P2 口径。
+    """
+    from sqlalchemy import select
+
+    from agents.screenplay.db import screenplay_jobs
+    from agents.screenplay.loop import MAX_TOKENS
+    from core.llm_gateway.routing import Role
+
+    profile_prices = {"prompt_per_1k": 0.01, "completion_per_1k": 0.02}  # 档案价目（P2 = 10×P1）
+    profiles = load_or_migrate(
+        {
+            "llm": {
+                "profiles": {
+                    "deepseek-flash": {
+                        "base_url": "https://api.example.invalid",
+                        "api_key_env": "EXAMPLE_KEY",
+                        "prices": profile_prices,
+                        "price_note": "测试档案价目",
+                    }
+                },
+                "roles": {},
+                "default_profile": "deepseek-flash",
+            }
+        }
+    )
+    backend = _CountingBackend()
+    gateway = LLMGateway(
+        backend,
+        # 刻意保留旧价目表：估算与折算都必须忽略它（取档案价目）
+        price_book={"mock-copy-v1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+        sleep=lambda _: None,
+        profiles=profiles,
+    )
+    model, price = gateway.prices_for(role=Role.GENERATION, model="mock-copy-v1")
+    assert model == "deepseek-flash"  # 接档案后模型名由档案决定
+    assert price == profile_prices
+
+    result = run_screenplay_round(
+        round_id="llm-freeze-same-source",
+        policy=_StubPolicy(_plans(make_script_artifacts)),
+        store=tree_store,
+        artifacts=artifact_store,
+        engine=screenplay_jobs_engine,
+        gateway=gateway,
+        config=screenplay_config,
+        inputs=dict(INPUTS),
+        evaluators=_stubs(),
+    )
+    with screenplay_jobs_engine.connect() as conn:
+        estimates = [
+            row.estimated_cost_usd
+            for row in conn.execute(
+                select(screenplay_jobs).where(
+                    screenplay_jobs.c.round_id == "llm-freeze-same-source"
+                )
+            ).all()
+        ]
+    assert len(estimates) == 3  # 三阶段各一条运营行
+
+    # 估算公式（保守上界）：输入 token 实测 + 满额 max_tokens —— 两处都取**档案价目**
+    expected_estimate = (
+        backend.prompt_tokens / 1000 * profile_prices["prompt_per_1k"]
+        + len(estimates) * MAX_TOKENS / 1000 * profile_prices["completion_per_1k"]
+    )
+    assert sum(estimates) == pytest.approx(expected_estimate)
+    # 若估算走旧价目表（P1），合计会是 1/10 —— 断言因此可证伪
+    legacy_estimate = (
+        backend.prompt_tokens / 1000 * 0.001 + len(estimates) * MAX_TOKENS / 1000 * 0.002
+    )
+    assert sum(estimates) != pytest.approx(legacy_estimate)
+
+    # 实际入账成本同源（同一条档案价目折算）
+    nodes = [n for n in tree_store.nodes_of(result.tree_id) if n.parent_id is not None]
+    assert sum(n.cost.generation_api_cost_usd for n in nodes) == pytest.approx(
+        backend.prompt_tokens / 1000 * profile_prices["prompt_per_1k"]
+        + backend.completion_tokens / 1000 * profile_prices["completion_per_1k"]
+    )
+    # 改档案价目 ×10 → 估算与折算**同步**变化（两处都取新价目）
+    doubled = dict(profiles.profiles)
+    from dataclasses import replace as _replace
+
+    profile = doubled["deepseek-flash"]
+    doubled["deepseek-flash"] = _replace(
+        profile,
+        prices={"prompt_per_1k": 0.1, "completion_per_1k": 0.2},
+    )
+    bumped = profiles.__class__(
+        profiles=doubled, routing=profiles.routing, notes=profiles.notes, source=profiles.source
+    )
+    gateway_b = LLMGateway(
+        _CountingBackend(),
+        price_book={"mock-copy-v1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+        sleep=lambda _: None,
+        profiles=bumped,
+    )
+    _, price_b = gateway_b.prices_for(role=Role.GENERATION, model="mock-copy-v1")
+    assert price_b["prompt_per_1k"] == pytest.approx(10 * price["prompt_per_1k"])

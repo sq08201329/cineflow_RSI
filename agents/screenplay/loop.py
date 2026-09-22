@@ -50,6 +50,7 @@ from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
     gateway_profile_snapshot,
     with_llm_profiles,
 )
+from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 from core.tree.artifacts import ArtifactStore
 from core.tree.errors import DuplicateError, ValidationError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
@@ -660,8 +661,11 @@ def _run_stage(
         previous=previous,
     )
     params_hash = blake3.blake3(_canonical(params).encode()).hexdigest()
-    cache_key = stage_cache_key(config.model, prompt, TEMPERATURE, MAX_TOKENS)
-    estimated = _estimate_cost(prompt, config.price_of(config.model), MAX_TOKENS)
+    # 功能 016（遗留 1 收敛）：估算与折算**同源**——都取网关本次调用生效的价目
+    # （接档案时来自角色命中的档案价目；未接档案时来自 price_book），两价目不会脱钩
+    call_model, price = gateway.prices_for(role=Role.GENERATION, model=config.model)
+    cache_key = stage_cache_key(call_model, prompt, TEMPERATURE, MAX_TOKENS)  # 实际调用模型
+    estimated = _estimate_cost(prompt, price, MAX_TOKENS)
     match_key = stage_match_key(
         stage,
         policy_version=policy_version,
@@ -681,7 +685,11 @@ def _run_stage(
     # 1) 生成经网关（唯一昂贵动作，原则三）：失败 → 节点 FAILED + 预估成本照计
     try:
         generated = gateway.chat(
-            prompt, model=config.model, temperature=TEMPERATURE, max_tokens=MAX_TOKENS
+            prompt,
+            model=config.model,  # 旧路径兼容；接档案后模型由角色路由决定
+            role=Role.GENERATION,  # 功能 016：剧本生成角色
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
         )
     except GatewayError as exc:
         return _fail_stage(
