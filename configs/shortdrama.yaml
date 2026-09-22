@@ -397,5 +397,8 @@ deployment:
   spot_check: # 人工事后抽检（渐进：前 N 次全量复核，之后按比例）
     first_n: 5 # 前 N 次自动部署全量复核
     ratio: 0.2 # 之后按比例抽检（1/5）
+    # 待复核超期告警阈值（天）：短剧**投放节奏密集**（单条物料数天内就见效/失效），
+    # 复核窗口比电影缩短到 2 天——超期只告警，结论仍只能由人签署（不自动视为通过）
+    pending_alert_days: 2
   screenplay:
     current_policy_version: fa6b7bca77ed

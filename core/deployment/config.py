@@ -77,10 +77,15 @@ class ShadowConfig:
 
 @dataclass(frozen=True)
 class SpotCheckConfig:
-    """渐进抽检策略：前 `first_n` 次自动部署全量复核，之后按 `ratio` 比例抽检。"""
+    """渐进抽检策略：前 `first_n` 次自动部署全量复核，之后按 `ratio` 比例抽检。
+
+    `pending_alert_days`：待复核任务超期告警阈值（天）——运营节奏即形态（短剧投放密集、
+    复核窗口更短），故走配置；只能由人签署结论，超期**只告警、不自动视为通过**。
+    """
 
     first_n: int
     ratio: float
+    pending_alert_days: int
 
 
 @dataclass(frozen=True)
@@ -149,6 +154,11 @@ class DeploymentConfig:
             ratio=_require_ratio(
                 "deployment.spot_check.ratio",
                 _require_key("deployment.spot_check", spot_check, "ratio"),
+            ),
+            pending_alert_days=_require_int(
+                "deployment.spot_check.pending_alert_days",
+                _require_key("deployment.spot_check", spot_check, "pending_alert_days"),
+                minimum=0,
             ),
         )
 

@@ -36,7 +36,7 @@ def base_payload():
                 "allow_without_judge": False,
             },
             "shadow": {"min_days": 14, "min_candidates": 20},
-            "spot_check": {"first_n": 5, "ratio": 0.2},
+            "spot_check": {"first_n": 5, "ratio": 0.2, "pending_alert_days": 7},
         },
         "dreaming": {"no_auto_evolve_agents": ["screenplay", "dev"]},
     }
@@ -49,7 +49,9 @@ def test_real_config_parses_with_contract_defaults(deployment_config):
         validation_top_ratio=0.2, require_unbiasedness=True, allow_without_judge=False
     )
     assert deployment_config.shadow == ShadowConfig(min_days=14, min_candidates=20)
-    assert deployment_config.spot_check == SpotCheckConfig(first_n=5, ratio=0.2)
+    assert deployment_config.spot_check == SpotCheckConfig(
+        first_n=5, ratio=0.2, pending_alert_days=7
+    )
     assert deployment_config.forbidden_agents == ("screenplay", "dev")
     assert deployment_config.is_forbidden("screenplay") is True
     assert deployment_config.is_forbidden("visual") is False
@@ -75,6 +77,7 @@ def test_missing_sections_and_keys_are_rejected_with_path():
         ("shadow", "min_candidates"),
         ("spot_check", "first_n"),
         ("spot_check", "ratio"),
+        ("spot_check", "pending_alert_days"),
     ):
         payload = base_payload()
         del payload["deployment"][section][key]
@@ -134,7 +137,7 @@ def test_shadow_limits_must_be_non_negative_ints():
 
 
 def test_spot_check_policy_domain_is_validated():
-    """渐进抽检策略：first_n ≥ 0（0 = 不设全量档）、ratio ∈ (0,1]。"""
+    """渐进抽检策略：first_n ≥ 0（0 = 不设全量档）、ratio ∈ (0,1]、超期告警阈值 ≥ 0。"""
     for bad in (-1, 2.5, "5", True):
         payload = base_payload()
         payload["deployment"]["spot_check"]["first_n"] = bad
@@ -145,16 +148,34 @@ def test_spot_check_policy_domain_is_validated():
         payload["deployment"]["spot_check"]["ratio"] = bad
         with pytest.raises(DeploymentConfigError, match="ratio"):
             DeploymentConfig.from_dict(payload)
+    for bad in (-1, 1.5, "7", True):
+        payload = base_payload()
+        payload["deployment"]["spot_check"]["pending_alert_days"] = bad
+        with pytest.raises(DeploymentConfigError, match="pending_alert_days"):
+            DeploymentConfig.from_dict(payload)
 
 
 def test_zero_shadow_limits_are_explicitly_allowed():
     """显式声明 0 下限合法（运营可关掉时限门禁）——但必须写进配置，不是隐式默认。"""
     payload = base_payload()
     payload["deployment"]["shadow"] = {"min_days": 0, "min_candidates": 0}
-    payload["deployment"]["spot_check"] = {"first_n": 0, "ratio": 1.0}
+    payload["deployment"]["spot_check"] = {
+        "first_n": 0,
+        "ratio": 1.0,
+        "pending_alert_days": 0,  # 0 = 有任何待复核任务即告警（显式声明，非隐式默认）
+    }
     cfg = DeploymentConfig.from_dict(payload)
     assert cfg.shadow == ShadowConfig(min_days=0, min_candidates=0)
-    assert cfg.spot_check == SpotCheckConfig(first_n=0, ratio=1.0)
+    assert cfg.spot_check == SpotCheckConfig(first_n=0, ratio=1.0, pending_alert_days=0)
+
+
+def test_两套形态的告警阈值各自声明且短剧更短():
+    """运营节奏即形态：movie 7 天（周节奏），shortdrama 2 天（投放节奏密集，复核窗口更短）。"""
+    movie = DeploymentConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+    shortdrama = DeploymentConfig.from_yaml(REPO_ROOT / "configs" / "shortdrama.yaml")
+    assert movie.spot_check.pending_alert_days == 7
+    assert shortdrama.spot_check.pending_alert_days == 2
+    assert shortdrama.spot_check.pending_alert_days < movie.spot_check.pending_alert_days
 
 
 def test_unreadable_config_path_is_reported(tmp_path):

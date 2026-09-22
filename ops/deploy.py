@@ -189,20 +189,24 @@ def _cmd_spot_check(args) -> int:
     cfg = DeploymentConfig.from_yaml(args.config)
     if args.list_pending:
         pending = spot_check.pending_spot_checks(args.data_dir, agent_id=args.agent)
+        # 阈值：--pending-alert-days 显式给则覆盖，缺省取配置（口径与判定同一处解析）
+        alert_days = spot_check.resolve_pending_alert_days(
+            max_age_days=args.pending_alert_days, cfg=cfg
+        )
         stale = spot_check.stale_pending_checks(
             args.data_dir,
             agent_id=args.agent,
-            max_age_days=args.pending_alert_days,
+            max_age_days=alert_days,
         )
         print(
             json.dumps(
                 {
                     "pending": pending,
                     "pending_count": len(pending),
-                    "pending_alert_days": args.pending_alert_days,
+                    "pending_alert_days": alert_days,
                     "stale": stale,
                     "alert": (
-                        f"有 {len(stale)} 个抽检任务超过 {args.pending_alert_days} 天未复核"
+                        f"有 {len(stale)} 个抽检任务超过 {alert_days:g} 天未复核"
                         "（只告警，不自动视为通过）"
                         if stale
                         else ""
@@ -369,8 +373,11 @@ def main() -> int:
     spot_parser.add_argument(
         "--pending-alert-days",
         type=float,
-        default=14.0,
-        help="超过 N 天未复核即告警（只告警，不自动通过；core 不硬编码该节奏）",
+        default=None,
+        help=(
+            "超过 N 天未复核即告警（只告警，不自动通过）；缺省取配置 "
+            "deployment.spot_check.pending_alert_days（运营节奏即形态）"
+        ),
     )
     spot_parser.add_argument("--config", default=str(REPO_ROOT / DEFAULT_CONFIG))
     spot_parser.add_argument("--data-dir", default=str(REPO_ROOT / DEFAULT_DATA_DIR))

@@ -44,6 +44,17 @@ def _config_value(config_path: Path, keys: tuple[str, ...]):
     return cursor
 
 
+def _without_cadence(deployment: dict) -> dict:
+    """deployment 段去掉**唯一**按形态声明的运营节奏键（014 抽检超期告警窗口）。
+
+    用于证明"除该键外形态无关基建段逐字相同"——放宽的只是这一处声明过的差异，
+    其余任何意外分叉仍会被下面的等值断言抓住。
+    """
+    payload = json.loads(json.dumps(deployment))
+    payload["spot_check"].pop("pending_alert_days", None)
+    return payload
+
+
 class _Recorder:
     """形态无关的阶段入口：从 shared 里的配置路径读预算并如实入账（同一份代码）。"""
 
@@ -258,10 +269,20 @@ class Test差异逐项可归因:
             "screenplay",
             "calibration",
             "dreaming",
+            # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）
+            "deployment",
         }
-        # 形态无关基建段逐字相同（web / deployment / cost_regression 不因形态而变）
-        for key in ("web", "deployment", "cost_regression"):
+        # 形态无关基建段逐字相同（web / cost_regression 不因形态而变）；
+        # deployment 段**唯一**按形态声明的键是 `spot_check.pending_alert_days`
+        # （014 复核超期告警窗口：运营节奏即形态——短剧投放密集，复核窗口更短），
+        # 其余逐字相同（该键的取值口径另由 test_deployment_config 的用例守住）
+        for key in ("web", "cost_regression"):
             assert movie[key] == short[key]
+        assert (
+            movie["deployment"]["spot_check"]["pending_alert_days"]
+            != short["deployment"]["spot_check"]["pending_alert_days"]
+        )
+        assert _without_cadence(movie["deployment"]) == _without_cadence(short["deployment"])
 
 
 class Test零形态分支静态断言:

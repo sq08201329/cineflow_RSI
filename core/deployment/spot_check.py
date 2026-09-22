@@ -23,6 +23,7 @@ from core.deployment import mode
 from core.deployment.auto_deploy import deploy_events, read_pointer
 from core.deployment.config import DeploymentConfig
 from core.deployment.errors import (
+    DeploymentConfigError,
     DeploymentError,
     RollbackTargetMissingError,
 )
@@ -468,19 +469,50 @@ def pending_spot_checks(data_dir: str | Path, *, agent_id: str | None = None) ->
     )
 
 
+def resolve_pending_alert_days(
+    *, max_age_days: float | None = None, cfg: DeploymentConfig | None = None
+) -> float:
+    """超期告警阈值解析：显式参数优先 → 形态配置 `deployment.spot_check.pending_alert_days`。
+
+    两者都缺即报错（`DeploymentConfigError`）——**不静默回落某个默认天数**：运营节奏
+    悄悄变化会让"什么算逾期"的定义漂移（对齐 014 配置口径：阈值即形态）。
+    """
+    if max_age_days is not None:
+        if (
+            isinstance(max_age_days, bool)
+            or not isinstance(max_age_days, (int, float))
+            or max_age_days < 0
+        ):
+            raise DeploymentError(f"max_age_days 必须为 ≥ 0 的数值（天），实际为 {max_age_days!r}")
+        return float(max_age_days)
+    if not isinstance(cfg, DeploymentConfig):
+        raise DeploymentConfigError(
+            "未给 max_age_days 也未提供形态配置（cfg）：超期阈值必须显式给出或由"
+            " deployment.spot_check.pending_alert_days 声明（不静默用默认值）"
+        )
+    return float(cfg.spot_check.pending_alert_days)
+
+
 def stale_pending_checks(
     data_dir: str | Path,
     *,
-    max_age_days: float,
+    max_age_days: float | None = None,
     agent_id: str | None = None,
     at: str | None = None,
+    cfg: DeploymentConfig | None = None,
 ) -> list[dict]:
-    """长期未复核任务（超期）→ 告警清单（阈值由调用方给，core 不硬编码运营节奏）。"""
+    """长期未复核任务（超期）→ 告警清单。
+
+    阈值：显式 `max_age_days` 优先，缺省取形态配置
+    `deployment.spot_check.pending_alert_days`（运营节奏即形态）；两者都缺即报错。
+    超期**只告警**（`pending` 是如实状态，结论只能由人签署）。
+    """
+    days = resolve_pending_alert_days(max_age_days=max_age_days, cfg=cfg)
     moment = datetime.fromisoformat(at) if at else datetime.now(UTC)
     stale = []
     for record in pending_spot_checks(data_dir, agent_id=agent_id):
         created = datetime.fromisoformat(record["at"])
         age_days = (moment - created).total_seconds() / 86400.0
-        if age_days >= max_age_days:
+        if age_days >= days:
             stale.append({**record, "age_days": age_days})
     return stale

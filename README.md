@@ -583,7 +583,8 @@ uv run python ops/demo_web.py          # 端到端演示（quickstart 六步，�
 误入率可从事件留痕重算 == 报告值（SC-007）。
 
 **渐进抽检与否决回滚**：前 `spot_check.first_n` 次（默认 5）自动部署**全量复核**，之后按
-`ratio`（默认 0.2，即每 5 次抽 1 次）；长期未复核**只告警、不自动视为通过**。
+`ratio`（默认 0.2，即每 5 次抽 1 次）；长期未复核**只告警、不自动视为通过**（超期阈值
+`spot_check.pending_alert_days`：电影 7 天、短剧 2 天——投放节奏密集则复核窗口更短）。
 **抽检否决 = 一个逻辑事务三件事**：①指针回滚到前一部署版本 ②模式回 `manual`
 ③标记"门槛需重新标定"——回滚目标工件缺失时显式报错且**模式已回全人工**（绝不停留在不确定
 状态）；重新开 auto 必须重新标定 + **重跑影子期**。部署后漂移（F7 转
@@ -626,6 +627,7 @@ uv run python ops/demo_deploy_gate.py    # 端到端六步演示（退出码 0�
 | `gate.allow_without_judge` | `false` | 无 judge 的 Agent 是否放宽（默认保守拦截） |
 | `shadow.min_days` / `min_candidates` | 14 / 20 | 影子期双下限（**立项书要求的 ≥2 周**） |
 | `spot_check.first_n` / `ratio` | 5 / 0.2 | 渐进抽检：前 N 次全量，之后按比例 |
+| `spot_check.pending_alert_days` | 7（短剧 2） | 待复核超期告警阈值（天）；只告警，结论仍只能由人签署 |
 | 禁止名单 | 复用 `dreaming.no_auto_evolve_agents` | 不另立名单（缺项即报错，空名单等于放行一切） |
 
 **诚实边界（原则六）**：

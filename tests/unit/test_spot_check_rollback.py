@@ -41,12 +41,17 @@ def _at(days: float) -> str:
     return (datetime(2026, 9, 21, tzinfo=UTC) + timedelta(days=days)).isoformat()
 
 
-def _cfg(deployment_config, *, first_n=5, ratio=0.2):
+def _cfg(deployment_config, *, first_n=5, ratio=0.2, pending_alert_days=7):
     from dataclasses import replace
 
     from core.deployment.config import SpotCheckConfig
 
-    return replace(deployment_config, spot_check=SpotCheckConfig(first_n=first_n, ratio=ratio))
+    return replace(
+        deployment_config,
+        spot_check=SpotCheckConfig(
+            first_n=first_n, ratio=ratio, pending_alert_days=pending_alert_days
+        ),
+    )
 
 
 def _deploy(data_dir, pointer, *, candidate, snapshot, at=T0):
@@ -187,6 +192,48 @@ def test_pending_checks_alert_but_never_auto_pass(
     )
     assert fresh == []
     assert task.conclusion is SpotCheckConclusion.PENDING  # 未复核不会被自动置为通过
+
+
+def test_超期阈值缺省取配置_显式参数可覆盖(
+    deployment_pointer_files, deployment_data_dir, deployment_config
+):
+    """阈值来源：配置 `deployment.spot_check.pending_alert_days`（运营节奏即形态）；
+    显式 `max_age_days` 仍可覆盖（CLI 临时调档不破）；两者都缺即报错（不静默用魔法数）。"""
+    from core.deployment.errors import DeploymentConfigError
+
+    cfg = _cfg(deployment_config, pending_alert_days=5)
+    pointer = deployment_pointer_files(AGENT, current_version=PREVIOUS)
+    pointer["cfg"] = cfg
+    _prepare_auto(deployment_data_dir, cfg, pointer)
+    event = spot_check.deploy_events(deployment_data_dir, AGENT)[0]
+    spot_check.open_spot_check(event["_path"], data_dir=deployment_data_dir, cfg=cfg, at=T0)
+
+    # 默认阈值（配置 5 天）：第 3 天未超期、第 7 天超期
+    assert (
+        spot_check.stale_pending_checks(deployment_data_dir, agent_id=AGENT, cfg=cfg, at=_at(3))
+        == []
+    )
+    assert [
+        item["candidate_version"]
+        for item in spot_check.stale_pending_checks(
+            deployment_data_dir, agent_id=AGENT, cfg=cfg, at=_at(7)
+        )
+    ] == [event["candidate_version"]]
+
+    # 显式覆盖优先于配置（30 天 → 不告警）
+    assert (
+        spot_check.stale_pending_checks(
+            deployment_data_dir, agent_id=AGENT, cfg=cfg, max_age_days=30, at=_at(7)
+        )
+        == []
+    )
+    # 阈值解析口径可单独调用（CLI 打印与判定同源，不两处各算一遍）
+    assert spot_check.resolve_pending_alert_days(cfg=cfg) == 5.0
+    assert spot_check.resolve_pending_alert_days(cfg=cfg, max_age_days=3) == 3.0
+
+    # 既没显式给阈值、也没给配置 → 报错（不静默回落某个默认天数）
+    with pytest.raises(DeploymentConfigError):
+        spot_check.stale_pending_checks(deployment_data_dir, agent_id=AGENT, at=_at(7))
 
 
 def test_pass_conclusion_keeps_auto_mode(

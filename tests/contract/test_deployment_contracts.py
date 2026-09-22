@@ -489,6 +489,7 @@ def _relaxed_cfg(deployment_config, *, first_n=None, ratio=None):
         spot_check=SpotCheckConfig(
             first_n=spot.first_n if first_n is None else first_n,
             ratio=spot.ratio if ratio is None else ratio,
+            pending_alert_days=spot.pending_alert_days,
         ),
     )
 

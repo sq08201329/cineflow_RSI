@@ -3379,7 +3379,7 @@ deployment:
   mode_default: manual
   gate: {validation_top_ratio: 0.2, require_unbiasedness: true, allow_without_judge: false}
   shadow: {min_days: 14, min_candidates: 20}
-  spot_check: {first_n: 5, ratio: 0.2}
+  spot_check: {first_n: 5, ratio: 0.2, pending_alert_days: 7}
   screenplay:
     current_policy_version: fa6b7bca77ed
 """

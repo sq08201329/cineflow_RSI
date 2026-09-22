@@ -419,7 +419,7 @@ class TestC10到C13试水运行:
             (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
         )
         differing = {key for key in set(movie) | set(short) if movie.get(key) != short.get(key)}
-        # 形态差异逐项落在配置上（11 个段），形态无关基建段逐字相同
+        # 形态差异逐项落在配置上（12 个段）；形态无关基建段逐字相同
         assert differing == {
             "form",
             "evaluator_weights",
@@ -432,9 +432,22 @@ class TestC10到C13试水运行:
             "screenplay",
             "calibration",
             "dreaming",
+            # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）
+            "deployment",
         }
-        for key in ("web", "deployment", "cost_regression"):
+        for key in ("web", "cost_regression"):
             assert movie[key] == short[key]
+        # deployment 段：**唯一**按形态声明的键是 spot_check.pending_alert_days
+        # （014 复核超期告警窗口——运营节奏即形态），其余逐字相同
+        assert (
+            movie["deployment"]["spot_check"]["pending_alert_days"]
+            != short["deployment"]["spot_check"]["pending_alert_days"]
+        )
+        normalized = json.loads(json.dumps(movie["deployment"]))
+        normalized["spot_check"].pop("pending_alert_days")
+        short_normalized = json.loads(json.dumps(short["deployment"]))
+        short_normalized["spot_check"].pop("pending_alert_days")
+        assert normalized == short_normalized
         # 代码侧零形态分支（core/ 与 agents/ 全量扫描）
         offenders = []
         for root in ("core", "agents"):

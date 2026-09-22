@@ -397,5 +397,6 @@ deployment:
   spot_check:
     first_n: 5 # 前 N 次自动部署全量复核
     ratio: 0.2 # 之后按比例抽检（1/5）
+    pending_alert_days: 7 # 待复核超期告警阈值（天）：电影按**周节奏**复盘，7 天 = 一个校准周期
   screenplay:
     current_policy_version: fa6b7bca77ed
