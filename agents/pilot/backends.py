@@ -198,7 +198,7 @@ def build_backends(
         backend=backend, llm_backend=llm_backend
     )
     resolved = selection.resolved()
-    # 功能 016：LLM 端点/密钥由**配置档案**注入（不再隐式读 OPENAI_*）
+    # 功能 016：LLM 端点/密钥由**配置档案**注入（不再隐式读旧变量名）
     llm_profiles = _llm_profiles_for(config_path)
     llm = _guard(
         LLM_SLOT, resolved[LLM_SLOT], lambda: _llm_backend(resolved[LLM_SLOT], llm_profiles)
