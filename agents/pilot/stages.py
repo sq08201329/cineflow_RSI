@@ -593,7 +593,14 @@ def _sound_entry(stage_input: StageInput) -> StageOutcome:
 
 
 def build_sound_plans(runtime: PilotRuntime, timing_sheet: TimingSheet) -> tuple[dict, ...]:
-    """由分镜/剧本时序派生声音参数：每句台词一 TTS（响度标定到分档目标）+ 配乐一轨。"""
+    """由分镜/剧本时序派生声音参数：每句台词一 TTS（响度标定到分档目标）+ 配乐一轨。
+
+    **响度标定的后端纪律（1.4.0 修复）**：`_calibrated_params` 用 `synthesize_wav`
+    合成一遍**模拟**波形来测响度、反推增益——该口径只在 `sound` 后端为 `simulated` 时成立。
+    切 `sound: http` 后本函数**如实拒绝**（`StageFailedError`，零生成零扣费），
+    不用模拟合成的响度冒充真实平台的产出（不给真实链路塞一份假标定）。
+    """
+    _require_simulated_sound_backend(runtime)
     config = runtime.configs.sound
     plans: list[dict] = []
     for index, utterance in enumerate(timing_sheet.utterances):
@@ -623,6 +630,28 @@ def build_sound_plans(runtime: PilotRuntime, timing_sheet: TimingSheet) -> tuple
         }
     )
     return tuple(plans)
+
+
+def _require_simulated_sound_backend(runtime: PilotRuntime) -> None:
+    """响度标定只在模拟后端成立：真实后端如实拒绝（写明原因与替代做法，不静默降级）。
+
+    替代做法（二选一，属实现变动，需按其价格评估后另行接入）：
+    ① 让真实平台按其响度规范产出（把目标 `loudness_gain_db` 作为生成参数下传，
+       由平台侧保证响度）——适配器已原样透传 `params`，无需改协议；
+    ② 两段式真实标定：先调一次真实生成 → 解码返回 wav 用
+       `measure_loudness_lufs` 实测 → 按差值二次生成（**会真实扣费两次**）。
+    """
+    backend = str(runtime.backends.resolved.get("sound", "simulated"))
+    if backend != "simulated":
+        raise StageFailedError(
+            "声音响度标定不支持真实后端（sound 后端 = "
+            f"{backend}）：现有口径 `_calibrated_params` 用模拟合成器合成一遍波形来测响度"
+            "反推增益，切真实后端后该口径不成立——此处如实拒绝（零生成零扣费），"
+            "不用模拟响度冒充平台产出。"
+            "替代做法：① 把目标响度作为参数下传、由平台侧按其规范保证（适配器已原样透传"
+            "params，无需改协议）；② 两段式真实标定（先真实生成→实测→二次生成，会真实扣费两次）。"
+            "两者都属实现变动，须先评估计费再接入（见 docs/二期升级路径-真实生成与投放.md）。"
+        )
 
 
 def _calibrated_params(config: SoundConfig, gen_type: str, *, seed: int, **extra) -> dict:
