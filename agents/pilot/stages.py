@@ -401,7 +401,12 @@ def _load_script_artifact(runtime: PilotRuntime, artifact_hash: str):
 
 
 def _storyboard_entry(stage_input: StageInput) -> StageOutcome:
-    """分镜阶段：既有 `run_storyboard_round`（镜头语法/覆盖/轴规则门禁沿用配置）。"""
+    """分镜阶段：既有 `run_storyboard_round`（镜头语法/覆盖/轴规则门禁沿用配置）。
+
+    产物两项、标签如实：`animatic` = 节点工件（renderer 产出的**预演 mp4**）；
+    `shotlist` = 分镜清单 canonical JSON **另立内容寻址工件**（此前只留在 detail 里，
+    且被误标为 shotlist 的其实是 mp4——标签与内容不符会误导评审）。
+    """
     runtime = _runtime_of(stage_input)
     config = runtime.configs.storyboard
     round_id = _round_id(runtime, stage_input)
@@ -423,8 +428,13 @@ def _storyboard_entry(stage_input: StageInput) -> StageOutcome:
     _require_ok("分镜阶段", outcome, jobs=result.jobs)
     node = _winner_node(runtime, result.tree_id)
     shotlist_payload = shotlist.to_dict()
+    # 分镜清单落工件库（canonical JSON 内容寻址；与 008 `shotlist_hash()` 同口径）
+    shotlist_hash = runtime.artifacts.put(shotlist.canonical_json().encode())
     return StageOutcome(
-        products=(_product("shotlist", node.artifact_hash, node.artifact_hash),),
+        products=(
+            _product("animatic", node.artifact_hash, node.artifact_hash),
+            _product("shotlist", shotlist_hash, shotlist_hash),
+        ),
         cost_usd=result.spent_usd,
         candidates=outcome.candidates,
         detail={

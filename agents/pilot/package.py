@@ -10,6 +10,11 @@
 - `state.json`：各阶段评分构成 / 坍缩状态 / 漂移摘要（缺数据一律如实"不适用"，不伪造）。
 
 **缺任一件即装配失败**（先校验后落盘，不产半包）；账目对账不一致即报错（原则二）。
+
+**产物标签与内容类型逐项机检**（`check_product_kinds`）：清单是评审看的证据载体，
+标签与内容不符会误导评审（曾把预演 mp4 标成 `shotlist`），故装配前按内容寻址字节的
+自描述类型核对每个产物的 `kind`——不符即拒绝装配；新增 kind 必须同时声明内容类型
+（不静默放行未知标签）。
 """
 
 import json
@@ -21,6 +26,7 @@ from typing import Any
 
 from core.orchestration.ledger import ledger_payload, summarize_cost
 from core.orchestration.models import RunRecord, RunStatus
+from core.tree.artifacts import ArtifactStore
 
 PACKAGE_FILES = ("manifest.json", "reel.mp4", "products.json", "cost.json", "state.json")
 REEL_FILENAME = "reel.mp4"
@@ -146,6 +152,7 @@ def assemble_from_run(*, record: RunRecord, runtime: Any, package_root: str | Pa
             f"运行未完成（{record.status}）：只有六阶段全 done 才装配样片包（不产半包）"
         )
     reel = _reel_of(runtime, record)
+    check_product_kinds(record, runtime.artifacts)  # 标签↔内容类型逐项机检（证据载体不误导）
     ledger = summarize_cost(record, _agent_ledgers(record))
     manifest = build_manifest(record)
     products = build_products(record)
@@ -159,6 +166,55 @@ def assemble_from_run(*, record: RunRecord, runtime: Any, package_root: str | Pa
         cost=ledger_payload(ledger),
         state=state,
     )
+
+
+# 产物 kind ↔ 内容类型对照（清单标签必须如实描述内容：新增 kind 时**必须**在此声明，
+# 未登记即拒绝装配——不静默放行未知标签，否则同类标签漂移会重新溜进证据包）
+_KIND_CONTENT_TYPE = {
+    "script": "json",  # 剧本工件（ScriptArtifact canonical JSON）
+    "shotlist": "json",  # 分镜清单（ShotList canonical JSON，内容寻址）
+    "material": "json",  # 宣发物料（模拟平台的文案载荷）
+    "animatic": "video",  # 分镜预演 mp4（renderer 产出）
+    "clip": "video",  # 视觉片段 mp4
+    "reel": "video",  # 成片 mp4
+    "audio": "audio",  # 声音轨 wav
+}
+
+
+def _content_type(content: bytes) -> str:
+    """按字节自描述识别内容类型（不信任标签：以容器/魔数为准）。"""
+    if len(content) < 12:
+        return "too_short"
+    if content[4:8] == b"ftyp":  # ISO BMFF（mp4 系）
+        return "video"
+    if content[:4] == b"RIFF" and content[8:12] == b"WAVE":
+        return "audio"
+    if content.lstrip()[:1] in (b"{", b"["):
+        return "json"
+    return "unknown"
+
+
+def check_product_kinds(record: RunRecord, artifacts: ArtifactStore) -> None:
+    """逐项机检产物 `kind` 与其内容类型一致；不符/未登记即拒绝装配（不产误导性清单）。"""
+    mismatches: list[str] = []
+    for state in record.stages:
+        for product in state.products:
+            expected = _KIND_CONTENT_TYPE.get(product.kind)
+            actual = _content_type(artifacts.get(product.content_hash))
+            if expected is None:
+                mismatches.append(
+                    f"{state.stage_id}: kind={product.kind!r} 未登记内容类型"
+                    "（新增 kind 须在 _KIND_CONTENT_TYPE 声明）"
+                )
+            elif actual != expected:
+                mismatches.append(
+                    f"{state.stage_id}: kind={product.kind!r} 期望 {expected}，"
+                    f"实际内容为 {actual}（{product.content_hash}）"
+                )
+    if mismatches:
+        raise PackageError(
+            "产物标签与内容类型不符（清单是证据载体，标签错误即误导）：" + "；".join(mismatches)
+        )
 
 
 def build_manifest(record: RunRecord) -> dict:
