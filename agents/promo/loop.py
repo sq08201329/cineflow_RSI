@@ -5,7 +5,7 @@
 幂等：tree_id/root_id/material_id 均由 round_id 确定性派生，二次触发
 撞唯一约束后直接重建首轮 RoundResult（0 重复投放、0 元重复扣费）。
 落树两段式：拒投/失败节点轮次内直接落盘；投放成功的节点待指标回流后
-由 ops/ingest_metrics.py 一次性完整 INSERT（research 决策 1）。
+由 `agents/promo/ingest.py` 一次性完整 INSERT（research 决策 1）。
 """
 
 import time
@@ -456,7 +456,7 @@ def _run_material(
         )
         return {"material_id": material_id, "status": "rejected", "reason": str(exc)}
 
-    # 4) 推进至 delivered（指标回流由 ops/ingest_metrics.py 完成一次性落盘）
+    # 4) 推进至 delivered（指标回流由 agents/promo/ingest.py 完成一次性落盘）
     status = campaign.status
     for _ in range(STATUS_POLL_MAX):
         status = adapter.get_status(campaign.external_id)

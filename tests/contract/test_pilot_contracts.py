@@ -11,6 +11,10 @@ C10~C13 由 T1524 补全并与本文件合并为 C1~C13 全量）：
   环节候选全败 → 环节 failed → 运行终止并记录全部候选判 0 理由。
 """
 
+import json
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
 from agents.editing.shots import ShotLibrary
@@ -24,10 +28,19 @@ from agents.pilot.handoffs import (
     shotlist_parity,
     shotlist_to_gen_params,
 )
+from agents.pilot.package import (
+    PACKAGE_FILES,
+    SIMULATED_NOTE,
+    PackageError,
+    load_manifest,
+    verify_package,
+)
 from agents.storyboard.script import ScriptSegment
 from core.orchestration.dag import build_dag
 from core.orchestration.executor import ExecutionContext, run
 from core.orchestration.models import RunStatus, StageOutcome, StageSpec, StageStatus
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Cfg:
@@ -214,3 +227,316 @@ def test_C5_C8_字段声明可机读(segment_kind, pilot_material_script, pilot_
         payload = parity.to_dict()
         assert payload["consistent"] is True
         assert payload["downstream"] and payload["label"]
+
+
+# ---------------------------------------------------------------------------
+# C1~C4 通用编排执行器（contracts/orchestration.md）
+# ---------------------------------------------------------------------------
+
+
+class TestC1到C4通用编排:
+    """C1 DAG / C2 状态机 / C3 断点续跑 / C4 账目——用真执行器端到端断言。"""
+
+    def _chain(self, stage_entrypoint_stub, count, **overrides):
+        from core.orchestration.dag import build_dag
+        from core.orchestration.models import StageSpec
+
+        stubs, specs = {}, []
+        for index in range(1, count + 1):
+            stage_id = f"a{index}"
+            stub = stage_entrypoint_stub(
+                stage_id, cost_usd=0.5, **dict(overrides.get(stage_id, {}))
+            )
+            stubs[stage_id] = stub
+            specs.append(
+                StageSpec(
+                    stage_id=stage_id,
+                    entrypoint=stub,
+                    depends_on=() if index == 1 else (f"a{index - 1}",),
+                )
+            )
+        return build_dag(specs), stubs
+
+    def _ctx(self, fingerprint="c" * 64):
+        return ExecutionContext(
+            run_id="run-c",
+            form="form-x",
+            config_fingerprint="d" * 64,
+            input_fingerprint=fingerprint,
+        )
+
+    def test_c1_拓扑序与非法图(self, stage_entrypoint_stub):
+        from core.orchestration.dag import build_dag
+        from core.orchestration.errors import DagError
+        from core.orchestration.models import StageSpec
+
+        def _spec(stage_id, *deps):
+            return StageSpec(
+                stage_id=stage_id, entrypoint=stage_entrypoint_stub(stage_id), depends_on=deps
+            )
+
+        dag = build_dag(
+            [_spec("a1"), _spec("a2", "a1"), _spec("a3", "a1"), _spec("a4", "a2", "a3")]
+        )
+        order = dag.topological_order()
+        assert order[0] == "a1" and order[-1] == "a4"
+        with pytest.raises(DagError):
+            build_dag([_spec("a1", "ghost")])  # 依赖不存在
+        with pytest.raises(DagError):
+            build_dag([_spec("a1"), _spec("a1")])  # stage_id 重复
+        with pytest.raises(DagError):
+            build_dag([_spec("a1", "a2"), _spec("a2", "a1")])  # 环
+
+    def test_c2_状态机与失败跳过(self, stage_entrypoint_stub):
+        dag, stubs = self._chain(
+            stage_entrypoint_stub, 3, a2={"fail": "候选全败", "candidates": ["门禁违规"]}
+        )
+        record = run(dag, self._ctx())
+        assert record.status is RunStatus.FAILED and record.failure_stage == "a2"
+        assert record.stage("a1").status is StageStatus.DONE
+        assert record.stage("a3").status is StageStatus.SKIPPED
+        assert stubs["a3"].calls == 0  # 失败点的下游拒绝启动
+
+    def test_c3_续跑不重跑与指纹拒绝(self, stage_entrypoint_stub):
+        broken_dag, broken = self._chain(stage_entrypoint_stub, 3, a2={"fail": "候选全败"})
+        first = run(broken_dag, self._ctx())
+        fixed_dag, fixed = self._chain(stage_entrypoint_stub, 3)
+        resumed = run(fixed_dag, self._ctx(), resume_from=first)
+        assert resumed.status is RunStatus.DONE
+        assert fixed["a1"].calls == 0  # 已完成阶段零重跑
+        assert resumed.stage("a2").attempts == 2
+        from core.orchestration.errors import ResumeRejectedError
+
+        with pytest.raises(ResumeRejectedError):
+            run(broken_dag, self._ctx(fingerprint="e" * 64), resume_from=first)
+        again = run(fixed_dag, self._ctx(), resume_from=resumed)
+        assert again == resumed  # 完成后再续跑幂等
+
+    def test_c4_账目汇总与对账(self, stage_entrypoint_stub):
+        from core.orchestration.errors import LedgerMismatchError
+        from core.orchestration.ledger import summarize_cost
+
+        dag, _ = self._chain(stage_entrypoint_stub, 3)
+        record = run(dag, self._ctx())
+        ledger = summarize_cost(record, {state.stage_id: 0.5 for state in record.stages})
+        assert ledger.total_usd == pytest.approx(1.5)
+        assert all(line.delta_usd == 0.0 for line in ledger.lines)
+        with pytest.raises(LedgerMismatchError):
+            summarize_cost(record, {state.stage_id: 0.9 for state in record.stages})
+
+
+# ---------------------------------------------------------------------------
+# C10~C13 试水运行与样片包（contracts/pilot-run.md）
+# ---------------------------------------------------------------------------
+
+
+def _pilot_inputs():
+    from agents.pilot.pilot import PilotInputs
+
+    return PilotInputs(
+        topic="夜班记录", target_duration_min=2, characters=("林静", "陈默"), constraints=()
+    )
+
+
+def _run_pilot(pilot_demo_config_path, tmp_path, *, run_id="contract-run", data_dir_name="a"):
+    from agents.pilot.pilot import run_pilot
+
+    return run_pilot(
+        form="shortdrama",
+        config_path=pilot_demo_config_path,
+        inputs=_pilot_inputs(),
+        data_dir=tmp_path / data_dir_name / "pilot",
+        artifacts_root=tmp_path / data_dir_name / "artifacts",
+        run_id=run_id,
+        clock=lambda: "2026-01-01T00:00:00+00:00",
+    )
+
+
+class TestC10到C13试水运行:
+    def test_c10_预检拒绝与一次运行(self, pilot_demo_config_path, pilot_dirs, tmp_path):
+        from agents.pilot.pilot import PilotInputs, PrecheckError, precheck
+
+        with pytest.raises(PrecheckError):
+            precheck(
+                form="shortdrama",
+                config_path=pilot_demo_config_path,
+                inputs=PilotInputs(topic="", target_duration_min=0, characters=()),
+                data_dir=pilot_dirs,
+            )
+        result = _run_pilot(pilot_demo_config_path, tmp_path)
+        assert result.record.status is RunStatus.DONE
+        assert result.record.completed_stages == (
+            "script",
+            "storyboard",
+            "visual",
+            "sound",
+            "editing",
+            "promo",
+        )
+        assert result.package_dir is not None
+
+    def test_c10_可复现两次运行逐字节一致(self, pilot_demo_config_path, tmp_path):
+        first = _run_pilot(pilot_demo_config_path, tmp_path, data_dir_name="first")
+        second = _run_pilot(pilot_demo_config_path, tmp_path, data_dir_name="second")
+        for name in PACKAGE_FILES:
+            assert (first.package_dir / name).read_bytes() == (
+                second.package_dir / name
+            ).read_bytes(), name
+
+    def test_c11_五件套与缺件即失败(self, pilot_demo_config_path, tmp_path):
+        result = _run_pilot(pilot_demo_config_path, tmp_path)
+        manifest = load_manifest(result.package_dir)
+        assert SIMULATED_NOTE in manifest["note"]
+        assert manifest["form"] == "shortdrama"
+        assert manifest["config_fingerprint"]
+        missing = tmp_path / "missing-package"
+        missing.mkdir()
+        with pytest.raises(PackageError):
+            verify_package(missing)
+        (result.package_dir / "reel.mp4").unlink()
+        with pytest.raises(PackageError):
+            verify_package(result.package_dir)
+
+    def test_c12_账目对账零差异与篡改报错(self, pilot_demo_config_path, tmp_path):
+        result = _run_pilot(pilot_demo_config_path, tmp_path)
+        cost = json.loads((result.package_dir / "cost.json").read_text(encoding="utf-8"))
+        assert cost["reconciled"] is True
+        assert cost["total_usd"] == pytest.approx(sum(cost["by_stage"].values()))
+        assert all(float(line["delta_usd"]) == 0.0 for line in cost["lines"])
+        tampered = tmp_path / "tampered.json"
+        cost["by_stage"]["visual"] = cost["by_stage"]["visual"] + 1.0
+        tampered.write_text(json.dumps(cost, ensure_ascii=False), encoding="utf-8")
+        with pytest.raises(PackageError):
+            verify_package(result.package_dir, cost_override=tampered)
+
+    def test_c13_两套配置差异可归因且无形态分支(self):
+        import yaml
+
+        from core.orchestration.models import StageStatus as _Status  # noqa: F401
+
+        movie = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
+        short = yaml.safe_load(
+            (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
+        )
+        differing = {key for key in set(movie) | set(short) if movie.get(key) != short.get(key)}
+        # 形态差异逐项落在配置上（11 个段），形态无关基建段逐字相同
+        assert differing == {
+            "form",
+            "evaluator_weights",
+            "replay",
+            "promo",
+            "visual",
+            "sound",
+            "editing",
+            "storyboard",
+            "screenplay",
+            "calibration",
+            "dreaming",
+        }
+        for key in ("web", "deployment", "cost_regression"):
+            assert movie[key] == short[key]
+        # 代码侧零形态分支（core/ 与 agents/ 全量扫描）
+        offenders = []
+        for root in ("core", "agents"):
+            for path in (REPO_ROOT / root).rglob("*.py"):
+                if "__pycache__" in path.parts:
+                    continue
+                source = path.read_text(encoding="utf-8")
+                for banned in ("shortdrama", '"movie"', "'movie'", "form ==", "form is "):
+                    if banned in source:
+                        offenders.append(f"{path}:{banned}")
+        assert not offenders, offenders
+
+
+# ---------------------------------------------------------------------------
+# 宪章级机检：FR-011 落树路径守卫 + SC-005 依赖清单
+# ---------------------------------------------------------------------------
+
+
+class Test宪章级机检:
+    def test_fr011_编排层不直接写树(self):
+        """FR-011：落树只经各 Agent 既有 loop 入口，编排层不得直接调用树写入 API。"""
+        offenders = []
+        for root in ("core/orchestration", "agents/pilot"):
+            for path in (REPO_ROOT / root).rglob("*.py"):
+                if "__pycache__" in path.parts:
+                    continue
+                source = path.read_text(encoding="utf-8")
+                for banned in (
+                    "append_node(",
+                    "create_tree(",
+                    "store.append",
+                    ".create_tree",
+                ):
+                    if banned in source:
+                        offenders.append(f"{path}:{banned}")
+        assert not offenders, offenders
+
+    def test_fr011_运行期写入全部来自_Agent_入口(self, pilot_demo_config_path, tmp_path):
+        """运行期树写入计数与来源：全部来自各 Agent 的 loop 模块（编排层零写入）。"""
+        from agents.pilot import stages as stages_module
+        from agents.pilot.pilot import FileRunStore, PilotInputs
+        from core.orchestration.executor import ExecutionContext
+        from core.orchestration.executor import run as run_dag
+
+        writes: list[str] = []
+
+        class _GuardedStore:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def append_node(self, node):
+                import sys
+
+                writes.append(sys._getframe(1).f_globals.get("__name__", "?"))
+                return self._inner.append_node(node)
+
+            def create_tree(self, tree):
+                import sys
+
+                writes.append(sys._getframe(1).f_globals.get("__name__", "?"))
+                return self._inner.create_tree(tree)
+
+        runtime = stages_module.build_runtime(
+            form="shortdrama",
+            config_path=pilot_demo_config_path,
+            data_dir=tmp_path / "pilot",
+            artifacts_root=tmp_path / "artifacts",
+        )
+        guarded = replace(runtime, store=_GuardedStore(runtime.store))
+        stages_module.bind_runtime(guarded)
+        inputs = PilotInputs(topic="夜班记录", target_duration_min=2, characters=("林静",))
+        record = run_dag(
+            stages_module.build_dag_for(guarded),
+            ExecutionContext(
+                run_id="guard-run",
+                form="shortdrama",
+                config_fingerprint=guarded.config_fingerprint,
+                input_fingerprint=inputs.fingerprint(),
+                shared={
+                    "runtime": guarded,
+                    "run_id": "guard-run",
+                    "pilot_inputs": inputs.to_dict(),
+                },
+            ),
+            store=FileRunStore(tmp_path / "pilot"),
+            clock=lambda: "2026-01-01T00:00:00+00:00",
+        )
+        assert record.status is RunStatus.DONE
+        assert writes, "未捕获到任何树写入（守卫失效）"
+        # 写入者必须是各 Agent 的实现模块（编排层 core/orchestration 与 agents/pilot 不在列）
+        bad = [name for name in writes if name.startswith(("core.orchestration", "agents.pilot"))]
+        assert not bad, bad
+        assert all(name.startswith(("agents.", "core.tree", "ops.")) for name in writes), writes
+
+    def test_sc005_依赖清单无_Airflow_类编排框架(self):
+        """SC-005：自研轻量 DAG——依赖清单不得出现 Airflow 类外部编排框架。"""
+        banned = ("airflow", "apache-airflow", "prefect", "dagster", "luigi", "kedro", "argo")
+        for name in ("pyproject.toml", "uv.lock"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8").lower()
+            for framework in banned:
+                assert f'name = "{framework}"' not in text, f"{name} 含 {framework}"
+                assert f'"{framework}==' not in text, f"{name} 含 {framework}"

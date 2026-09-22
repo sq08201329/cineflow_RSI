@@ -636,6 +636,53 @@ uv run python ops/demo_deploy_gate.py    # 端到端六步演示（退出码 0�
   同周期多 Agent 需错开周期档；
 - 无偏性/漂移证据缺失一律判"证据不足"（宁可拦截，不推测放行）。
 
+## 短剧形态试水作品（功能 015）
+
+**一句话**：形态差异全部在 `configs/*.yaml`（零代码切换），六阶段链式交接 + 通用轻量 DAG
+执行器 + 可复现样片包；全链路由**确定性模拟生成器**产出。
+
+```bash
+# 端到端六步演示（配置完整性 → 短剧运行出样片包 → 可复现对照 → movie 对照 → 断点续跑 → 拒绝语义）
+uv run python ops/demo_pilot.py
+
+# 单次试水运行（预检 → 六阶段 → 样片包 pilot/packages/{run_id}/）
+uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml \
+    --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run --fixed-clock
+uv run python ops/pilot.py inspect --data-dir pilot --run-id demo-run --package
+uv run python ops/pilot.py resume  --form shortdrama --config configs/shortdrama.yaml \
+    --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run
+```
+
+**分层**（宪章原则五）：`core/orchestration/` 通用执行器（**零业务概念**：DAG/状态机/断点续跑
+/账目，静态断言机检）→ `agents/pilot/` 四段交接纯映射 + 六阶段定义 + 样片包装配 →
+`configs/{movie,shortdrama}.yaml` 形态配置（权重/阈值/节奏曲线/预算/规格/外环频率）。
+
+**样片包五件套**：`manifest.json`（**「模拟生成」标注** + 形态 + 配置指纹 + 产物清单 + 阶段状态）、
+`reel.mp4`（竖屏成片）、`products.json`（各阶段产物引用与哈希）、`cost.json`
+（按阶段/来源/形态汇总，与各 Agent 落盘成本**零差异**对账）、`state.json`（评分构成 + 坍缩/漂移摘要）。
+
+### 诚实边界（「模拟生成」）
+
+- **本特性产出为模拟生成**：模拟视频/音频生成器 + 模拟投放平台 + Mock LLM 后端，
+  零外部计费、零凭证、零真实投放；样片包与清单均强制标注「模拟生成」，**不得作为对外发布素材**；
+- **不使用版权素材**：夹具与全部生成内容均为合成（程序化帧/波形/伪文本）；
+- **真实生成与投放（B/C 路径）未交付**：只登记切换方式与凭证清单（见
+  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md) 与
+  [docs/pilot-upgrade-manifest.json](docs/pilot-upgrade-manifest.json)，字段可机检）；
+- 上游不合格 → 下游**拒绝启动**（不静默降级）；环节候选全败 → 运行终止并记录全部判 0 理由。
+
+### 短剧形态配置约束（切换/改配置前必读）
+
+| 约束 | 原因 |
+| --- | --- |
+| `visual.simulated_gen.fps` 必须 = `visual.clip_spec.fps` | 模拟视频生成器编码档固定 8fps；不一致 → `rule.format_compliance` 全判 0 |
+| 片段/渲染尺寸需**被 16 整除**且 9:16（现 144x256） | 否则 ffmpeg 会改尺寸（如 216→224），合规门禁逐字段对照失败 |
+| 镜头数 ≤ **16** | 分镜预演渲染器的镜头索引位编码上限 |
+| `镜头数 × 单镜时长` 须落在 `editing.target_duration_s ± duration_tolerance_s` | EDL 时长合规门禁 |
+| `promo` 单轮投放上限 = `exploration_per_round_usd × promo_pilot_ratio` ≥ 物料申请额之和 | 超限即拒投（不静默超投） |
+| 转场为**出向**语义（同分区前一镜须带 dissolve） | `forbid_jump_cut_within_scene` |
+| 生产档（120s 成片 / 16 镜）在机器高负载下可能撞 ffmpeg 编码抖动 | 单片段生成失败即如实 fail（不降级），恢复路径 = 断点续跑 |
+
 ## spec-kit 工作流
 
 本仓库由 spec-kit 驱动：
@@ -645,6 +692,7 @@ uv run python ops/demo_deploy_gate.py    # 端到端六步演示（退出码 0�
 - `specs/003-promo-loop/`：宣发 Agent 全闭环（T201–T228 全部完成）
 - `specs/004-visual-loop/`：视觉 Agent 闭环（T301–T332 全部完成）
 - `specs/005-dreaming/`：做梦层与谱系报表（T401–T425 全部完成）
+- `specs/015-pilot-shortdrama/`：短剧形态试水作品（形态配置 + 链式交接 + 可复现样片包）
 
 ## 一期里程碑全景
 

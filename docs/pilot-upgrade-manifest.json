@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.0.0",
+  "title": "试水作品升级路径（A → B/C）结构化清单",
+  "generated_by": "功能 015（短剧形态试水作品）T1523",
+  "paths": [
+    {
+      "path_id": "A",
+      "name": "A 路径：全模拟试水（本特性已交付）",
+      "status": "delivered",
+      "credential_envs": [],
+      "adapters": [
+        "agents.visual.platform.simulated.SimulatedVideoGen",
+        "agents.storyboard.platform.simulated.SimulatedStoryboardRenderer",
+        "agents.sound.platform.simulated.SimulatedTTSGen",
+        "agents.sound.platform.simulated.SimulatedSFXGen",
+        "agents.sound.platform.simulated.SimulatedMusicGen",
+        "agents.editing.platform.simulated.SimulatedEditRenderer",
+        "agents.promo.platform.simulated.SimulatedPlatform",
+        "core.llm_gateway.backends.mock.MockBackend"
+      ],
+      "switch_commands": [
+        "uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run --fixed-clock",
+        "uv run python ops/pilot.py inspect --data-dir pilot --run-id demo-run --package"
+      ],
+      "budget_policy": {
+        "unit": "USD",
+        "round_budget_keys": [
+          "visual.exploration_per_round_usd",
+          "sound.exploration_per_round_usd",
+          "editing.exploration_per_round_usd",
+          "storyboard.exploration_per_round_usd",
+          "promo.exploration_per_round_usd"
+        ],
+        "campaign_cap_formula": "promo.exploration_per_round_usd × promo.promo_pilot_ratio",
+        "real_spend": "0（模拟生成器与模拟平台：零外部计费，成本仍如实入账并逐项对账）"
+      },
+      "notes": "全链路由确定性模拟生成器产出，样片包与清单强制标注「模拟生成」；不得对外发布"
+    },
+    {
+      "path_id": "B",
+      "name": "B 路径：真实视频/音频生成（凭证到位后切换）",
+      "status": "not_delivered",
+      "credential_envs": [
+        "CINEFLOW_VIDEO_API_KEY",
+        "CINEFLOW_VIDEO_API_BASE",
+        "CINEFLOW_AUDIO_API_KEY",
+        "CINEFLOW_AUDIO_API_BASE"
+      ],
+      "adapters": [
+        "agents.visual.platform.http_real.HttpRealVideoGen",
+        "agents.storyboard.platform.http_real.HttpRealStoryboardRender",
+        "agents.sound.platform.http_real.HttpRealTTSGen",
+        "agents.sound.platform.http_real.HttpRealSFXGen",
+        "agents.sound.platform.http_real.HttpRealMusicGen"
+      ],
+      "switch_commands": [
+        "CINEFLOW_VIDEO_API_KEY=... CINEFLOW_AUDIO_API_KEY=... uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id real-run"
+      ],
+      "budget_policy": {
+        "unit": "USD",
+        "round_budget_keys": [
+          "visual.exploration_per_round_usd",
+          "sound.exploration_per_round_usd"
+        ],
+        "campaign_cap_formula": "promo.exploration_per_round_usd × promo.promo_pilot_ratio",
+        "real_spend": "按各平台价目表实扣；编排层账目（cost.json）与各 Agent 落盘账目逐项对账，零差异才装配样片包"
+      },
+      "notes": "真实凭证仅经环境变量注入（不落盘）；切换只在装配层替换适配器实现类，代码路径与形态配置不变"
+    },
+    {
+      "path_id": "C",
+      "name": "C 路径：真实投放（平台凭证到位后切换）",
+      "status": "not_delivered",
+      "credential_envs": [
+        "CINEFLOW_PROMO_API_KEY",
+        "CINEFLOW_PROMO_API_BASE",
+        "CINEFLOW_PROMO_ACCOUNT_ID"
+      ],
+      "adapters": [
+        "agents.promo.platform.http_real.HttpRealPlatform"
+      ],
+      "switch_commands": [
+        "uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id live-run",
+        "uv run python ops/ingest_metrics.py --round-id live-run --dsn $CINEFLOW_PG_DSN"
+      ],
+      "budget_policy": {
+        "unit": "USD",
+        "round_budget_keys": [
+          "promo.exploration_per_round_usd"
+        ],
+        "campaign_cap_formula": "promo.exploration_per_round_usd × promo.promo_pilot_ratio",
+        "real_spend": "真实投放扣费由平台回执对账；单轮申请额超门禁即拒投（不静默超投）"
+      },
+      "notes": "真实投放属运营动作：需人工确认账户与预算，且不得由自动进化路径触发"
+    }
+  ],
+  "honesty_boundary": [
+    "A 路径产出为「模拟生成」，不构成对外发布素材",
+    "不使用版权素材（夹具与生成内容均为合成）",
+    "B/C 的切换属于装配层替换：形态差异仍只在 configs/*.yaml，代码零形态分支"
+  ]
+}

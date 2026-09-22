@@ -64,7 +64,7 @@ class PilotRun:
     run_id: str
     form: str
     record: RunRecord
-    package_dir: Path
+    package_dir: Path | None
     precheck_report: Mapping[str, Any]
 
     def to_dict(self) -> dict:
@@ -72,7 +72,7 @@ class PilotRun:
             "run_id": self.run_id,
             "form": self.form,
             "status": self.record.status.value,
-            "package_dir": str(self.package_dir),
+            "package_dir": None if self.package_dir is None else str(self.package_dir),
             "stages": [state.to_dict() for state in self.record.stages],
         }
 
@@ -233,10 +233,14 @@ def run_pilot(
         store=store,
         clock=clock,
     )
-    package_dir = package_module.assemble_from_run(
-        record=record,
-        runtime=runtime,
-        package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME,
+    package_dir = (
+        package_module.assemble_from_run(
+            record=record,
+            runtime=runtime,
+            package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME,
+        )
+        if record.status is RunStatus.DONE
+        else None  # 未完成不装配（不产半包）；失败原因在运行记录里如实可查
     )
     return PilotRun(
         run_id=run_id,
@@ -287,7 +291,7 @@ def resume_pilot(
             package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME,
         )
         if record.status is RunStatus.DONE
-        else Path(data_dir) / DEFAULT_PACKAGE_DIRNAME / run_id
+        else None  # 未完成不装配（不产半包）
     )
     return PilotRun(
         run_id=run_id,

@@ -137,6 +137,31 @@ class Test静态断言:
             assert banned not in source, banned
 
 
+def test_agents_不反向依赖_ops():
+    """分层守卫（宪章原则五单向依赖）：`agents/` 不得 import `ops`（ops 在最上层）。
+
+    回流管道等库函数必须在业务侧（`agents/promo/ingest.py`），`ops/` 只作薄封装。
+    """
+    import ast
+
+    root = Path(stages_module.__file__).resolve().parents[1]  # agents/
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            if any(name == "ops" or name.startswith("ops.") for name in names):
+                offenders.append(str(path.relative_to(root.parent)))
+    assert not offenders, f"agents/ 不得 import ops：{offenders}"
+
+
 def test_候选结果类型可序列化():
     outcome = StageOutcome(products=(), cost_usd=0.0)
     assert outcome.detail == {}

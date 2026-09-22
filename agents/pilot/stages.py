@@ -643,8 +643,8 @@ def _promo_entry(stage_input: StageInput) -> StageOutcome:
         sleep=lambda _: None,
     )
     # 宣发是**两段式**落树（既有语义）：投递成功节点待指标回流后一次性冻结落盘——
-    # 复用既有的回流入口（`ops/ingest_metrics.ingest_round`），不在编排层另造回流逻辑。
-    from ops.ingest_metrics import ingest_round
+    # 复用既有的回流入口（业务侧 `agents/promo/ingest.py`），不在编排层另造回流逻辑。
+    from agents.promo.ingest import ingest_round
 
     ingest_report = ingest_round(round_id, runtime.store, adapter, runtime.engine, config)
     outcome = _round_candidates(runtime, result.tree_id, expected=len(briefs))
