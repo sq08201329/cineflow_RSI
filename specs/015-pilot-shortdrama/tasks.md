@@ -87,7 +87,7 @@
 - [x] T1518 [US3] 实现 agents/pilot/stages.py（六阶段定义 + 各 Agent 既有 loop 入口接线）
 - [x] T1520 [US3] 实现 agents/pilot/pilot.py（预检 → build_dag → executor.run → 样片包；run/resume 两入口；依赖 T1504~T1510、T1515、T1518）
 - [x] T1522 [US3] 实现 agents/pilot/package.py（manifest + reel + products + cost + state 五件套装配）
-- [ ] T1523 [US3] 实现 ops/pilot.py CLI（run / resume / inspect）+ docs 升级路径文档（B/C 凭证清单、预算口径、切换方式）+ 结构化清单（凭证环境变量名/适配器类/切换命令，字段可机检）
+- [x] T1523 [US3] 实现 ops/pilot.py CLI（run / resume / inspect）+ docs 升级路径文档（B/C 凭证清单、预算口径、切换方式）+ 结构化清单（凭证环境变量名/适配器类/切换命令，字段可机检）
 
 **检查点**: 一次运行产出可复现样片包 + 账目对账——里程碑验收线成立
 
@@ -95,10 +95,10 @@
 
 ## 阶段 6：打磨与横切关注点
 
-- [ ] T1524 契约聚合补全 tests/contract/test_pilot_contracts.py 的 orchestration 段（C1~C4）与 pilot-run 段（C10~C13），与 handoffs 段合成 C1~C13 全量；**并补两条宪章级机检**：①**FR-011 落树路径守卫**——静态断言 `core/orchestration/` 与 `agents/pilot/` 不直接调用树写入 API（落树只经各 Agent 既有 loop 入口）+ 运行期树写入计数 == 各 Agent 入口写入计数（审计断言）；②**SC-005 依赖清单机检**——扫描 `pyproject.toml`/`uv.lock` 断言无 Airflow 类外部编排框架依赖
-- [ ] T1525 端到端演示 ops/demo_pilot.py（quickstart 六步：配置完整性 → 短剧运行出样片包 → 可复现对照 → movie 对照（零代码切换）→ 断点续跑 → 拒绝语义；退出码 0，确定性夹具 + 临时目录）
-- [ ] T1526 运行 quickstart.md 全部验证命令并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
-- [ ] T1527 [P] 更新 README.md（试水运行用法 + **"模拟生成"边界说明**）与 docs/二期立项书.md 里程碑表（周 11~12 试水作品 A 路径已交付注明；真实作品留运营）
+- [x] T1524 契约聚合补全 tests/contract/test_pilot_contracts.py 的 orchestration 段（C1~C4）与 pilot-run 段（C10~C13），与 handoffs 段合成 C1~C13 全量；**并补两条宪章级机检**：①**FR-011 落树路径守卫**——静态断言 `core/orchestration/` 与 `agents/pilot/` 不直接调用树写入 API（落树只经各 Agent 既有 loop 入口）+ 运行期树写入计数 == 各 Agent 入口写入计数（审计断言）；②**SC-005 依赖清单机检**——扫描 `pyproject.toml`/`uv.lock` 断言无 Airflow 类外部编排框架依赖
+- [x] T1525 端到端演示 ops/demo_pilot.py（quickstart 六步：配置完整性 → 短剧运行出样片包 → 可复现对照 → movie 对照（零代码切换）→ 断点续跑 → 拒绝语义；退出码 0，确定性夹具 + 临时目录）
+- [x] T1526 运行 quickstart.md 全部验证命令并记录（验证记录回填；覆盖率 ≥85% 复核；命令与 ci.yml 逐字一致）
+- [x] T1527 [P] 更新 README.md（试水运行用法 + **"模拟生成"边界说明**）与 docs/二期立项书.md 里程碑表（周 11~12 试水作品 A 路径已交付注明；真实作品留运营）
 
 ---
 
