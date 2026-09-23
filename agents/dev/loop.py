@@ -13,7 +13,9 @@
 
 **回放纪律**（C13）：`slate_match_key` 只含**策略可复现的结构键**（立项约束摘要 + 组合区间 +
 策略版本 + 模型 + 温度 + 输出预算），**不含生成产物摘要**——产物一次性且不可复现，入键即
-命中率归零（007 教训）。
+命中率归零（007 教训）。策略计划为**单一阶段**（`SLATE_STAGE`）形态：回放对比以
+`single_stage=SLATE_STAGE` 声明唯一阶段，计划整体即该阶段的结构标记（`core/degraded/compare.py`）
+——扁平形态（引导树策略）因此同样可回放（见 `slate_plan`）。
 
 **评估器装配**：`evaluators` 为注入点——`None` 时装配真实四评估器（`build_dev_evaluators`，
 两门禁 + 两模拟数据源驱动的确定性代理）；显式注入（回放重算 / 测试桩）按 `rule.*` 前缀
@@ -56,6 +58,9 @@ PLACEHOLDER_HASH = "00" * 32
 # 执行前校验用占位论证要点（仅试构造工件，不落库、不调网关）
 PLACEHOLDER_RATIONALE = "（待生成：仅供执行前校验）"
 
+# 单一阶段名（开发 Agent 无阶段划分：唯一交付物 = 立项组合；回放对比按该阶段取结构键）
+SLATE_STAGE = "slate"
+
 # 门禁语义前缀（与 dev 合成口径一致：`rule.*` 且判 0 即短路）
 _GATE_PREFIX = "rule."
 _ENTRY_KEYS = ("direction_id", "genre", "constraints", "characters")
@@ -70,9 +75,12 @@ class DevLoopError(Exception):
 class DevPolicy(Protocol):
     """题材方向探索策略协议（降级模式：策略由人工编写，不自动进化）。
 
-    `plan(inputs, config)` 产**立项组合计划** `{entries, production_marks}`：条目给方向标识与
-    可移交下游的题材/约束/角色设定要点（策略只定结构，论证要点正文由网关生成）；
+    `plan(inputs, config)` 产**单一阶段计划** `{slate: {entries, production_marks}}`：条目给
+    方向标识与可移交下游的题材/约束/角色设定要点（策略只定结构，论证要点正文由网关生成）；
     `production_marks` 给"本轮进入生产"的指向（数量与指向合法性由组合门禁判定，不由代码兜底）。
+    阶段名 = 唯一交付物（`SLATE_STAGE`）：回放对比以该阶段名声明单一阶段（计划整体即阶段
+    标记）；扁平形态（`{entries, production_marks}`，引导树策略）同被接受且同样可回放
+    （见 `slate_plan`）。
     """
 
     policy_version: str
@@ -203,14 +211,30 @@ def _round_params(*, policy_version: str, inputs: dict, config: DevConfig, marks
     }
 
 
+def slate_plan(plan) -> dict | None:
+    """取**单一阶段**计划（`{SLATE_STAGE: {entries, production_marks}}`）。
+
+    开发 Agent 无阶段划分（澄清第 8 条：单一产出），但仍以**一个阶段**承载结构：回放对比
+    以 `single_stage=SLATE_STAGE` 声明唯一阶段（`core/degraded/compare.py`），计划整体即该
+    阶段的结构标记。**扁平形态**（`{entries, production_marks}`，引导树策略
+    `policies/history/dev/34525518074d.py`，历史不可改写）为兼容形态：产出与回放**都可用**
+    （声明单一阶段后扁平计划照常回放），差异只在计划形状。
+    """
+    if not isinstance(plan, dict):
+        return None
+    stage_plan = plan.get(SLATE_STAGE)
+    return stage_plan if isinstance(stage_plan, dict) else plan
+
+
 def _slate_plan(plan, config: DevConfig) -> tuple[list[dict] | None, tuple[str, ...], str]:
     """计划执行前校验：缺条目/缺方向标识/形状非法一律拒绝（0 网关调用 0 成本）。
 
     校验口径 = 用占位论证要点试构造同 schema 工件（执行前校验即门禁的提前计算，008/009
     同款纪律）；真工件随后用网关正文构造，构造失败按失败处理（费用已发生，照计）。
     方向唯一性、条目数区间、标记区间与指向**不在此判定**——它们是门禁的判定对象
-    （越界不由代码兜底）。
+    （越界不由代码兜底）。计划形态见 `slate_plan`（单一阶段形态为规范形态）。
     """
+    plan = slate_plan(plan)
     if not isinstance(plan, dict):
         return None, (), "策略计划必须为 mapping（{entries, production_marks}）（执行前拒绝）"
     raw_entries = plan.get("entries")

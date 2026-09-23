@@ -9,6 +9,12 @@
   UNKNOWN 覆盖说明；
 - **最小池门槛（前置）**：可比对树数 < 门槛 ⇒ **拒绝产出报告**（错误含实测树数与门槛值）。
 
+**计划形态（`single_stage`）**：计划默认**按阶段组织**（`{阶段: 结构标记}`，009 口径，未声明
+时行为不变）。单一产出（无阶段划分）的 Agent 在调用处显式声明唯一阶段名，回放即按"**计划
+整体 = 该阶段标记**"取标记——扁平计划同样可回放。**未声明且计划与阶段序列完全对不上即报错**
+（不静默产出全 UNKNOWN 报告）：全 UNKNOWN 报告既可能来自"策略结构无历史覆盖"（诚实边界），
+也可能来自"计划形态接线错"（缺陷），二者必须可区分。
+
 诚实边界（原则六）：未命中的阶段不给分（UNKNOWN = 零信息）；整树无命中 → 该树记 0 分并
 提示扩大线上记录；新版本全劣 → 报告如实呈现并建议保留现版本；**未过无偏性验收不得产出
 对比报告**；报告只增不改，采纳/拒绝的留痕在 `adoption.py`。
@@ -258,6 +264,47 @@ def _breakdown_of(store, node_id: str) -> dict[str, float]:
     return {base: sum(scores) / len(scores) for base, scores in grouped.items()}
 
 
+def _stage_markers(plans: dict, stage: str, single_stage: str | None) -> dict | None:
+    """取某阶段的结构标记（`None` = 该阶段无覆盖）。
+
+    调用方声明了**单一阶段**（`single_stage`，单一产出、无阶段划分的 Agent）时，策略的
+    计划**整体**即该阶段的标记——扁平计划（`{entries, …}`）因此同样可回放；计划若本就把
+    该阶段包在键内（`{<阶段>: {…}}`）则取键内值。未声明时行为与既往一致：按阶段键取，
+    取不到即无覆盖（不编造）。
+    """
+    if single_stage is None:
+        return plans.get(stage)
+    stage_plan = plans.get(single_stage)
+    return stage_plan if isinstance(stage_plan, dict) else plans
+
+
+def _require_declared_stage(stages: Sequence[str], single_stage: str) -> None:
+    """声明的单一阶段必须在注入的阶段序列内（接线自检：错名即报错，不静默降级）。"""
+    if single_stage not in stages:
+        raise CompareError(
+            f"声明的单一阶段（single_stage={single_stage!r}）不在阶段序列 {list(stages)} 内"
+            "（单一产出 Agent 的单一阶段名必须与调用方注入的阶段序列一致）"
+        )
+
+
+def _require_stage_coverage(plans: dict, stages: Sequence[str], single_stage: str | None) -> None:
+    """计划形态前置校验：**不得静默产出全 UNKNOWN 报告**（单一产出须显式声明）。
+
+    既往行为下，"计划既非按阶段组织、调用方也未声明单一阶段"会退化为每个阶段都未命中——
+    报告落盘且全是 UNKNOWN，读者无法区分"策略结构无历史覆盖"与"计划形态对不上"（前者是
+    诚实边界，后者是接线错误）。故此处**显式失败**：形态对不上即报错，不产出报告。
+    """
+    if single_stage is not None:
+        _require_declared_stage(stages, single_stage)
+        return
+    if not any(isinstance(plans.get(stage), dict) for stage in stages):
+        raise CompareError(
+            f"策略计划与阶段序列对不上：阶段 {list(stages)} 都没有拿到结构标记"
+            f"（计划键 {sorted(plans)}）——回放对比不得据此静默产出全 UNKNOWN 报告；"
+            "单一产出（无阶段划分）的调用方须在调用处显式声明 single_stage=<唯一阶段名>"
+        )
+
+
 def replay_policy(
     source: str,
     trees,
@@ -267,11 +314,15 @@ def replay_policy(
     store,
     stages: Sequence[str],
     match_key,
+    single_stage: str | None = None,
 ) -> _PolicyReplay:
     """回放一个策略：按结构键在每棵树的历史节点上 probe（零生成、零 LLM）。
 
     `stages` 与 `match_key` 由调用方注入（业务常量与结构键构造）；策略执行受超时约束、
     且只接收 `(inputs, cfg)` 两个纯声明（两项义务见模块 docstring）。
+    `single_stage`：**单一产出（无阶段划分）的 Agent 显式声明其唯一阶段名**——此时策略计划
+    整体即该阶段的结构标记（扁平计划亦可回放）；未声明时按阶段键取标记，且计划与阶段序列
+    完全对不上即报错（不静默产出全 UNKNOWN 报告）。
     """
     # 交付面 = 策略执行的实际实参（断言与调用共用同一元组：后续加参数即在同一处失败）
     delivered = (inputs, cfg)
@@ -282,6 +333,7 @@ def replay_policy(
         plans = policy.plan(*delivered)
     if not isinstance(plans, dict):
         raise CompareError(f"策略 plan 必须返回分阶段计划 dict，实际为 {plans!r}")
+    _require_stage_coverage(plans, stages, single_stage)
 
     per_tree: list[dict] = []
     grouped: dict[str, list[float]] = {}
@@ -297,7 +349,7 @@ def replay_policy(
         hit_stages: list[str] = []
         miss_stages: list[str] = []
         for stage in stages:
-            markers = plans.get(stage)
+            markers = _stage_markers(plans, stage, single_stage)
             if not isinstance(markers, dict):
                 miss_stages.append(stage)  # 策略未产出该阶段计划 → 无覆盖（不编造）
                 continue
@@ -357,16 +409,22 @@ def compare_versions(
     comparison_dir: str | Path,
     unbiasedness=None,
     history_root: str | Path = DEFAULT_POLICY_HISTORY_ROOT,
+    single_stage: str | None = None,
 ) -> ReplayComparison:
     """回放对比新版本 vs 部署版本。
 
     unbiasedness：**必经无偏性验收结论**（未附结论或未达标一律拒绝产出对比报告）；
     min_comparable_trees：最小可比对树数门槛（可比对树数 < 门槛即拒绝产出报告）；
     match_key / stages：注入的结构键构造与阶段序列（业务件提供）；
+    single_stage：**单一产出（无阶段划分）的 Agent 显式声明其唯一阶段名**（须 ∈ `stages`）——
+    回放按"计划整体即该阶段标记"取结构标记，扁平计划因此可回放；未声明时按阶段键取标记，
+    且计划与阶段序列完全对不上即报错（不得静默产出全 UNKNOWN 报告）；
     store：树存储（逐树单池与分项读取）；inputs：产出输入（策略 plan 的输入）。
     """
     if new_version == deployed_version:
         raise ValueError(f"新版本与部署版本相同（{new_version}）：无需对比")
+    if single_stage is not None:
+        _require_declared_stage(stages, single_stage)
     if unbiasedness is None or getattr(unbiasedness, "verdict", None) != "pass":
         tau = None if unbiasedness is None else getattr(unbiasedness, "tau", None)
         raise CompareError(
@@ -387,7 +445,14 @@ def compare_versions(
         raise CompareError(f"策略版本不可用：{exc}") from exc
 
     new_replay = replay_policy(
-        new_source, trees, cfg=cfg, inputs=inputs, store=store, stages=stages, match_key=match_key
+        new_source,
+        trees,
+        cfg=cfg,
+        inputs=inputs,
+        store=store,
+        stages=stages,
+        match_key=match_key,
+        single_stage=single_stage,
     )
     deployed_replay = replay_policy(
         deployed_source,
@@ -397,6 +462,7 @@ def compare_versions(
         store=store,
         stages=stages,
         match_key=match_key,
+        single_stage=single_stage,
     )
 
     per_tree = [

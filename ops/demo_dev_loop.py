@@ -14,12 +14,22 @@
      **两代理未跑也未落分量键**（gate 判 0 ⇒ 不跑后续分量，阶段 3 的桩组合无法断言这一点）
      且诊断点名违规项；合规组合重跑逐位一致且命中网关缓存（零边际成本复现，原则三）
 
-其余四步属 US3，按序追加 `_step_3.._step_6` 即可（报告结构已按步分列，`steps` 键名带序号）：
+其余四步属 US3（`_step_3.._step_6`，`steps` 键名带序号）：
 
-  ③ 无偏性凭证与回放对比（含最小池门槛拒绝分支）④ 采纳/拒绝与部署指针留痕
-  ⑤ 禁止自动进化拒绝语义（三重机检）⑥ 升级判据材料（来源缺失逐项标注）
+  ③ **无偏性凭证与回放对比**：先提交两版人工策略（单一阶段形态）并跑够轮次 → 冷启动期池子
+     不足 → **拒绝产出对比报告**（错误含实测树数与门槛）→ 无偏性验收（回放 vs 真实重跑
+     τ ≥ 0.95）→ 回放对比报告（逐树/分项/pareto_auc/UNKNOWN）
+  ④ **采纳门禁**：未采纳指针逐字节不变；采纳后部署指针更新 + AdoptionRecord 留痕
+  ⑤ **禁止自动进化拒绝语义**（三重机检）：`run_dream_round(agent_id="dev")` 显式拒绝
+     （0 候选 0 计费 0 落盘）+ 名单实值 + 策略 meta 审计位 + 部署门禁禁止名单判定
+  ⑥ **升级判据材料**：全量阈值快照 + 逐项"实测值 / 无法评价（来源缺失）" + 系统结论非达标
+     + 继续观察条件（待补齐阈值项清单）
 
-断言：两步全 ok=true，退出码 0；生产切换仅装配层替换（PG/S3/真实 LLM 网关），代码路径不变
+演示档形态（同 009 演示纪律：**只改形态参数取值、不改口径**）：页数窗口类参数换成
+`dev.signals.fixtures` 逐题材系数——模拟数据源按题材给出不同系数，逐题材得分谱系才分散
+（无偏性 τ 与"谁更好"才有判别力）；两版演示策略只探索不同题材方向。
+
+断言：六步全 ok=true，退出码 0；生产切换仅装配层替换（PG/S3/真实 LLM 网关），代码路径不变
 （同 004/006/007/008/009 演示纪律）。
 """
 
@@ -48,6 +58,14 @@ from core.tree.store import create_tree_store  # noqa: E402
 DEV_YAML = REPO_ROOT / "configs" / "movie.yaml"
 HISTORY_ROOT = REPO_ROOT / "policies" / "history"
 INPUTS = {"genre_bounds": ["悬疑", "都市"], "audience": "都市女性"}
+
+# 演示档题材档位：模拟数据源按题材夹具给出不同系数（低/高两档）——逐档得分谱系才分散。
+# 低档题材刻意取仓库首版策略方向池内的题材（部署侧 = 该策略，两版得分可分出高下）
+_LOW_GENRES = ("医疗悬疑", "都市犯罪", "科幻悬疑")
+_HIGH_GENRES = ("现实职场", "青春成长", "家庭剧情")
+_FIXTURES = {genre: {"box_office_factor": 0.3, "buzz_factor": 0.3} for genre in _LOW_GENRES} | {
+    genre: {"box_office_factor": 1.4, "buzz_factor": 0.9} for genre in _HIGH_GENRES
+}
 
 # 违规策略源码（演示档）：条目数越界（2 条 < 区间下界 3）+ 方向标识重复 +
 # "本轮进入生产"标记越界且悬空（指向不存在方向）——三类违规分别落在两门禁的判定面。
@@ -84,8 +102,30 @@ def _policy_of(source: str, version: str):
     return policy
 
 
-def _bootstrap_policy():
-    """仓库引导树人工策略：版本取 `policies/history/dev/` 首个已版本化版本（人工提交产物）。"""
+class _CountingGenerator:
+    """候选生成计数桩：命中拒绝名单时必须恒 0（宪章原则六审计）。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, champion_source, digest, m):
+        self.calls += 1
+        return []
+
+
+def _dream_config():
+    """做梦层形态配置（策略通道要用：谱系 meta 的 reward 占位 λ + 禁自动进化名单审计位）。"""
+    from dreaming.config import DreamConfig
+
+    return DreamConfig.from_yaml(DEV_YAML)
+
+
+def _bootstrap_source() -> tuple[str, str]:
+    """仓库引导树人工策略（源码, 版本）：版本取 `policies/history/dev/` 首个版本化版本。
+
+    该策略的**计划是扁平形态**（`{entries, production_marks}`，历史不可改写）——步③的回放
+    对比即以此验证"扁平计划经单一阶段声明同样可回放"（不再退化为全 UNKNOWN 报告）。
+    """
     import blake3
 
     versions = list_policy_versions(history_root=HISTORY_ROOT, agent_id="dev")
@@ -98,6 +138,12 @@ def _bootstrap_policy():
     source = load_policy_source(version, history_root=HISTORY_ROOT, agent_id="dev")
     digest = blake3.blake3(source.encode()).hexdigest()[:12]
     assert digest == version, f"策略版本 {version} 与源码内容不符（哈希 {digest}）"
+    return source, version
+
+
+def _bootstrap_policy():
+    """仓库引导树人工策略对象（版本绑定到对象：节点落盘口径）。"""
+    source, version = _bootstrap_source()
     return _policy_of(source, version)
 
 
@@ -289,14 +335,456 @@ def _step_2_结构组合门禁短路与重算(
     report["steps"]["2_结构组合门禁短路与重算"] = step2
 
 
+def _demo_policy_source(genres) -> str:
+    """演示档人工策略源码（单一阶段形态）：逐题材方向取一条，标记取首条。
+
+    计划形态 = 单一阶段 `{slate: {entries, production_marks}}`（回放对比按阶段取结构键）；
+    两版演示策略只探索不同**题材档位**（低/高系数），其余结构一致。
+    """
+    entries = [
+        {
+            "direction_id": f"dir-{genre}-{index}",
+            "genre": genre,
+            "constraints": ["单场景为主", f"档位 {index}"],
+            "characters": [f"角色甲{index}", f"角色乙{index}"],
+            "rationale_seed": f"{genre}方向的立项论证草稿（演示档，人写的判断力）。",
+        }
+        for index, genre in enumerate(genres)
+    ]
+    plan = {
+        "slate": {
+            "entries": entries,
+            "production_marks": [entries[0]["direction_id"]],
+        }
+    }
+    return (
+        "class Policy:\n"
+        '    """演示档人工题材方向探索策略（单一阶段计划内联）。"""\n'
+        f"    PLAN = {plan!r}\n\n"
+        "    def plan(self, inputs, config):\n"
+        "        return self.PLAN\n"
+    )
+
+
+def _demo_config_copy(root: Path, *, deployed_version: str) -> tuple[Path, DevConfig]:
+    """movie.yaml 副本：题材夹具（模拟源逐档系数）+ 部署指针 `deployment.dev`。
+
+    演示档只改**形态参数取值**（`dev.signals.fixtures` 夹具档），不改任何口径：
+    模拟数据源按题材给出不同系数，逐档得分谱系才分散（τ 与"谁更好"才有判别力）。
+    """
+    import copy
+
+    import yaml
+
+    raw = copy.deepcopy(yaml.safe_load(DEV_YAML.read_text(encoding="utf-8")))
+    raw["dev"]["signals"]["fixtures"] = {"genres": copy.deepcopy(_FIXTURES)}
+    raw["deployment"] = {"dev": {"current_policy_version": deployed_version}}
+    path = root / "movie.yaml"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path, DevConfig.from_dict(raw)
+
+
+def _pool_of(store):
+    """回放池装配：已冻结树入池，未冻结树跳过并计数（不静默丢弃）。"""
+    from core.replay.pool import PoolError, SimulatorPool
+
+    pool = SimulatorPool(store)
+    skipped = 0
+    for tree in store.trees_by(agent_id="dev"):
+        try:
+            pool.add_tree(tree)
+        except PoolError:
+            skipped += 1
+    return pool, skipped
+
+
+def _rerun_score(node, artifacts, config, assembly):
+    """真实重跑：读落盘工件 → 真实四评估器重算 → 合成定点（确定性、零 LLM）。"""
+    from agents.dev.evaluators.composite import evaluate_dev
+    from core.evaluators.base import ArtifactRef
+
+    slate = TopicSlate.from_dict(json.loads(artifacts.get(node.artifact_hash)))
+    reference = ArtifactRef(artifact_hash=node.artifact_hash, metadata={"agent_id": "dev"})
+    context = {"artifact": slate, "inputs": INPUTS, "config": config}
+    _, score, _ = evaluate_dev(assembly, reference, context, config.evaluator_weights)
+    return score
+
+
+def _step_3_无偏性凭证与回放对比(root, report, dream_config, gateway) -> None:
+    """步③：人工改策略 → 静态检查 → 冷启动拒绝 → 无偏性凭证 → 回放对比报告。"""
+    from agents.dev.evaluators import build_dev_evaluators
+    from agents.dev.policy_versions import submit_policy
+    from agents.dev.sandbox_compare import (
+        CompareError,
+        UnbiasednessAttestation,
+        compare_versions,
+        replay_policy,
+        signal_sources_of,
+    )
+    from core.replay.unbiasedness import verify_unbiasedness
+
+    history_root = root / "policies"
+    # 部署侧 = 仓库真实人工策略首版（**扁平计划**，历史不可改写）；候选侧 = 演示档改进版
+    deployed_source, _bootstrap_version = _bootstrap_source()
+    candidate_source = _demo_policy_source(_HIGH_GENRES)
+    deployed = submit_policy(deployed_source, "sunqi", dream_config, history_root=history_root)
+    candidate = submit_policy(
+        candidate_source,
+        "sunqi",
+        dream_config,
+        parent_version=deployed.version,  # 谱系：改进来源指向现部署版本
+        history_root=history_root,
+    )
+    sources = {deployed.version: deployed_source, candidate.version: candidate_source}
+    policies = {
+        deployed.version: _policy_of(deployed_source, deployed.version),
+        candidate.version: _policy_of(candidate_source, candidate.version),
+    }
+    # 演示档形态（题材夹具档位）+ 部署指针 = 现部署版本（采纳门禁的基线一致性检查要用）
+    config_path, config = _demo_config_copy(root, deployed_version=deployed.version)
+
+    # 回放池用独立库：冷启动（池内只积累被对比版本产出的树）才检验得出最小池门槛
+    pool_engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(pool_engine)
+    create_jobs_schema(pool_engine)
+    pool_store = create_tree_store(pool_engine)
+    artifacts = LocalArtifactStore(root / "pool-artifacts")
+    generation_calls_before = gateway.call_count
+
+    def _produce(round_id: str, version: str):
+        return run_dev_round(
+            round_id=round_id,
+            policy=policies[version],
+            store=pool_store,
+            artifacts=artifacts,
+            engine=pool_engine,
+            gateway=gateway,
+            config=config,
+            inputs=INPUTS,
+            evaluators=None,  # 真实四评估器装配
+        )
+
+    for index, version in enumerate((deployed.version, candidate.version), start=1):
+        _produce(f"demo-pool-r{index}", version)
+    pool, skipped = _pool_of(pool_store)
+    generation_calls = gateway.call_count - generation_calls_before
+    cold_start_trees = len(pool.trees)
+
+    assembly = build_dev_evaluators(config)
+
+    def _attestation(current_pool, label: str):
+        """无偏性验收凭证：回放（池 probe 揭示的历史得分）vs 真实重跑（工件重算）。"""
+        replay_scores: list[float] = []
+        real_scores: list[float] = []
+        hits: list[str] = []
+        for tree in current_pool.trees:
+            replay = replay_policy(
+                sources[tree.policy_version],
+                [tree],
+                cfg=config,
+                inputs=INPUTS,
+                store=pool_store,
+            )
+            row = replay.per_tree[0]
+            hits.append(row["hits"][0] if row["hits"] else "")
+            replay_scores.append(row["score"])
+            node = _node_of(pool_store, tree.tree_id)
+            real_scores.append(_rerun_score(node, artifacts, config, assembly))
+        report_ = verify_unbiasedness(real_scores, replay_scores, threshold=0.95)
+        path = root / label
+        path.write_text(
+            json.dumps(report_.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return report_, path, hits, replay_scores == real_scores
+
+    # 冷启动：可比对树数 < 形态下限 → 拒绝产出报告（错误含实测树数与门槛值）；
+    # 无偏性凭证先行（回放口径可信），使本次拒绝严格来自最小池门槛而非凭证门禁
+    _, cold_path, _, _ = _attestation(pool, "unbiasedness-cold-start.json")
+    refusal = ""
+    try:
+        compare_versions(
+            candidate.version,
+            deployed.version,
+            pool,
+            config,
+            store=pool_store,
+            inputs=INPUTS,
+            unbiasedness=UnbiasednessAttestation.load(cold_path),
+            history_root=history_root,
+            comparison_dir=root / "comparisons",
+        )
+        refusal = "未拒绝（契约破坏）"
+    except CompareError as exc:
+        refusal = str(exc)
+
+    # 积累记录到门槛之上（"门槛按形态配置，记录积累够了才出报告"）
+    for index in range(3, 5):
+        _produce(f"demo-pool-r{index}", deployed.version if index % 2 else candidate.version)
+    pool, skipped = _pool_of(pool_store)
+
+    # 无偏性验收（积累后的全量记录）：回放（池 probe 揭示的历史得分）vs 真实重跑（工件重算）
+    unbiased, attestation_path, hits, replay_covers_real = _attestation(pool, "unbiasedness.json")
+    comparison = compare_versions(
+        candidate.version,
+        deployed.version,
+        pool,
+        config,
+        store=pool_store,
+        inputs=INPUTS,
+        unbiasedness=UnbiasednessAttestation.load(attestation_path),
+        history_root=history_root,
+        comparison_dir=root / "comparisons",
+    )
+    deployed_hit_trees = [
+        row["tree_id"] for row in comparison.per_tree if row["deployed_hits"] == ["slate"]
+    ]
+    step3 = {
+        "policy_versions": {"deployed": deployed.version, "candidate": candidate.version},
+        "deployed_is_repo_bootstrap": deployed.version == _bootstrap_version,
+        "flat_policy_hits": len(deployed_hit_trees),  # 扁平首版策略命中的轮次树
+        "parent_version": candidate.parent_version,
+        "min_comparable_trees": config.min_comparable_trees,
+        "cold_start_trees": cold_start_trees,
+        "refused_on_cold_start": refusal,
+        "comparable_trees": len(comparison.per_tree),
+        "skipped_unfrozen_trees": skipped,
+        "tau": unbiased.tau,
+        "attestation": str(attestation_path.name),
+        "replay_hits": sorted(set(hits)),
+        "replay_covers_real": replay_covers_real,
+        "generation_calls": generation_calls,
+        "verdict": comparison.verdict,
+        "mean_score": {key: round(value, 6) for key, value in comparison.mean_score.items()},
+        "pareto_auc": {key: round(value, 6) for key, value in comparison.pareto_auc.items()},
+        "per_evaluator": [item["evaluator_id"] for item in comparison.per_evaluator],
+        "unknown_trees": len(comparison.unknown_trees),
+        "comparison_id": comparison.comparison_id,
+        "signal_sources_annotated": all(
+            source["simulated"] is True and "非真实商业数据" in source["note"]
+            for source in signal_sources_of(config)
+        ),
+        "note": comparison.note,
+    }
+    step3["ok"] = (
+        cold_start_trees < config.min_comparable_trees  # 冷启动确实低于门槛
+        and f"实测 {cold_start_trees}" in refusal  # 错误含实测树数
+        and f"门槛 {config.min_comparable_trees}" in refusal  # 错误含门槛值
+        and "可比对树数不足" in refusal
+        and len(pool.trees) >= config.min_comparable_trees
+        and len(comparison.per_tree) == len(pool.trees)
+        and unbiased.verdict == "pass"
+        and unbiased.tau is not None
+        and unbiased.tau >= 0.95
+        and step3["replay_covers_real"]  # 回放得分即历史得分（不重算、不生成）
+        and step3["replay_hits"] == ["slate"]
+        and comparison.verdict == "new_better"
+        and len(step3["per_evaluator"]) == 4
+        # 每棵树只承载**一个版本**的节点（一轮一个版本）→ 另一侧必然 UNKNOWN：
+        # 报告如实呈现覆盖说明（不编造、不放宽匹配），与 009 演示同口径
+        and len(comparison.unknown_trees) == len(pool.trees)
+        and "UNKNOWN" in comparison.note
+        and step3["signal_sources_annotated"]  # 报告面同带模拟源标注（SC-009）
+        and step3["deployed_is_repo_bootstrap"]  # 部署侧 = 仓库首版策略（扁平计划）
+        and step3["flat_policy_hits"] == 2  # 扁平计划在自身两轮树上均命中（旧行为下为 UNKNOWN）
+    )
+    report["steps"]["3_无偏性凭证与回放对比"] = step3
+    # 步④~⑥ 复用本步的池与配置（同一闭环的证据面）
+    report["_context"] = {
+        "comparison": comparison,
+        "pool_store": pool_store,
+        "pool": pool,
+        "config_path": config_path,
+        "config": config,
+        "history_root": history_root,
+    }
+
+
+def _step_4_采纳门禁与指针留痕(report) -> None:
+    """步④：未采纳指针逐字节不变 → 采纳更新指针 + AdoptionRecord 留痕（SC-002）。"""
+    import hashlib
+
+    from agents.dev.adoption import adopt, deployed_version
+
+    context = report["_context"]
+    comparison = context["comparison"]
+    config_path = context["config_path"]
+    config_dir = config_path.parent
+    comparison_dir = config_dir / "comparisons"
+    adoption_dir = config_dir / "adoptions"
+
+    before_text = config_path.read_text(encoding="utf-8")
+    before_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    reject_record = adopt(
+        comparison.comparison_id,
+        "reject",
+        "reviewer-a",
+        "本周不采纳：等待更多历史树覆盖",
+        config_path=config_path,
+        comparison_dir=comparison_dir,
+        adoption_dir=adoption_dir,
+        history_root=context["history_root"],
+    )
+    after_reject_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    adopt_record = adopt(
+        comparison.comparison_id,
+        "adopt",
+        "sunqi",
+        "回放对比呈现优势且无偏性 τ 达标，采纳",
+        config_path=config_path,
+        comparison_dir=comparison_dir,
+        adoption_dir=adoption_dir,
+        history_root=context["history_root"],
+    )
+    step4 = {
+        "pointer_before": reject_record.deployed_before,
+        "pointer_on_reject": reject_record.deployed_after,
+        "pointer_after_adopt": adopt_record.deployed_after,
+        "yaml_bytes_unchanged_on_reject": after_reject_hash == before_hash,
+        "yaml_changed_on_adopt": config_path.read_text(encoding="utf-8") != before_text,
+        "reject_reason": reject_record.reason,
+        "adopt_reason": adopt_record.reason,
+        "records": [reject_record.record_path.name, adopt_record.record_path.name],
+        "pointer_read_back": deployed_version(config_path),
+    }
+    step4["ok"] = (
+        step4["pointer_before"] == comparison.deployed_version
+        and step4["pointer_on_reject"] == comparison.deployed_version  # 未采纳指针不变
+        and step4["pointer_after_adopt"] == comparison.new_version
+        and step4["pointer_read_back"] == comparison.new_version
+        and step4["yaml_bytes_unchanged_on_reject"]
+        and step4["yaml_changed_on_adopt"]
+        and len(step4["records"]) == 2  # 采纳与拒绝都留痕
+    )
+    report["steps"]["4_采纳门禁与指针留痕"] = step4
+
+
+def _step_5_禁止自动进化三重机检(root, report, dream_config, gateway) -> None:
+    """步⑤：dreaming 显式拒绝（0 候选 0 计费 0 落盘）+ 名单实值 + 审计位 + 门禁判定。"""
+    from core.deployment.config import DeploymentConfig
+    from core.replay.pool import SimulatorPool
+    from core.tree.store import create_tree_store
+    from dreaming.pipeline import AutoEvolutionForbiddenError, run_dream_round
+
+    generator = _CountingGenerator()
+    calls_before = gateway.call_count
+    dreaming_root = root / "dreaming"
+    error = ""
+    try:
+        run_dream_round(
+            "dev",
+            "class Policy:\n    pass\n",
+            generator,
+            SimulatorPool(create_tree_store(create_engine("sqlite+pysqlite:///:memory:"))),
+            gateway,
+            dream_config,
+            history_root=dreaming_root,
+            m=dream_config.demo_candidates,
+        )
+        error = "未拒绝（契约破坏）"
+    except AutoEvolutionForbiddenError as exc:
+        error = str(exc)
+    deployment = DeploymentConfig.from_yaml(DEV_YAML)
+    deployed_version = report["_context"]["comparison"].deployed_version
+    meta_path = root / "policies" / "dev" / f"{deployed_version}.meta.json"
+    meta_audit = json.loads(meta_path.read_text(encoding="utf-8"))
+    step5 = {
+        "error": error,
+        "generator_calls": generator.calls,
+        "llm_calls": gateway.call_count - calls_before,
+        "round_files": len(list(dreaming_root.rglob("*.json"))) if dreaming_root.is_dir() else 0,
+        "no_auto_evolve_agents": list(deployment.forbidden_agents),
+        "forbidden": deployment.is_forbidden("dev"),
+        "policy_meta_no_auto_evolve": meta_audit.get("no_auto_evolve"),
+    }
+    step5["ok"] = (
+        step5["generator_calls"] == 0
+        and step5["llm_calls"] == 0
+        and step5["round_files"] == 0
+        and "原则六" in step5["error"]
+        and "dev" in step5["no_auto_evolve_agents"]
+        and step5["forbidden"] is True
+        and step5["policy_meta_no_auto_evolve"] is True
+    )
+    report["steps"]["5_禁止自动进化三重机检"] = step5
+
+
+def _step_6_升级判据材料(root, report) -> None:
+    """步⑥：全量阈值快照 + 逐项"实测值 / 无法评价（来源缺失）"+ 结论非达标 + 继续观察条件。"""
+    from agents.dev.upgrade_evidence import (
+        CONCLUSIONS,
+        MISSING_SOURCES,
+        THRESHOLD_KEYS,
+        build_upgrade_evidence,
+        continuation_conditions,
+    )
+    from core.degraded.evidence import MEASURED, MISSING_SOURCE
+
+    context = report["_context"]
+    store = context["pool_store"]
+    nodes = [
+        node
+        for tree in store.trees_by(agent_id="dev")
+        for node in store.nodes_of(tree.tree_id)
+        if node.parent_id is not None
+    ]
+    data_dir = root / "upgrade-events"
+    material = build_upgrade_evidence("2026-W38", context["config"], nodes=nodes, data_dir=data_dir)
+    items = {item["key"]: item for item in material.items}
+    pending = continuation_conditions(material.threshold_snapshot)
+    step6 = {
+        "period": material.period,
+        "samples": len(nodes),
+        "material": str((data_dir / "dev" / "2026-W38.json").relative_to(root)),
+        "threshold_snapshot": material.threshold_snapshot,
+        "value_forms": {key: item["status"] for key, item in items.items()},
+        "measured": sorted(key for key, item in items.items() if item["status"] == MEASURED),
+        "missing": {
+            key: item["missing_reason"]
+            for key, item in items.items()
+            if item["status"] == MISSING_SOURCE
+        },
+        "conclusion": material.conclusion,
+        "continuation_conditions": [entry["key"] for entry in pending],
+        "signal_sources_annotated": all(
+            source["simulated"] is True and "非真实商业数据" in source["note"]
+            for source in material.raw["signal_sources"]
+        ),
+        "final_system_view": material.conclusion not in ("meets", "达标"),
+    }
+    step6["ok"] = (
+        len(nodes) > 0
+        and (data_dir / "dev" / "2026-W38.json").is_file()  # 按 agent 分目录
+        and set(material.threshold_snapshot) >= set(THRESHOLD_KEYS)  # 阈值全量声明
+        and all(item["status"] in (MEASURED, MISSING_SOURCE) for item in items.values())
+        and all(
+            item["value"] is not None
+            if item["status"] == MEASURED
+            else bool(str(item["missing_reason"]).strip())
+            for item in items.values()
+        )  # 无空白、无省略阈值项
+        and set(step6["missing"])
+        == {entry["key"] for entry in MISSING_SOURCES}
+        == {"reliability", "drift"}
+        and "010-weekly-calibration/spec.md:157" in step6["missing"]["reliability"]
+        and "judge" in step6["missing"]["drift"]
+        and material.conclusion in CONCLUSIONS
+        and material.conclusion not in ("meets", "达标")  # 结论恒不为达标
+        and step6["continuation_conditions"] == ["reliability", "drift"]
+        and any("继续观察条件" in alert for alert in material.alerts)
+        and step6["signal_sources_annotated"]  # SC-009 第三处标注
+    )
+    report["steps"]["6_升级判据材料"] = step6
+
+
 def main() -> int:
     started = time.perf_counter()
-    config = DevConfig.from_yaml(DEV_YAML)
+    dream_config = _dream_config()
     policy = _bootstrap_policy()
     report: dict = {"agent_id": "dev", "steps": {}, "ok": False}
 
     with tempfile.TemporaryDirectory(prefix="cineflow-dev-demo-") as tmp:
         root = Path(tmp)
+        config = DevConfig.from_yaml(DEV_YAML)
         engine = create_engine("sqlite+pysqlite:///:memory:")
         create_schema(engine)
         create_jobs_schema(engine)
@@ -310,8 +798,13 @@ def main() -> int:
 
         _step_1_立项组合产出落树与对账(store, artifacts, engine, gateway, config, policy, report)
         _step_2_结构组合门禁短路与重算(store, artifacts, engine, gateway, config, policy, report)
-        # 步③~⑥（无偏性凭证与回放对比 / 采纳留痕 / 三重机检 / 判据材料）属 US3，按序追加。
+        # 步③~⑥ 用演示档形态（题材夹具档位按题材给出不同模拟源系数；只改取值、不改口径）
+        _step_3_无偏性凭证与回放对比(root, report, dream_config, gateway)
+        _step_4_采纳门禁与指针留痕(report)
+        _step_5_禁止自动进化三重机检(root, report, dream_config, gateway)
+        _step_6_升级判据材料(root, report)
 
+    report.pop("_context", None)
     report["ok"] = all(step["ok"] for step in report["steps"].values())
     report["elapsed_seconds"] = round(time.perf_counter() - started, 2)
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))

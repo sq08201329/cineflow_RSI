@@ -89,6 +89,91 @@ _ARGS_ECHO_SOURCE = (
     " 'arg_types': [type(item).__name__ for item in args]}}\n"
 )
 
+# 单一产出（无阶段划分）形态：唯一阶段名 + **扁平计划**（计划整体即该阶段的标记）
+_SINGLE_STAGE = "slate"
+
+
+def _flat_policy_source(tag: str, *, bump: float = 0.0) -> str:
+    """单一产出用例策略源码：`plan(inputs, config)` 返回**扁平计划**（无阶段键）。"""
+    plan = {"plan_tag": tag, "entries": [{"direction_id": f"dir-{tag}"}]}
+    return (
+        "class Policy:\n"
+        '    """单一产出用例策略（扁平计划：无阶段键）。"""\n'
+        f"    PLAN = {plan!r}\n"
+        f"    BUMP = {bump!r}\n\n"
+        "    def plan(self, inputs, config):\n"
+        "        return self.PLAN\n"
+    )
+
+
+def _single_match_key(stage, *, policy_version, inputs, config, markers):
+    """单一产出匹配键：结构键与阶段无关（计划整体即唯一阶段的标记）。"""
+    return {
+        "stage": stage,
+        "policy_version": policy_version,
+        "topic": inputs["topic"],
+        "plan_tag": markers.get("plan_tag", ""),
+    }
+
+
+def _build_single_tree(tree_store, make_tree, make_node, *, deployed: dict, new: dict):
+    """一棵冻结树：唯一阶段记两份历史节点（部署版本低分 / 新版本高分）。"""
+    tree = make_tree(
+        agent_id=_AGENT_ID,
+        project_id="core-degraded-single",
+        policy_version=new["version"],
+        config_snapshot={"observation_fields": ["gen_params"]},
+    )
+    tree_store.create_tree(tree)
+    tree_store.append_node(
+        make_node(
+            node_id=tree.root_id,
+            tree_id=tree.tree_id,
+            agent_id=_AGENT_ID,
+            policy_version=new["version"],
+            observation_context={},
+            eval_breakdown={},
+            score=0.0,
+            cost=CostRecord(),
+            status=NodeStatus.EVALUATED,
+            created_at=0.0,
+        )
+    )
+    for variant in (deployed, new):
+        tree_store.append_node(
+            make_node(
+                node_id=new_id(),
+                tree_id=tree.tree_id,
+                parent_id=tree.root_id,
+                depth=1,
+                agent_id=_AGENT_ID,
+                policy_version=variant["version"],
+                observation_context={
+                    "gen_params": _single_recorded_key(variant["tag"], variant["version"])
+                },
+                eval_breakdown={
+                    "rule.x@1.0.0": {"score": variant["score"]},
+                    "proxy.y@1.0.0": {"score": variant["score"]},
+                },
+                score=variant["score"],
+                cost=CostRecord(llm_calls=1),
+                status=NodeStatus.EVALUATED,
+                created_at=float(len(tree_store.nodes_of(tree.tree_id))),
+            )
+        )
+    return tree
+
+
+def _single_recorded_key(tag: str, version: str) -> dict:
+    """单一产出记录侧结构键（与注入匹配键同构成 → 命中）。"""
+    return {
+        "stage": _SINGLE_STAGE,
+        "policy_version": version,
+        "topic": _INPUTS["topic"],
+        "plan_tag": tag,
+    }
+
+
 _DEAD_LOOP_SOURCE = (
     "class Policy:\n"
     '    """死循环策略（超时用例）：静态检查不禁循环，回放必须带执行超时。"""\n'
@@ -215,6 +300,45 @@ def compare_env(tree_store, make_tree, make_node, tmp_path):
                     "scores": scores["deployed"],
                 },
                 new={"tag": "new", "version": versions["new"], "scores": scores["new"]},
+            )
+        )
+    pool = SimulatorPool(tree_store)
+    for tree in trees:
+        pool.add_tree(tree)
+    return {
+        "cfg": cfg,
+        "store": tree_store,
+        "pool": pool,
+        "trees": trees,
+        "history_root": history_root,
+        "versions": versions,
+        "sources": {"deployed": deployed_source, "new": new_source},
+        "comparison_dir": tmp_path / "comparisons",
+        "tmp_path": tmp_path,
+    }
+
+
+@pytest.fixture()
+def single_stage_env(tree_store, make_tree, make_node, tmp_path):
+    """单一产出环境：两版**扁平计划**策略 + 两棵冻结树（新版本均更优）。"""
+    cfg = _cfg()
+    deployed_source = _flat_policy_source("deployed")
+    new_source = _flat_policy_source("new", bump=1.0)
+    history_root = _history(tmp_path, {"deployed": deployed_source, "new": new_source})
+    versions = {"deployed": policy_version(deployed_source), "new": policy_version(new_source)}
+    trees = []
+    for deployed_score, new_score in ((0.50, 0.90), (0.70, 0.80)):
+        trees.append(
+            _build_single_tree(
+                tree_store,
+                make_tree,
+                make_node,
+                deployed={
+                    "tag": "deployed",
+                    "version": versions["deployed"],
+                    "score": deployed_score,
+                },
+                new={"tag": "new", "version": versions["new"], "score": new_score},
             )
         )
     pool = SimulatorPool(tree_store)
@@ -537,6 +661,188 @@ class Test口径对齐权威实现:
     def test_梯形口径期望值(self):
         # 梯形 = (0.2+0.4)/2 + (0.4+0.9)/2 = 0.95；/ (n-1)=2 → 0.475（均值口径为 0.5）
         assert pareto_auc([0.2, 0.4, 0.9]) == pytest.approx(0.475)
+
+
+class Test单一阶段投影:
+    """单一产出（无阶段划分）Agent：显式声明唯一阶段后**扁平计划**可回放。
+
+    既往缺陷：扁平计划在按阶段的取标记口径下每个阶段都未命中 → 报告落盘且全 UNKNOWN
+    （读者无法区分"策略结构无历史覆盖"与"计划形态接线错"）。现在：声明即按"计划整体 =
+    该阶段标记"回放；**未声明**且计划与阶段序列完全对不上则显式报错、不产出报告。
+    """
+
+    def _compare_single(self, env, **kwargs):
+        options = {
+            "store": env["store"],
+            "inputs": _INPUTS,
+            "unbiasedness": _passing_attestation(),
+            "match_key": _single_match_key,
+            "stages": (_SINGLE_STAGE,),
+            "min_comparable_trees": _FLOOR,
+            "agent_id": _AGENT_ID,
+            "history_root": env["history_root"],
+            "comparison_dir": env["comparison_dir"],
+        }
+        options.update(kwargs)
+        return compare_versions(
+            env["versions"]["new"],
+            env["versions"]["deployed"],
+            env["pool"],
+            env["cfg"],
+            **options,
+        )
+
+    def test_扁平计划声明单一阶段即可回放(self, single_stage_env):
+        report = self._compare_single(single_stage_env, single_stage=_SINGLE_STAGE)
+        assert report.verdict == "new_better"
+        assert report.unknown_trees == []  # 不再退化为全 UNKNOWN
+        for row in report.per_tree:
+            assert row["new_hits"] == [_SINGLE_STAGE]
+            assert row["deployed_hits"] == [_SINGLE_STAGE]
+            assert row["delta"] > 0
+        assert report.per_evaluator and report.mean_score["deployed"] > 0
+
+    def test_声明后匹配键收到计划整体(self, single_stage_env):
+        """投影口径：单一阶段声明的标记 = 策略计划整体（不是某个阶段键下的子映射）。"""
+        spy = _SpyMatchKey()
+        tree = single_stage_env["trees"][0]
+        replay_policy(
+            single_stage_env["sources"]["deployed"],
+            [tree],
+            cfg=single_stage_env["cfg"],
+            inputs=_INPUTS,
+            store=single_stage_env["store"],
+            stages=(_SINGLE_STAGE,),
+            match_key=spy,
+            single_stage=_SINGLE_STAGE,
+        )
+        assert len(spy.calls) == 1
+        assert spy.calls[0]["stage"] == _SINGLE_STAGE
+        assert spy.calls[0]["markers"] == {
+            "plan_tag": "deployed",
+            "entries": [{"direction_id": "dir-deployed"}],
+        }
+
+    def test_阶段键包住单一阶段取键内标记(self, single_stage_env):
+        """两种形态都可用：计划把唯一阶段包在键内（`{slate: {…}}`）时取**键内**标记。
+
+        （该形态的端到端命中由开发 Agent 侧套件守住：`tests/unit/test_dev_compare_adopt.py`
+        的策略源码即 `{slate: {…}}` 形态。）
+        """
+        wrapped = (
+            "class Policy:\n"
+            '    """单一产出用例策略（阶段键内包计划）。"""\n'
+            "    PLAN = {'slate': {'plan_tag': 'deployed', 'entries': []}}\n\n"
+            "    def plan(self, inputs, config):\n"
+            "        return self.PLAN\n"
+        )
+        spy = _SpyMatchKey()
+        replay_policy(
+            wrapped,
+            single_stage_env["trees"],
+            cfg=single_stage_env["cfg"],
+            inputs=_INPUTS,
+            store=single_stage_env["store"],
+            stages=(_SINGLE_STAGE,),
+            match_key=spy,
+            single_stage=_SINGLE_STAGE,
+        )
+        assert spy.calls and all(
+            call["markers"] == {"plan_tag": "deployed", "entries": []} for call in spy.calls
+        )
+
+    def test_扁平计划未声明单一阶段即显式失败(self, single_stage_env):
+        """**不得静默**：未声明且计划与阶段序列对不上 → 报错且 0 报告落盘。"""
+        with pytest.raises(CompareError, match="single_stage"):
+            self._compare_single(single_stage_env)
+        assert list(single_stage_env["comparison_dir"].glob("*.json")) == []
+
+    def test_未声明时回放路径同样显式失败(self, single_stage_env):
+        with pytest.raises(CompareError, match="single_stage"):
+            replay_policy(
+                single_stage_env["sources"]["deployed"],
+                single_stage_env["trees"],
+                cfg=single_stage_env["cfg"],
+                inputs=_INPUTS,
+                store=single_stage_env["store"],
+                stages=(_SINGLE_STAGE,),
+                match_key=_single_match_key,
+            )
+
+    def test_声明阶段不在阶段序列内即报错(self, compare_env):
+        with pytest.raises(CompareError, match="single_stage"):
+            _compare(compare_env, single_stage="ghost-stage")
+        assert list(compare_env["comparison_dir"].glob("*.json")) == []
+
+    def test_空计划即显式失败(self, compare_env, tmp_path):
+        """策略返回空计划（无任何阶段标记）同样报错，不退化为全 UNKNOWN 报告。"""
+        empty = (
+            "class Policy:\n"
+            '    """空计划策略。"""\n'
+            "    def plan(self, inputs, config):\n"
+            "        return {}\n"
+        )
+        history_root = _history(tmp_path, {"empty": empty})
+        with pytest.raises(CompareError, match="single_stage"):
+            compare_versions(
+                policy_version(empty),
+                compare_env["versions"]["deployed"],
+                compare_env["pool"],
+                compare_env["cfg"],
+                store=compare_env["store"],
+                inputs=_INPUTS,
+                unbiasedness=_passing_attestation(),
+                match_key=_match_key,
+                stages=_STAGES,
+                min_comparable_trees=_FLOOR,
+                agent_id=_AGENT_ID,
+                history_root=history_root,
+                comparison_dir=tmp_path / "comparisons",
+            )
+
+    def test_未声明时按阶段取标记_口径不变(self, compare_env):
+        """009 口径不变：未声明单一阶段时，每个阶段各取自己的标记（三次调用三次标记）。"""
+        spy = _SpyMatchKey()
+        tree = compare_env["trees"][0]
+        replay_policy(
+            compare_env["sources"]["deployed"],
+            [tree],
+            cfg=compare_env["cfg"],
+            inputs=_INPUTS,
+            store=compare_env["store"],
+            stages=_STAGES,
+            match_key=spy,
+        )
+        assert [call["stage"] for call in spy.calls] == list(_STAGES)
+        assert all(call["markers"] == {"plan_tag": "deployed"} for call in spy.calls)
+
+    def test_部分阶段缺席仍按未覆盖处理(self, compare_env):
+        """既有诚实边界不变：计划只覆盖部分阶段 → 其余阶段记未覆盖（不报错、不编造）。"""
+        partial = (
+            "class Policy:\n"
+            '    """部分阶段策略：只计划第一阶段。"""\n'
+            "    def plan(self, inputs, config):\n"
+            "        return {'stage-a': {'plan_tag': 'deployed'}}\n"
+        )
+        seen: list[str] = []
+
+        def _recording_key(stage, *, policy_version, inputs, config, markers):
+            seen.append(stage)
+            return _recorded_key(stage, "deployed", compare_env["versions"]["deployed"])
+
+        replay = replay_policy(
+            partial,
+            [compare_env["trees"][0]],
+            cfg=compare_env["cfg"],
+            inputs=_INPUTS,
+            store=compare_env["store"],
+            stages=_STAGES,
+            match_key=_recording_key,
+        )
+        assert seen == ["stage-a"]  # 未覆盖阶段不咨询匹配键（也不报错）
+        row = replay.per_tree[0]
+        assert row["hits"] == ["stage-a"]  # 已覆盖阶段照常命中（记录键同构成）
+        assert sorted(row["misses"]) == ["stage-b", "stage-c"]
 
 
 class Test报告字段集:

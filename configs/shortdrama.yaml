@@ -516,5 +516,12 @@ deployment:
     # 待复核超期告警阈值（天）：短剧**投放节奏密集**（单条物料数天内就见效/失效），
     # 复核窗口比电影缩短到 2 天——超期只告警，结论仍只能由人签署（不自动视为通过）
     pending_alert_days: 2
+  # 开发 Agent 部署指针（功能 017）：当前部署的人工策略版本——**仅人工采纳后更新**
+  # （未采纳更新指针次数恒 0，SC-002 机检；值 = policies/history/dev/ 下的策略版本；
+  #  初始值 = 人工策略首版（谱系根 policies/history/dev/34525518074d.meta.json）。
+  #  位置：写在 screenplay 子段**之前**——指针子段（screenplay:）须保持为 deployment 段
+  #  末个条目，挪动会改变定点改写的插入位点）
+  dev:
+    current_policy_version: 34525518074d
   screenplay:
     current_policy_version: fa6b7bca77ed
