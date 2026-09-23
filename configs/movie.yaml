@@ -366,6 +366,15 @@ dev:
     min_samples: 12 # 最小样本量
     drift_band: 0.1 # 漂移指标容忍带
     gate_violation_max: 0.2 # 门禁违规率上限
+  # 生成档（立项论证正文由网关生成，唯一昂贵动作）：模型与价目、单次输出预算。
+  # 缺项即报错（不静默取码内默认）；输出预算决定实际产出与预估成本上界，
+  # 生效值随轮次树 config_snapshot 冻结（016 遗留 5 口径：生成预算入形态配置）。
+  model: mock-copy-v1
+  model_prices:
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+    deepseek-flash: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
+    deepseek-v4-pro: {prompt_per_1k: 0.00132, completion_per_1k: 0.00396}
+  max_tokens: 8192 # 单条目立项论证的输出预算（长片论证更完整）
 
 # 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）

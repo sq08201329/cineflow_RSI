@@ -30,7 +30,7 @@
 ## 领域模型
 
 - **立项组合工件（TopicSlate）**: `schema_version` / `entries: [SlateEntry]` /
-  `signal_sources`（模拟数据源标注，随产物本体落盘）；`canonical_json()` 确定性、
+  `signal_sources`（模拟数据源标注，随产物本体落盘）/ `production_marks`（策略请求的进入生产指向，原样保留、不代判）；`canonical_json()` 确定性、
   `slate_hash()` = BLAKE3(canonical JSON) 内容寻址；`produce_ids` = 进入生产标记
 - **组合条目（SlateEntry）**: `direction_id`（组合内唯一）/ `rationale` / `eval_components`
   （条目级分量呈现；实测分量仍以节点 `eval_breakdown` 为准）/ `genre` / `constraints` /
@@ -76,6 +76,9 @@ dev:
   signals: {baseline_usd_million: …, sensitivity: …, fixtures: …}   # 模拟数据源参数
   upgrade_criteria: {correlation_target: …, min_samples: …, drift_band: …,
                      gate_violation_max: …}        # 判据阈值（全量声明，缺失即报错）
+  model: mock-copy-v1                              # 立项论证正文的生成模型（走网关）
+  model_prices: {…}                                # 模型价目（缺价目即报错，不允许静默零成本）
+  max_tokens: 8192                                 # 单次生成输出预算（入匹配键与成本上界；016 遗留 5 口径）
 ```
 
 ## 状态机

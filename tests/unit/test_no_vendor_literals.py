@@ -7,8 +7,8 @@
 1. `core/`（除 `core/llm_gateway/`）、`agents/`、`dreaming/` 的任何位置（含注释）都不得出现
    **配置里声明的档案 id / 端点 host**，也不得出现厂商词（deepseek / openai / qwen）；
    ——"改坏即红"：往任意业务文件塞一句 `MODEL = "deepseek-flash"` 或注释里写端点即红；
-2. 上述目录里每个 `.chat(` 调用点都必须**显式传 `role=`**（7 处：剧本生成 / 四家 judge /
-   做梦候选 / 宣发文案）——漏传即红（接档案后会在运行期报错，这里提前到静态层拦截）。
+2. 上述目录里每个 `.chat(` 调用点都必须**显式传 `role=`**（8 处：剧本生成 / 开发立项论证生成 /
+   四家 judge / 做梦候选 / 宣发文案）——漏传即红（接档案后会在运行期报错，这里提前到静态层拦截）。
 """
 
 import ast
@@ -98,8 +98,9 @@ class Test调用点必传角色:
         return calls
 
     def test_全部调用点传_role(self):
+        # 017 起 8 处：剧本生成 / 开发立项论证生成 / 四家 judge / 做梦候选 / 宣发文案
         calls = self._chat_calls()
-        assert len(calls) == 7, f"调用点数量变化（应为 7 处）：{[str(p) for p, _ in calls]}"
+        assert len(calls) == 8, f"调用点数量变化（应为 8 处）：{[str(p) for p, _ in calls]}"
         missing = [
             f"{path.relative_to(REPO_ROOT)}:{call.lineno}"
             for path, call in calls

@@ -6,16 +6,18 @@
 
 | 角色 | 调用点（现状） | 语义 |
 | --- | --- | --- |
-| `generation` | `agents/screenplay/loop.py`（剧本三阶段生成） | 内容生成 |
+| `generation` | `agents/screenplay/loop.py`（剧本三阶段生成）、
+`agents/dev/loop.py`（立项组合逐条目论证生成） | 内容生成 |
 | `judge` | 四处：`agents/screenplay/evaluators/dramatic_tension.py`、
 `agents/storyboard/evaluators/script_fit.py`、`agents/visual/evaluators/cinematic.py`、
 `agents/editing/evaluators/narrative.py` | LLM judge 委员会（四处共用一名） |
 | `dreaming_candidates` | `dreaming/candidates.py`（候选策略生成） | 做梦层候选生成 |
 | `copywriting` | `agents/promo/material.py`（物料文案） | 宣发文案生成 |
 
-盘点结论：**共 7 个调用点、4 个角色**（与规格列举一致，无需扩充）；新增调用点必须先
-扩充本枚举（枚举外角色在**配置解析期**即报错，见 `resolve_routing`）——避免"judge 拼错
-静默降级到默认档案"这类假阴性。
+盘点结论：**共 8 个调用点、4 个角色**（017 新增 `agents/dev/loop.py` 的立项论证生成，
+落既有 `generation` 角色，不扩充枚举）；新增调用点若引入**枚举外角色**，必须先扩充本枚举
+（枚举外角色在**配置解析期**即报错，见 `resolve_routing`）——避免"judge 拼错静默降级到
+默认档案"这类假阴性。
 
 ## 路由纪律
 

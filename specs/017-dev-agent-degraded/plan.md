@@ -132,7 +132,7 @@ core/degraded/                    # 新：与业务无关的降级机制（抽�
 agents/dev/                       # 新：开发 Agent（业务件）
 ├── __init__.py                   # 包说明（降级模式：记录-回放 + 人工策略 + 回放沙盘）
 ├── artifact.py                   # TopicSlate / SlateEntry（schema 版本化 + canonical JSON + 内容寻址）
-├── config.py                     # dev 段解析与校验（组合区间/标记区间/最小树数/阈值/模拟源参数）
+├── config.py                     # dev 段解析与校验（组合区间/标记区间/最小树数/阈值/模拟源参数/生成档）
 ├── signals.py                    # 确定性模拟数据源（同类型票房回归 + 舆情热度）+ 来源标注
 ├── loop.py                       # run_dev_round + slate_match_key（只含策略可复现结构键）
 ├── db.py                         # dev_jobs 运营表 schema（迁移 0010）

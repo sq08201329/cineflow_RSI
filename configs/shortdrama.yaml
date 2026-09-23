@@ -373,6 +373,13 @@ dev:
     min_samples: 8 # 短剧周期短、样本积累更快
     drift_band: 0.15 # 短剧信号波动更大，容忍带放宽
     gate_violation_max: 0.3 # 同因放宽
+  # 生成档：短剧方向多、单条论证更短（输出预算下调；缺项即报错，不取码内默认）
+  model: mock-copy-v1
+  model_prices:
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+    deepseek-flash: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
+    deepseek-v4-pro: {prompt_per_1k: 0.00132, completion_per_1k: 0.00396}
+  max_tokens: 4096 # 单条目立项论证的输出预算（短剧一轮方向更多、单条更短）
 
 # 外环校准（功能 010 + 012）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度、防自循环配对排除、judge 漂移自动检测口径

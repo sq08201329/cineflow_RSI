@@ -3643,3 +3643,303 @@ def llm_credentials(monkeypatch):
         return dict(values)
 
     return SimpleNamespace(clear=clear, inject=inject, legacy_names=legacy_names, state=state)
+
+
+# ---------------------------------------------------------------------------
+# 功能 017（开发 Agent 降级模式）夹具：dev 配置片段工厂（合规 / 缺项 / 越界 / 权重缺失）、
+# 立项组合工件工厂（合规 + 六类缺陷变体）、人工题材方向探索策略源码（含死循环变体）、
+# 模拟数据源参数、四评估器桩组合、dev 临时运营库与数据目录。
+# 全部为新增夹具，既有夹具行为不变。
+# ---------------------------------------------------------------------------
+
+# 方向模板：方向标识 + 题材 + 约束要点 + 角色设定要点（可移交下游的剧本输入要点）
+_DEV_DIRECTIONS = (
+    ("dir-night-ward", "医疗悬疑", ("单场景为主", "低成本"), ("林静", "陈默")),
+    ("dir-city-heist", "都市犯罪", ("夜戏为主", "中成本"), ("方原", "邵岚")),
+    ("dir-awakening", "科幻悬疑", ("高概念", "单一场景"), ("江离", "AI-Pi")),
+    ("dir-return", "家庭剧情", ("室内戏", "小成本"), ("苏禾", "苏母")),
+    ("dir-succession", "古装权谋", ("架空朝代", "中成本"), ("萧砚", "裴照")),
+    ("dir-road", "公路喜剧", ("外景为主", "轻喜剧"), ("阿康", "小满")),
+)
+
+
+def _dev_config_payload() -> dict:
+    """dev 配置片段底座：真实 movie.yaml 的 dev 段 + evaluator_weights.dev（逐用例定向破坏）。"""
+    import copy
+
+    import yaml
+
+    payload = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
+    return {
+        "form": payload["form"],
+        "dev": copy.deepcopy(payload["dev"]),
+        "evaluator_weights": {"dev": copy.deepcopy(payload["evaluator_weights"]["dev"])},
+    }
+
+
+@pytest.fixture()
+def dev_config_fragment():
+    """dev 配置片段工厂（功能 017 / T1703）：返回 `_make(variant=..., **overrides)` → config dict。
+
+    变体（覆盖契 C10 的"缺项即报错"输入面）：
+
+    - `compliant`（默认）：真实 movie.yaml 的 dev 段 + `evaluator_weights.dev`（加载器必过）；
+    - `missing_key`：删掉 `dev.slate`（条目数区间缺项报错路径）；
+    - `out_of_range`：`dev.combination.max_direction_repeat_rate` 抬到 1.5（越界报错路径）；
+    - `missing_weights`：删掉 `evaluator_weights`（权重段缺项报错路径）；
+    - `missing_threshold`：删掉 `dev.upgrade_criteria.drift_band`（判据阈值缺项报错路径）。
+
+    overrides 为 dev 段顶层键的定向覆盖（浅层更新，`None` 表示删除该键）。
+    """
+
+    def _make(variant: str = "compliant", **overrides) -> dict:
+        payload = _dev_config_payload()
+        if variant not in {
+            "compliant",
+            "missing_key",
+            "out_of_range",
+            "missing_weights",
+            "missing_threshold",
+        }:
+            raise ValueError(f"未知 dev 配置片段变体：{variant!r}")
+        if variant == "missing_key":
+            payload["dev"].pop("slate")
+        elif variant == "out_of_range":
+            payload["dev"]["combination"]["max_direction_repeat_rate"] = 1.5
+        elif variant == "missing_weights":
+            payload.pop("evaluator_weights")
+        elif variant == "missing_threshold":
+            payload["dev"]["upgrade_criteria"].pop("drift_band")
+        for key, value in overrides.items():
+            if value is None:
+                payload["dev"].pop(key, None)
+            else:
+                payload["dev"][key] = value
+        return payload
+
+    return _make
+
+
+@pytest.fixture()
+def make_topic_slate():
+    """TopicSlate 工厂（功能 017 / T1703）：`_make(variant="compliant", **overrides)`。
+
+    合规组合 = 4 条方向（落到 movie 的区间 [3, 6]）+ 1 个"本轮进入生产"标记（区间 [1, 1]）；
+    每条方向带题材/约束/角色设定要点（可移交下游的剧本输入要点，FR-011）与条目级分量呈现。
+
+    缺陷变体（与契约 C5/C7/C8 的违规注入面一一对应）：
+
+    - `duplicate_direction`：方向标识组合内重复（`rule.slate_structure` 判 0）；
+    - `missing_essentials`：要点不全（genre/constraints/characters 三处皆空 → 结构门禁点名）；
+    - `count_out_of_range`：条目数低于形态区间下界（本夹具取 1 条，对应关系由门禁按配置判定）；
+    - `marks_out_of_range`：标记数越界（0 个标记，movie 区间 [1, 1]）；
+    - `dangling_mark`：标记指向组合内不存在的方向（`rule.slate_combination` 判 0）；
+    - `empty_slate`：空组合——**工件层即拒绝**，故返回构造入参 payload（不是 TopicSlate）：
+      "条目列表非空"是构造期必填标记（缺即 `ValidationError`，越界不由代码兜底）。
+
+    工件构造**不代判**方向唯一性与标记区间（规格边界：越界即门禁判 0）——故缺陷变体
+    全部可构造，交由门禁判定；只有"缺必填结构标记"（空条目/空方向标识/空标记列表）才构造即拒绝。
+    """
+    from agents.dev.artifact import TopicSlate, simulated_signal_sources
+
+    def _make(variant: str = "compliant", **overrides):
+        entries = [
+            {
+                "direction_id": direction_id,
+                "rationale": f"{genre}方向 {direction_id} 的立项论证要点（夹具）。",
+                "eval_components": {"proxy.genre_regression": 0.6, "proxy.buzz_heat": 0.6},
+                "genre": genre,
+                "constraints": list(constraints),
+                "characters": list(characters),
+            }
+            for direction_id, genre, constraints, characters in _DEV_DIRECTIONS[:4]
+        ]
+        marks = ["dir-city-heist"]
+        if variant == "duplicate_direction":
+            entries[1]["direction_id"] = entries[0]["direction_id"]
+        elif variant == "missing_essentials":
+            entries[2]["constraints"] = []
+            entries[2]["characters"] = []
+            entries[2]["genre"] = ""
+        elif variant == "count_out_of_range":
+            entries = entries[:1]
+        elif variant == "marks_out_of_range":
+            marks = []
+        elif variant == "dangling_mark":
+            marks = ["dir-not-in-slate"]
+        payload = {
+            "schema_version": "1.0.0",
+            "entries": entries,
+            "production_marks": marks,
+            "signal_sources": list(simulated_signal_sources({"fixture": True})),
+        }
+        if variant == "empty_slate":
+            payload["entries"] = []
+        elif variant != "compliant" and variant not in {
+            "duplicate_direction",
+            "missing_essentials",
+            "count_out_of_range",
+            "marks_out_of_range",
+            "dangling_mark",
+        }:
+            raise ValueError(f"未知 TopicSlate 变体：{variant!r}")
+        payload.update(overrides)
+        if variant == "empty_slate":
+            return payload
+        return TopicSlate.from_dict(payload)
+
+    return _make
+
+
+@pytest.fixture()
+def topic_slate(make_topic_slate):
+    """默认合规立项组合工件（4 条方向 + 1 个进入生产标记）。"""
+    return make_topic_slate()
+
+
+@pytest.fixture()
+def dev_policy_source():
+    """人工题材方向探索策略源码工厂（功能 017 / T1703）：合法 + 五类变体。
+
+    策略接口（契约 C13）：`plan(inputs, config)` 产单一**立项组合计划**
+    `{"entries": [{direction_id, genre, constraints, characters}], "production_marks": [...]}`
+    ——方向结构由人编写的探索工艺给出（策略只定结构），条目论证要点由网关生成。
+
+    静态检查口径（002）：白名单外 import / 危险内建 / 私有与 dunder 属性访问一律拒绝
+    ——故策略只暴露公开方法（`relevance` 而非 `_relevance`）。变体：
+
+    - `compliant`（默认）：纯计算 + `Policy` 类 + `plan(inputs, config)`；产出条目数
+      取配置上界（movie = 6，落在区间 [3, 6]），标记数取配置下界（= 1）；
+    - `duplicate_direction`：第 2 条复用第 1 条方向标识（组合层重复，工件构造不代判）；
+    - `count_out_of_range`：只产 1 条方向（低于区间下界 → 结构门禁判 0）；
+    - `dangling_mark`：标记指向不存在的方向（组合门禁判 0）；
+    - `infinite_loop`：`plan` 内死循环（策略执行超时用例的输入，T1701 义务①）；
+    - `forbidden_import` / `forbidden_call` / `bad_signature`：提交通道拒绝路径
+      （静态检查 / 接口签名 AST 各拒绝一类，T1704 引导树侧同口径）。
+    """
+    direction_lines = ",\n".join(
+        "        {"
+        f'"direction_id": "{direction_id}", "genre": "{genre}", '
+        f'"constraints": {list(constraints)!r}, "characters": {list(characters)!r}'
+        "}"
+        for direction_id, genre, constraints, characters in _DEV_DIRECTIONS
+    )
+
+    def _make(variant: str = "compliant") -> str:
+        header = "import socket\n\n" if variant == "forbidden_import" else ""
+        body_io = (
+            '        with open("slate.json", "w") as handle:\n'
+            "            handle.write(str(entries))\n"
+            if variant == "forbidden_call"
+            else ""
+        )
+        signature = (
+            "    def plan(self, inputs):\n"
+            if variant == "bad_signature"
+            else "    def plan(self, inputs, config):\n"
+        )
+        if variant == "infinite_loop":
+            body = "        while True:\n            pass\n"
+        else:
+            limit = "1" if variant == "count_out_of_range" else "config.slate_entries[1]"
+            duplicate = (
+                "        if len(entries) > 1:\n"
+                '            entries[1]["direction_id"] = entries[0]["direction_id"]\n'
+                if variant == "duplicate_direction"
+                else ""
+            )
+            marks = (
+                '["dir-not-in-slate"]'
+                if variant == "dangling_mark"
+                else '[entry["direction_id"] for entry in entries[: config.production_marks[0]]]'
+            )
+            body = (
+                f"        selected = sorted(self.DIRECTIONS, key=self.relevance)[:{limit}]\n"
+                "        entries = [\n"
+                "            {\n"
+                '                "direction_id": direction["direction_id"],\n'
+                '                "genre": direction["genre"],\n'
+                '                "constraints": list(direction["constraints"])\n'
+                '                + ["受众：" + inputs["audience"]],\n'
+                '                "characters": list(direction["characters"]),\n'
+                "            }\n"
+                "            for direction in selected\n"
+                "        ]\n"
+                f"{duplicate}"
+                f"        marks = {marks}\n"
+                f"{body_io}"
+                '        return {"entries": entries, "production_marks": marks}\n'
+            )
+        return (
+            f"{header}class Policy:\n"
+            '    """人工题材方向探索策略（夹具）：探索哪些题材方向、分支数、组合取舍。"""\n'
+            "\n"
+            "    DIRECTIONS = (\n"
+            f"{direction_lines},\n"
+            "    )\n"
+            "\n"
+            f"{signature}{body}"
+            "\n"
+            "    def relevance(self, direction):\n"
+            '        return direction["direction_id"]\n'
+        )
+
+    return _make
+
+
+@pytest.fixture()
+def dev_config():
+    """开发形态配置夹具：直接读 configs/movie.yaml 的 dev 段（真实配置路径）。"""
+    from agents.dev.config import DevConfig
+
+    return DevConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+
+
+@pytest.fixture()
+def dev_signal_params(dev_config):
+    """模拟数据源参数夹具（功能 017）：取自真实 dev 配置的 `dev.signals`。
+
+    真实数据源（`agents/dev/signals.py`）与其来源标注在 US2（阶段 4）落地；本夹具只提供
+    口径参数与标注断言面——数据源参数即行为口径（原则一：变更即新评估器版本）。
+    """
+    return dict(dev_config.signals)
+
+
+@pytest.fixture()
+def dev_stub_evaluators(dev_config):
+    """四评估器桩组合（功能 017）：evaluator_id 与 `evaluator_weights.dev` 键逐一对应。
+
+    桩唯一定义来源是 `tests/stubs.py`（此处只做夹具包装）；US2 的真实四评估器装配
+    （`build_dev_evaluators`）以同一 evaluator_id 注册，故本夹具是阶段 3 的注入面。
+    """
+    from tests.stubs import StubProxyEvaluator, StubRuleEvaluator
+
+    weights = dev_config.evaluator_weights
+    stubs: list = []
+    for evaluator_id in weights:
+        if evaluator_id.startswith("rule."):
+            stubs.append(StubRuleEvaluator(evaluator_id))
+        else:
+            stubs.append(StubProxyEvaluator(evaluator_id, score=0.6))
+    return stubs
+
+
+@pytest.fixture()
+def dev_jobs_engine():
+    """dev 运营表夹具：SQLite 内存库建 dev_jobs（可变表，无 immutable 触发器）。"""
+    from sqlalchemy import create_engine
+
+    from agents.dev.db import create_jobs_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_jobs_schema(engine)
+    return engine
+
+
+@pytest.fixture()
+def dev_data_dir(tmp_path):
+    """dev 临时数据目录夹具：artifacts（内容寻址工件）/rounds/comparisons/adoptions 四层。"""
+    base = tmp_path / "dev"
+    for sub in ("artifacts", "rounds", "comparisons", "adoptions"):
+        (base / sub).mkdir(parents=True)
+    return base

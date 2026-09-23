@@ -1,7 +1,7 @@
 """开发（选题 / IP 评估 / 立项组合）形态配置（configs/*.yaml 的 dev 段 → DevConfig）。
 
 配置即形态（宪章原则五）：立项组合的条目数区间、进入生产标记数区间、组合约束、回放对比
-最小可比对树数、模拟数据源参数、升级判据阈值全部来自配置。
+最小可比对树数、模拟数据源参数、升级判据阈值、生成模型与输出预算全部来自配置。
 
 纪律：缺任一必需项即报错（不允许静默取码内默认——那会让"形态可配置"变成空话）；
 升级判据阈值**必须全量声明**（缺失即报错），无数据来源的项由判据材料标"无法评价（来源缺失）"
@@ -118,6 +118,34 @@ def _require_thresholds(section: dict) -> dict:
     }
 
 
+def _require_model_prices(prices) -> dict:
+    """生成价目表：非空 + 逐模型两条费率 > 0（缺价目即报错，不允许静默零成本，原则三）。"""
+    if not isinstance(prices, dict) or not prices:
+        raise DevConfigError(f"dev.model_prices 必须为非空 mapping，实际为 {prices!r}")
+    normalized: dict[str, dict] = {}
+    for name, price in prices.items():
+        if not isinstance(name, str) or not name:
+            raise DevConfigError(f"dev.model_prices 键必须为非空字符串，实际为 {name!r}")
+        if not isinstance(price, dict):
+            raise DevConfigError(f"dev.model_prices.{name} 必须为 mapping，实际为 {price!r}")
+        normalized[name] = {
+            key: _require_number(
+                _require(price, key, f"dev.model_prices.{name}"),
+                f"dev.model_prices.{name}.{key}",
+                minimum=1e-12,
+                maximum=float("inf"),
+            )
+            for key in ("prompt_per_1k", "completion_per_1k")
+        }
+    return normalized
+
+
+def _require_str(value, where: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise DevConfigError(f"{where} 必须为非空字符串，实际为 {value!r}")
+    return value
+
+
 @dataclass(frozen=True)
 class DevConfig:
     """dev 段配置（冻结快照随轮次树 config_snapshot 落盘）。"""
@@ -129,6 +157,9 @@ class DevConfig:
     signals: dict
     upgrade_criteria: dict
     evaluator_weights: dict
+    model: str
+    model_prices: dict
+    max_tokens: int
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "DevConfig":
@@ -147,6 +178,13 @@ class DevConfig:
         evaluator_weights = config.get("evaluator_weights", {}).get("dev")
         if not isinstance(evaluator_weights, dict) or not evaluator_weights:
             raise DevConfigError("形态配置缺少 evaluator_weights.dev 段")
+        model_prices = _require_model_prices(_require(dev, "model_prices", "dev"))
+        model = _require_str(_require(dev, "model", "dev"), "dev.model")
+        if model not in model_prices:
+            raise DevConfigError(
+                f"dev.model {model!r} 不在 dev.model_prices 内 {sorted(model_prices)}"
+                "（缺价目即报错，不允许静默零成本）"
+            )
         return cls(
             slate_entries=_require_interval(
                 _require(dev, "slate", "dev"), "dev.slate", minimum_lower=1
@@ -172,4 +210,15 @@ class DevConfig:
             signals=_require_signals(_require(dev, "signals", "dev")),
             upgrade_criteria=_require_thresholds(_require(dev, "upgrade_criteria", "dev")),
             evaluator_weights=dict(evaluator_weights),
+            model=model,
+            model_prices=model_prices,
+            max_tokens=_require_int(
+                _require(dev, "max_tokens", "dev"), "dev.max_tokens", minimum=1
+            ),
         )
+
+    def price_of(self, model: str) -> dict:
+        """按模型取价目（缺即报错，不静默零成本；估算与折算同源的取数口）。"""
+        if model not in self.model_prices:
+            raise DevConfigError(f"模型 {model!r} 不在价目表内 {sorted(self.model_prices)}")
+        return self.model_prices[model]

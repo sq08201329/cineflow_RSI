@@ -8,7 +8,7 @@
 ```
 SCHEMA_VERSION = "1.0.0"
 SlateEntry(direction_id, rationale, eval_components, genre, constraints, characters, in_production=False)
-TopicSlate(entries, signal_sources, schema_version=SCHEMA_VERSION)
+TopicSlate(entries, signal_sources, production_marks=(), schema_version=SCHEMA_VERSION)  # marks = 策略请求的进入生产指向（原样保留、不代判）
 TopicSlate.from_dict / to_dict / canonical_json / slate_hash / produce_ids   # produce_ids = 进入生产标记
 ```
 
