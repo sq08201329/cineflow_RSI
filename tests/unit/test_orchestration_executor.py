@@ -203,6 +203,26 @@ class Test失败与跳过:
         assert record.status is RunStatus.FAILED
         assert record.failure_stage == "a2"
         assert "RuntimeError" in record.failure_reason and "底层崩了" in record.failure_reason
+        # 可诊断性：失败原因必须带**末帧位置**（文件:行 in 函数）——否则"哪里炸的"无从定位
+        assert "_boom" in record.failure_reason
+        assert "test_orchestration_executor.py:" in record.failure_reason
+
+    def test_无定位信息的异常也给出末帧(self):
+        """`TypeError: expected string or bytes-like object, got 'NoneType'` 这类消息
+        本身没有定位信息（真实跑批踩到过）——执行器必须补上末帧，便于不复现即可定位。"""
+
+        def _none_hash() -> str:
+            raise TypeError("expected string or bytes-like object, got 'NoneType'")
+
+        def _boom(stage_input):
+            return _none_hash()
+
+        dag = build_dag([StageSpec(stage_id="a1", entrypoint=_boom)])
+        record = run(dag, _ctx(), clock=_clock())
+        assert record.status is RunStatus.FAILED
+        assert "TypeError" in record.failure_reason
+        assert "_none_hash" in record.failure_reason  # 末帧函数名
+        assert ":" in record.failure_reason.split("末帧")[-1]  # 文件:行
 
 
 class Test断点续跑:

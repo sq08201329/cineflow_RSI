@@ -8,6 +8,7 @@ import pytest
 
 from core.llm_gateway.backends.mock import MockBackend
 from core.llm_gateway.gateway import (
+    BackendResult,
     GatewayError,
     LLMGateway,
     PermanentBackendError,
@@ -124,3 +125,50 @@ class TestMock确定性:
 
     def test_网关层错误基类(self):
         assert issubclass(PricingNotFoundError, GatewayError)
+
+
+class Test空文本拒绝:
+    """空/缺失文本必须**如实失败并指名模型**（原则六：不静默、不编造）。
+
+    真实跑批踩到过：某次模型调用返回空内容，下游对空文本做哈希/正则，
+    抛出的是 `TypeError: expected string or bytes-like object, got 'NoneType'`
+    ——没有任何"哪次调用、哪个模型"的信息，无法定位。网关是唯一入口，在这里拦住。
+    """
+
+    class _BadTextBackend:
+        def __init__(self, text) -> None:
+            self.call_count = 0
+            self._text = text
+
+        def complete(self, prompt, *, model, temperature, max_tokens) -> BackendResult:
+            self.call_count += 1
+            return BackendResult(text=self._text, prompt_tokens=11, completion_tokens=0)
+
+    @pytest.mark.parametrize("bad_text", [None, "", "   "])
+    def test_空或缺失文本即报错并指名模型(self, bad_text):
+        backend = self._BadTextBackend(bad_text)
+        gateway = LLMGateway(
+            backend,
+            price_book={"m": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+            sleep=lambda _: None,
+            max_retries=0,
+        )
+        with pytest.raises(TransientBackendError) as excinfo:
+            gateway.chat("提示词", model="m")
+        message = str(excinfo.value)
+        assert "空文本" in message and "'m'" in message
+        assert "NoneType" in message or "空" in message  # 诊断：如实说明收到了什么
+        assert backend.call_count == 1
+
+    def test_空文本不污染缓存与账目(self):
+        backend = self._BadTextBackend(None)
+        gateway = LLMGateway(
+            backend,
+            price_book={"m": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+            sleep=lambda _: None,
+            max_retries=0,
+        )
+        with pytest.raises(TransientBackendError):
+            gateway.chat("提示词", model="m")
+        assert gateway.call_count == 0 and gateway.total_cost_usd == 0.0
+        assert gateway.cost_breakdown() == {}  # 失败调用不入分解

@@ -221,7 +221,7 @@ def _execute(
         )
         return failed, None
     except Exception as exc:  # noqa: BLE001 - 未预期异常如实记为阶段失败，不吞不降级
-        reason = f"{type(exc).__name__}: {exc}"
+        reason = unexpected_failure_reason(exc)
         failed = running.transition_to(StageStatus.FAILED, at=tick(), failure_reason=reason)
         return failed, None
     done = running.transition_to(
@@ -306,3 +306,23 @@ def _derive_status(
     if all(state.status is StageStatus.DONE for state in stages):
         return RunStatus.DONE, "", "", tick()
     return RunStatus.RUNNING, "", "", None
+
+
+def unexpected_failure_reason(exc: BaseException) -> str:
+    """未预期异常的**可诊断**失败摘要：`类型: 消息（末帧 文件:行 in 函数）`。
+
+    为什么带末帧：`TypeError: expected string or bytes-like object, got 'NoneType'`
+    这类消息本身没有任何定位信息——真实跑批踩到过，只有"哪个阶段失败"却不知"哪里炸的"，
+    无法在不复现的前提下定位（原则六：不静默；这里连"哪一行"都如实给出）。
+    判定语义不变：仍记 FAILED、仍不进 done、仍不吞异常。
+    """
+    tb = exc.__traceback__
+    last = None
+    while tb is not None:
+        last = tb
+        tb = tb.tb_next
+    location = ""
+    if last is not None:
+        frame = last.tb_frame
+        location = f"（末帧 {frame.f_code.co_filename}:{last.tb_lineno} in {frame.f_code.co_name}）"
+    return f"{type(exc).__name__}: {exc}{location}"
