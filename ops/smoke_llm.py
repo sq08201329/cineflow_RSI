@@ -84,6 +84,7 @@ DEFAULT_ROUND_TOPIC = "雨夜便利店"
 DEFAULT_ROUND_CHARACTERS = "林静,陈默"
 DEFAULT_WORK_DIR = ".smoke-llm"
 DEFAULT_RUN_ID = "smoke-llm"
+RUN_STATUS_DONE = "done"  # 单轮成功态（RunStatus.DONE.value）：退出码与 ok 的判定依据
 CREDENTIAL_HINT = (
     "凭证缺失：请导出 OPENAI_BASE_URL / OPENAI_API_KEY（DeepSeek："
     "https://api.deepseek.com），并用 `uv run python ops/check_credentials.py "
@@ -530,8 +531,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.round and not args.keep_work_dir:
         shutil.rmtree(Path(args.work_dir), ignore_errors=True)  # 冒烟产物不留在仓库里
         payload["work_dir"] = f"{args.work_dir}（已清理；--keep-work-dir 可保留）"
-    payload["ok"] = True
     payload["credentials"] = status  # 只报是否设置与长度
+    # 判定与退出码必须与**运行状态**一致（Bug 2）：`--round` 里 status != done 即失败——
+    # 早期实现无论运行成败都打 `ok: true` 且退出码 0，脚本化调用方会把失败当成功（假成功）。
+    if args.round and str(payload.get("status", "")) != RUN_STATUS_DONE:
+        payload["ok"] = False
+        payload["reason"] = "round_failed"
+        payload["hint"] = (
+            f"单轮未跑完（status={payload.get('status')!r}）：逐阶段状态与失败原因见 stages[]；"
+            "--keep-work-dir 可保留运行记录与样片包目录"
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return EXIT_FAILED
+    payload["ok"] = True
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return EXIT_OK
 
