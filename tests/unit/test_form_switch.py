@@ -153,7 +153,7 @@ class Test差异逐项可归因:
 
         movie_path = REPO_ROOT / "configs" / "movie.yaml"
         short_path = REPO_ROOT / "configs" / "shortdrama.yaml"
-        for agent in ("screenplay", "storyboard", "visual", "sound", "editing", "promo"):
+        for agent in ("screenplay", "storyboard", "visual", "sound", "editing", "promo", "dev"):
             movie_w = load_evaluator_weights(movie_path, agent)
             short_w = load_evaluator_weights(short_path, agent)
             assert movie_w != short_w, f"{agent} 形态权重必须有差异（差异在配置，不在代码）"
@@ -267,6 +267,8 @@ class Test差异逐项可归因:
             "editing",
             "storyboard",
             "screenplay",
+            # 017：开发段的选题约束按形态声明（条目数区间/组合约束/标记数/模拟源参数）
+            "dev",
             "calibration",
             "dreaming",
             # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）

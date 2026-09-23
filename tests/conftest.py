@@ -3148,6 +3148,9 @@ def stage_entrypoint_stub():
 
 # 精简 movie 形态配置：仅含全部加载器必需段（形态差异（权重/规格）在此表达，
 # 与短剧真实配置做同链对照；不做任何形态特化，故取值可以刻意不同）。
+# 不声明 `dev` 段：本夹具只服务 pilot 侧加载器清单（`agents/pilot/pilot.py` 的
+# config_completeness 未纳入 dev——017 不把开发 Agent 插入七阶段链，那属 G2/018）；
+# 而 `tests/unit/test_config_integrity.py` 的加载器清单用的是**真实**配置文件。
 _MINIMAL_MOVIE_CONFIG = """\
 form: movie
 evaluator_weights:

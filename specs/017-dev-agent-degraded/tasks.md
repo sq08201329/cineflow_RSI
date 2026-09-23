@@ -16,7 +16,7 @@
 
 ## 阶段 1：搭建（共享基础设施）
 
-- [ ] T1702 `configs/movie.yaml` 与 `configs/shortdrama.yaml` 新增 `dev` 段（`slate.{min,max}_entries`、`production_marks.{min,max}`、`combination.max_direction_repeat_rate`、`min_comparable_trees`、`signals.*`、`upgrade_criteria.*`）与 `evaluator_weights.dev`（2 gate + 2 proxy，两形态取值不同）；**同步登记既有门禁清单**：`tests/unit/test_form_switch.py` 顶层差异键集字面量与权重差异循环，以及 `tests/unit/test_config_integrity.py` 的 `CONFIG_CLASSES`（加载器）、`WEIGHT_AGENTS`（权重）、`REQUIRED_PATHS`（至少一条 dev 缺项样例）；并判定 `tests/conftest.py` 的 `_MINIMAL_MOVIE_CONFIG` 是否需补 `dev` 段（契约 C10；研究决策 8、9）
+- [X] T1702 `configs/movie.yaml` 与 `configs/shortdrama.yaml` 新增 `dev` 段（`slate.{min,max}`、`production_marks.{min,max}`、`combination.max_direction_repeat_rate`、`min_comparable_trees`、`signals.*`、`upgrade_criteria.*`）与 `evaluator_weights.dev`（2 gate + 2 proxy，两形态取值不同）；**同步登记既有门禁清单**：`tests/unit/test_form_switch.py` 顶层差异键集字面量与权重差异循环、`tests/unit/test_config_integrity.py` 的 `CONFIG_CLASSES`（加载器）、`WEIGHT_AGENTS`（权重）、`REQUIRED_PATHS`（至少一条 dev 缺项样例），以及 `tests/contract/test_pilot_contracts.py` 的 C13 差异键集（实现时发现的第三处钉死清单——三处漏一处即红）；并判定 `tests/conftest.py` 的 `_MINIMAL_MOVIE_CONFIG` 是否需补 `dev` 段（结论：不需，其只服务 pilot 侧加载器清单，已在注释中记录理由）（契约 C10；研究决策 8、9）
 - [ ] T1703 [P] conftest 夹具扩展：`dev` 配置片段工厂（合规 / 缺项 / 越界 / 权重缺失）+ 立项组合工件工厂（合规 / 方向重复 / 缺要点 / 条目数越界 / 空组合 / 标记越界 / 标记指向不存在条目）+ 人工策略源码夹具（含"死循环策略"用于超时用例）+ 模拟数据源夹具 + `dev` 临时库与数据目录夹具；不改坏既有夹具
 - [ ] T1704 [P] `policies/history/dev/` 人工策略首版（题材方向探索策略，作为引导树与谱系根）+ `.meta.json`（`no_auto_evolve=true` 审计标记）
 

@@ -69,7 +69,7 @@ dev:
 
 ```yaml
 dev:
-  slate: {min_entries: 3, max_entries: 6}          # 组合条目数区间
+  slate: {min: 3, max: 6}                          # 组合条目数区间
   production_marks: {min: 1, max: 1}               # 进入生产标记数区间
   combination: {max_direction_repeat_rate: 0.3}    # 组合约束（多样性/去重率、上限）
   min_comparable_trees: 3                          # 回放对比最小可比对树数（前置门槛）

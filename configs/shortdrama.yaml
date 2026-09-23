@@ -46,6 +46,12 @@ evaluator_weights:
     proxy.entity_consistency: 0.4
     proxy.timeline_conflict: 0.6 # 短剧时间跨度小，时序冲突权重上调
     judge.dramatic_tension: 0.5 # 仅 outline 阶段适用；scenes/script 阶段"不适用"跳过
+  dev:
+    # 开发（选题 / IP 评估 / 立项组合）功能 017：短剧更依赖当下热度，回归分量下调
+    rule.slate_structure: gate # 立项组合工件结构完整性
+    rule.slate_combination: gate # 组合层：方向多样性/去重率、条目上限、进入生产标记
+    proxy.genre_regression: 0.4 # 历史同类型票房回归预测（模拟数据源，确定性）
+    proxy.buzz_heat: 0.6 # 舆情检索热度（模拟数据源，确定性）
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
@@ -349,6 +355,24 @@ screenplay:
           - {line_id: b1-l1, scene_id: anchor-b1, kind: dialogue, character: 陈默, text: "爸今天认得出我们吗？", key: false, emotion: sorrow}
           - {line_id: b1-l2, scene_id: anchor-b1, kind: action, character: 林静, text: "林静把保温杯拧开又拧上。", key: true, emotion: sorrow}
           - {line_id: b2-l1, scene_id: anchor-b2, kind: dialogue, character: 陈默, text: "字我签，你别管。", key: true, emotion: tense}
+
+# 开发（选题 / IP 评估 / 立项组合）形态参数（功能 017）：短剧差异——一次投多部、方向更多、
+# 组合更宽、热度分量更高、样本积累更快（min_samples 下调）、漂移带更宽。
+dev:
+  slate: {min: 5, max: 10} # 短剧试错快，一轮探索更多方向
+  production_marks: {min: 1, max: 2} # 一次可投多部
+  combination:
+    max_direction_repeat_rate: 0.5 # 短剧方向池更小，重复率上限放宽
+  min_comparable_trees: 3 # 与电影同门槛（少样本不得出报告）
+  signals:
+    baseline_usd_million: 6.0 # 短剧单片票房量级更低
+    sensitivity: 1.2 # 热度对票房的杠杆更陡
+    buzz_baseline: 0.6 # 热度基线更高
+  upgrade_criteria:
+    correlation_target: 0.6 # 与电影同一北极星口径
+    min_samples: 8 # 短剧周期短、样本积累更快
+    drift_band: 0.15 # 短剧信号波动更大，容忍带放宽
+    gate_violation_max: 0.3 # 同因放宽
 
 # 外环校准（功能 010 + 012）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度、防自循环配对排除、judge 漂移自动检测口径

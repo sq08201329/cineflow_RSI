@@ -27,6 +27,7 @@ CONFIG_CLASSES = (
     ("sound", "agents.sound.config", "SoundConfig"),
     ("editing", "agents.editing.config", "EditingConfig"),
     ("promo", "agents.promo.config", "PromoConfig"),
+    ("dev", "agents.dev.config", "DevConfig"),
     ("pooling", "core.replay.pooling_models", "PoolingConfig"),
     ("dreaming", "dreaming.config", "DreamConfig"),
     ("calibration", "core.calibration.config", "CalibrationConfig"),
@@ -36,7 +37,7 @@ CONFIG_CLASSES = (
 )
 
 # 形态权重读取覆盖的 Agent（evaluator_weights 段）
-WEIGHT_AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "promo")
+WEIGHT_AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "promo", "dev")
 
 # "缺项即红"样例：(机检名, 待删除的配置路径)
 REQUIRED_PATHS = (
@@ -56,6 +57,7 @@ REQUIRED_PATHS = (
     ("editing", ("editing", "transition_rules")),
     ("editing", ("editing", "judge", "max_tokens")),
     ("promo", ("promo", "model_prices")),
+    ("dev", ("dev", "slate")),
     ("pooling", ("replay", "pooling")),
     ("dreaming", ("dreaming",)),
     ("calibration", ("calibration", "self_pairing_exclusions")),

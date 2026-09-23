@@ -44,6 +44,13 @@ evaluator_weights:
     proxy.entity_consistency: 0.5 # 角色名规范化匹配 + 别名表（同名异写/未登记别名）
     proxy.timeline_conflict: 0.5 # 场景时序 vs 剧内时间戳单调性冲突
     judge.dramatic_tension: 0.5 # 仅 outline 阶段适用；scenes/script 阶段"不适用"跳过
+  dev:
+    # 开发（选题 / IP 评估 / 立项组合）功能 017：降级模式——人工策略 + 记录-回放 + 回放沙盘
+    # 门禁：条目数 ∈ 区间 / 方向标识唯一 / 要点齐备 / 进入生产标记数量与指向
+    rule.slate_structure: gate # 立项组合工件结构完整性
+    rule.slate_combination: gate # 组合层：方向多样性/去重率、条目上限、进入生产标记
+    proxy.genre_regression: 0.6 # 历史同类型票房回归预测（模拟数据源，确定性）
+    proxy.buzz_heat: 0.4 # 舆情检索热度（模拟数据源，确定性）
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
@@ -339,6 +346,26 @@ screenplay:
           - {line_id: b1-l1, scene_id: anchor-b1, kind: dialogue, character: 陈默, text: "爸今天认得出我们吗？", key: false, emotion: sorrow}
           - {line_id: b1-l2, scene_id: anchor-b1, kind: action, character: 林静, text: "林静把保温杯拧开又拧上。", key: true, emotion: sorrow}
           - {line_id: b2-l1, scene_id: anchor-b2, kind: dialogue, character: 陈默, text: "字我签，你别管。", key: true, emotion: tense}
+
+# 开发（选题 / IP 评估 / 立项组合）形态参数（功能 017）：降级模式——人工策略驱动产出，
+# 记录-回放 + 回放沙盘；**不做自动进化**（名单见 dreaming.no_auto_evolve_agents）。
+# 全部口径形态可配置（原则五）：组合条目数区间、进入生产标记数区间、组合约束、
+# 回放对比最小可比对树数、模拟代理信号参数、升级判据阈值（**全量声明**，缺任一项即报错）。
+dev:
+  slate: {min: 3, max: 6} # 一轮产出的立项组合条目数区间（缺即报错）
+  production_marks: {min: 1, max: 1} # "本轮进入生产"标记数区间（长片一次投一部）
+  combination:
+    max_direction_repeat_rate: 0.34 # 组合内题材方向重复率上限（超限即组合门禁判 0）
+  min_comparable_trees: 3 # 回放对比最小可比对树数（低于即拒绝产出报告，冷启动先积累记录）
+  signals: # 确定性模拟数据源参数（**非真实商业数据**；变更即新评估器版本，原则一）
+    baseline_usd_million: 40.0 # 同类型票房回归基线（百万美元）
+    sensitivity: 1.0 # 信号灵敏度（乘子）
+    buzz_baseline: 0.5 # 舆情热度基线 ∈ [0,1]
+  upgrade_criteria: # 判据阈值全量声明（缺任一项即报错）；无来源者标"无法评价（来源缺失）"
+    correlation_target: 0.6 # 代理分量与真实商业结果的相关性目标（三期北极星口径 ≥0.6）
+    min_samples: 12 # 最小样本量
+    drift_band: 0.1 # 漂移指标容忍带
+    gate_violation_max: 0.2 # 门禁违规率上限
 
 # 外环周校准（功能 010）形态参数：盲评 top-k、最小样本量、偏差阈值、信度目标、
 # 岭回归收缩强度 λ_ridge、防自循环配对排除（锚点来源 → 剔除的评估器分量键）

@@ -419,9 +419,10 @@ class TestC10到C13试水运行:
             (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
         )
         differing = {key for key in set(movie) | set(short) if movie.get(key) != short.get(key)}
-        # 形态差异逐项落在配置上（12 个段）；形态无关基建段逐字相同
+        # 形态差异逐项落在配置上（13 个段；017 起含 dev）；形态无关基建段逐字相同
         assert differing == {
             "form",
+            "dev",
             "evaluator_weights",
             "replay",
             "promo",
