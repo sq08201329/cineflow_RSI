@@ -9,12 +9,13 @@ uv run ruff format --check .                     # ci.yml unit job
 uv run pytest tests/unit -k billing              # 本特性单元面：配置/门禁/账本/价目矩阵/账单/对账/运行记录/CLI/纯度
 uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85
 uv run pytest tests/contract -k billing          # 契约面：C1~C16
-uv run pytest tests/contract                     # ci.yml contract job（含 C13 差异集与纯度断言）
+uv run pytest tests/contract                     # ci.yml contract job（含 test_pilot_contracts.py 的段差异集与纯度断言）
 CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q   # ci.yml：真实分支对着本地 stub 实跑
 uv run pytest tests/integration/test_http_real_stub.py -q  # ci.yml：真实适配器 stub 集成（本地 loopback）
 uv run pytest tests/unbiasedness -m unbiasedness           # ci.yml：无偏性门禁不放松（SC-008）
 uv run python ops/billing.py tiers     --channel llm
 uv run python ops/billing.py calibrate --channel llm --tier screenplay --config configs/movie.yaml
+                                                 # 只读既有真实调用记录（ops/smoke_llm.py --round 产物），不联网、不构造后端
 uv run python ops/billing.py import-bill --channel llm --file <账单文件> --bill-id <批次> --period <周期>
 uv run python ops/billing.py reconcile --channel llm --period <周期>   # 退出码：0 无告警 / 1 有告警 / 2 用法错误
 uv run python ops/billing.py alert-check --channel llm                 # 告警门禁只读入口（0 无告警 / 1 有告警 / 2 用法错误）
@@ -31,7 +32,8 @@ uv run python ops/demo_billing.py                # 离线六步演示（零真�
 ## 端到端场景（demo 流程，离线六步）
 
 1. **额度声明与缺项拒绝**：删 `budget` 段 / 删某档 → 装配报错（不取码内默认）；预估额超剩余额度 →
-   **调用前拒绝**、后端 0 次调用、`call_count` 与 `total_cost_usd` 恒 0、原因落 `alerts.jsonl`（SC-004）
+   **调用前拒绝**、后端 0 次调用、`call_count` 与 `total_cost_usd` 恒 0、调用点 `CostRecord` **全零**
+   （零成本分支，C10）、原因落 `alerts.jsonl`（SC-004）
 2. **最小规模校准**：Mock 后端 + 夹具账单 → 校准记录（当时价目快照 / 实测花费 / 偏差 / 口径备注 /
    样本量 / 时间）append-only；同键重产拒绝
 3. **未校准不得扩量**：无记录 / `passed=false` / 超期 → `raise-tier` 拒绝且留痕，配置**未被改写**（SC-005）
@@ -57,8 +59,8 @@ uv run python ops/demo_billing.py                # 离线六步演示（零真�
 - **上界估算仍可能被超**：预估价为保守上界（prompt `len//2` + completion 满额），若实际更高则余量可为负，
   如实入账 + `over_limit` 告警并拒绝后续调用（不回滚、不改写）。
 - **账本边界**：跨进程账本为**单主机**文件账本（flock + 原子替换）；**多主机需换 PG，未做**，登记为边界。
-- **账单来源形态未裁决**（规格开放问题 2）：导出（人工上传）与 API 拉取在本契约下同构（`source` 字段留痕），
-  第一实现形态由运营/plan 裁决。
+- **账单来源形态已决（本特性第一实现 = 导出导入）**：`import-bill` **不联网**（人工上传厂商导出文件，
+  C16）；API 拉取按同构的 `source=api` 表达、**本特性不实现联网拉取**（留作后续，不引入新凭证面）。
 
 ## 里程碑验收（立项书周 5~8 / SC-001，`docs/三期立项书.md:53`）
 
@@ -75,7 +77,7 @@ LLM 真实渠道**连续运行 ≥1 周**（运行记录机检**同时**满足�
 | --- | --- | --- |
 | C1~C4 包落点/业务无关性 + 账单导入面 + append-only + 布局 | `pytest tests/unit -k billing`（纯度/路径/导入/篡改）；`pytest tests/contract -k billing`；demo 步④ | SC-006/007 |
 | C5~C8 两维价目 + 峰谷归属 + 缓存来源 + 快照与不漂移 | `pytest tests/unit -k billing`（价目矩阵/四格/legacy 形状/复算逐字节）；demo 步⑥ | SC-003 |
-| C9~C12 分档声明 + 前置门禁 + 跨进程账本 + 校准先决条件 | `pytest tests/unit -k billing` + `pytest tests/contract -k billing`；demo 步①②③⑤ | SC-004/005 |
+| C9~C12 分档声明 + 前置门禁 + 跨进程账本 + 校准先决条件 | `pytest tests/unit -k billing` + `pytest tests/contract -k billing`（含**拒绝零成本分支** `test_billing_refusal_branch.py`）；demo 步①②③⑤ | SC-004/005 |
 | C13~C16 对账分类 + 告警门禁 + 运行记录窗口 + CLI/演示 | `pytest tests/unit -k billing` + `pytest tests/contract -k billing`；`ops/billing.py reconcile` 退出码；demo 步④⑥ | SC-001/002/009 |
 | SC-008 覆盖率 ≥85%（含 web）+ 对抗/无偏性不放松 | `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85`；`uv run pytest tests/adversarial -m adversarial`；`uv run pytest tests/unbiasedness -m unbiasedness` | SC-008 |
 | SC-001 连续运行 ≥1 周 | `ops/billing.py runs --channel llm --window-days 7`（**同时**判覆盖 ≥7 天与连续，散点天数不判通过；运营积累后复核，机制面由 demo 步⑥ 机检） | SC-001 |
@@ -84,7 +86,7 @@ LLM 真实渠道**连续运行 ≥1 周**（运行记录机检**同时**满足�
 
 - `uv sync`：（待实现回填）
 - `uv run ruff check .` + `uv run ruff format --check .`：（待实现回填）
-- `uv run pytest tests/unit -k billing`：（待实现回填——逐面：配置缺项/门禁拒绝 0 调用/账本并发/价目四格/账单导入/对账六类/运行记录缺口/CLI）
+- `uv run pytest tests/unit -k billing`：（待实现回填——逐面：配置缺项/门禁拒绝 0 调用/拒绝零成本分支/账本并发/价目四格/账单导入/对账六类/运行记录缺口/CLI）
 - `uv run pytest tests/contract -k billing`：（待实现回填——C1~C16 逐条）
 - `uv run pytest tests/integration/test_http_real_stub.py -q`：（待实现回填）
 - `uv run pytest tests/unbiasedness -m unbiasedness`：（待实现回填——门禁不放松）
@@ -99,9 +101,9 @@ LLM 真实渠道**连续运行 ≥1 周**（运行记录机检**同时**满足�
 - 全量 `uv run pytest tests/integration -m integration`（真实 PG；本特性无迁移）：（待实现回填——既有回归不降）
 - 登记点同步复核（新顶层段 `budget`）：`tests/unit/test_form_switch.py:259-276`（差异集含 `budget`）、
   `tests/unit/test_config_integrity.py:23-37`/`:43-67`（`CONFIG_CLASSES`/`REQUIRED_PATHS` 含 budget）、
-  `tests/contract/test_pilot_contracts.py:412` C13，**外加** `agents/pilot/pilot.py:101`
-  （`config_completeness` 预检清单）与 `tests/conftest.py:3154`（精简 movie 夹具）——二者是否登记取决于
-  "预检是否强制额度声明"的取舍（见 plan.md 缺口 6）：（待实现回填）
+  `tests/contract/test_pilot_contracts.py:412` 的段差异集（该文件内编号 C13），**外加** `agents/pilot/pilot.py:101`
+  （`config_completeness` 预检清单）与 `tests/conftest.py:3154`（精简 movie 夹具）——**已决：缺额度不得启动；
+  ④⑤必须同批落地**（见 plan.md 缺口 6）：（待实现回填）
 - `tests/unit/test_no_vendor_literals.py` 调用点断言扩展（8 处均声明 `stage=`，取值 ∈ 两形态档位键集）：
   （待实现回填）
 - 真实渠道最小规模校准（运营侧，需凭证与额度数字）：（待实现回填/待运营）

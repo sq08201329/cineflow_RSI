@@ -21,8 +21,8 @@ budget:
         fetch: export|api
         columns: {entry_id: …, amount: …, currency: …, period: …, line_kind: …, amount_sign: …}
                                   # line_kind/amount_sign = 分类驱动列（C2/C13）；缺声明即报错，不得以金额启发式代替
-  tiers:                          # 按环节分档额度（键 = 环节 id；调用点声明的环节必须在此）
-    <环节>:
+  tiers:                          # 按环节分档额度（键 = 环节 id = 各 `.chat(` 调用点声明的 `stage=` 取值）
+    <环节>:                        # 清单以**调用点声明**为准（8 处，C9）；不发明"agent 名 ↔ 环节 id"映射
       limit_usd: <float>          # 上限（> 0）；具体数字待运营给定（规格开放问题 1，不发明）
       window: {kind: run|day|period}   # 时间窗（day 的日历与时区取 peak_windows.timezone）
       on_exhausted: refuse        # 唯一取值：拒绝（不排队、不降级为模拟）
@@ -41,7 +41,7 @@ budget:
 ① `tests/unit/test_form_switch.py:259-276`（顶层差异集；同文件的 `test_权重与阈值差异` Agent 权重循环**不适用**——
 `budget` 不进 `evaluator_weights`）② `tests/unit/test_config_integrity.py:23-37`
 （`CONFIG_CLASSES` 增 `("budget", "core.billing.budget", "BudgetConfig")`）与 `:43-67`
-（`REQUIRED_PATHS` 增 `("budget", ("budget", "tiers"))`，缺项即红）③ `tests/contract/test_pilot_contracts.py:412`（C13 差异集）
+（`REQUIRED_PATHS` 增 `("budget", ("budget", "tiers"))`，缺项即红）③ `tests/contract/test_pilot_contracts.py:412`（段差异集；**该文件内编号 C13**）
 ④ `agents/pilot/pilot.py:101`（`config_completeness` 预检清单，`:167` 调用）⑤ `tests/conftest.py:3154`
 （精简 movie 夹具）。①②③ 为既定钉点；④⑤ 是本次勘查发现的**清单缺口**（规格未列）——若选择"预检即强制
 额度声明"，二者必须同步登记，否则"忘记声明额度"会在模拟路径悄悄跑通、真切换时才炸（取舍见 plan.md 缺口 6）。
@@ -80,7 +80,8 @@ llm:
   `reserved_usd` / `refusals`（计数 + `last_refusal{at,reason,estimated_usd}`）/ `note`。
   身份 = `(channel_id, tier_id, 窗口实例)`；余量 = `limit − spent − reserved`（由跨进程账本持有，非进程内）
 - **价目表（PriceBook，两维）**：`profile_id` / `prices`（基础两键）/ `price_matrix`（四格，可选）/
-  `declared_dimensions` / `price_note`；随 `ProfileSnapshot` 冻结（`profiles.py:115-153`）；历史复算不漂移
+  `declared_dimensions` / `price_note`；随 `ProfileSnapshot` 冻结（`profiles.py:115-153`）；历史复算不漂移。
+  **折算只有一份口径**：网关折算与 `ModelProfile.cost_usd`（`:92-96`）**同取** `price_cell`
 - **厂商账单（VendorBill）与账单条目（BillEntry）**：`bill_id`（批次）/ `channel_id` / `period` /
   `currency` / `source`（`export|api`）/ `raw_ref`（原始行摘要）/ `fetched_at` / `entries[]`；
   `BillEntry` = `entry_id`（账单内唯一）/ `model_ref`（档案 id，可空）/ `amount` / `currency` /
@@ -91,7 +92,11 @@ llm:
   （**必须引用账单批次与来源**——网关记账不得作"成本已核实"唯一依据）/ `overrides[]`（人工批注只追加）
 - **校准记录（CalibrationRecord）**：`calibration_id` / `channel_id` / `tier_id` / `prices_snapshot`
   （含 matrix）/ `measured{`样本量`, `实测花费`}` / `deviation` / `passed` / `reasons` /
-  `note`（口径备注）/ `at`。身份 = `(channel_id, calibration_id)`；**是提高额度的先决条件**
+  `note`（口径备注）/ `at`。身份 = `(channel_id, calibration_id)`；**是提高额度的先决条件**。
+  **"实测花费"的来源 = 既有真实调用记录**（最小规模单轮 = `ops/smoke_llm.py --round` 产出的运行记录，
+  加网关账目/账本记录；口径 = `cost_source` 标注的来源），`ops/billing.py calibrate` **只读这些记录**、
+  **不自行发起厂商调用**——故本特性**不产生第三个真实装配点**（真实装配点仍只有 `backends.py:210-214`
+  与 `smoke_llm.py:193-198` 两处，见 C10）
 - **渠道运行记录（ChannelRunLog）**：键 = `(channel_id, date)`（date 按 `peak_windows.timezone`——渠道日历
   单点，与额度 `day` 窗口、峰谷判定同一时区，见 C4）；`entries[]` 每条 = `{at, stage,
   source: real|simulated|fallback, adapter_ref, profile_id, result, cost_source, fallback_reason}`；
@@ -104,7 +109,10 @@ llm:
 - 渠道：`untested →（最小规模校准）→ pass | fail`；`untested|fail` 下扩量**恒拒绝**；`pass` 是扩量唯一
   前置，且记录过期（`record_ttl_days`）即须重校
 - 预算档：`在额 → 超限拒绝（0 调用 0 入账）`；窗口滚动到期重置计数；实测超预估使余量 < 0 ⇒
-  `over_limit=true` 告警 + 后续调用拒绝，**已发生的花费如实入账且不回滚、不改写**
+  `over_limit=true` 告警 + 后续调用拒绝，**已发生的花费如实入账且不回滚、不改写**；
+  调用点侧遇拒绝走**零成本分支**——FAILED 记录照写、**被拒的那一笔不入账**
+  （该笔 `llm_calls=0`、`generation_api_cost_usd=0.0`；同轮**已发生**花费照记）、
+  失败原因点名"预算拒绝"与剩余/所需额度（见 C10 的调用点分支规则）
 - 账单：`导入 →（批次唯一）→ 条目就位`；重复批次拒绝；未识别格式拒绝（零部分导入）
 - 差异项：`六类之一 | unclassified`；`unclassified` 或超阈值 ⇒ `unexplained=true` ⇒ 告警落盘 + 报告标记
 - 报告 / 校准记录 / 账单记录：产出即冻结（同键重产拒绝）；人工批注只允许追加（`overrides`）

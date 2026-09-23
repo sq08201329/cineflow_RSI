@@ -21,8 +21,11 @@ budget:
   真实调用面时**缺任一键即报错拒绝启动**——不取码内默认、不静默放行（FR-001 / US1 场景 2）。
 - **环节归属机制**（本契约判断项）：`chat(..., stage=<环节 id>)` 由调用点声明环节（网关只有 4 个 `role`，
   `judge` 一个角色覆盖四个环节，`role → tier` 映射无法表达"按环节分档"，故必须由调用点声明）。
+  **`budget.tiers` 的键就是这些 `stage=` 取值**——清单以调用点声明为准（8 处 `.chat(`，见 C1），
+  不发明"agent 名 ↔ 环节 id"的映射（agent 名与环节未必一一对应，无法对应时如实登记为口径张力）。
   断言：全部 `.chat(` 调用点声明 `stage=`，且取值 ∈ 两形态 `budget.tiers` 键集（扩展
-  `tests/unit/test_no_vendor_literals.py:86-138` 的调用点断言；计数仍为 8，不新增调用点）。
+  `tests/unit/test_no_vendor_literals.py:86-138` 的调用点断言；计数仍为 8，不新增调用点，
+  且**扫描域就是该测试的扫描域**——含 `dreaming/candidates.py:79`，不含 `ops/smoke_llm.py:215`）。
   注入了 guard 而请求缺 `stage` ⇒ 拒绝（`tier_undeclared`），不静默归入默认档。
 - 额度随快照冻结：装配时把生效档位定义 + `peak_windows_snapshot` + `channel_id` + 账本 `revision`
   并入 Agent 的 `config_snapshot["budget_tiers"]`（未接入时**不落键**，镜像
@@ -55,22 +58,50 @@ budget:
   `call_count` 与 `total_cost_usd` 与 `_breakdown` **均不变**、缓存不写、异常上抛 ⇒
   **调用计数 0、成本入账 0**（FR-002 / SC-004 / US1 场景 1）；拒绝原因与预估价落
   `billing/{channel}/alerts.jsonl`（`kind=budget_refused`）+ 账本 `refusals` 计数（US1 场景 1"原因落盘"）。
+  **注意**：以上"三量不变"只说**网关侧**；调用点侧另受下条**调用点分支规则**约束——拒绝必须记成
+  "没花的钱"，不得并入既有的"失败照计预估成本"分支。
+- **调用点分支规则（本契约的绑定条款，与上条同等效力）**：调用点侧同样不许把拒绝记成花费。
+  `BudgetRefusedError` 是 `GatewayError` 子类，故**任何**
+  `except GatewayError`（或更宽的 `except Exception`）处理点**必须**先捕获 `BudgetRefusedError`
+  （Python 按子类优先匹配，**先写即语义**），并走**零成本分支**：
+  ① 节点 / 标记**照写 FAILED 记录**（审计需要），但**被拒的那一笔不得入账**：该笔的贡献**必须全零**
+  （`llm_calls=0`、`llm_tokens=0`、`generation_api_cost_usd=0.0`），运营表**不得**为它入账任何预估值
+  （尤其不得拿 `estimated_usd` 顶替）；若同一节点/同轮在拒绝**之前**已有**已发生**的调用（典型：判官被拒
+  而本轮的生成已成功），**那部分花费照记**——原则二针对的正是"已发生"这一条件，两者不冲突；
+  ② 失败原因必须**点名"预算拒绝"**，并给出剩余额度与所需额度（`remaining_usd` / `estimated_usd`）；
+  ③ 拒绝**必须与其它网关失败可辨**：错误类型 + 告警 `kind=budget_refused` + 失败原因三处一致，
+  使"花了的钱"与"没花的钱"在报告、节点、运营表里都不会被合并计数。
+  **依据**：既有"失败照计预估成本（原则二）"只适用于**已发生**花费；拒绝时花费未发生，
+  把它记成花费既违反 FR-002/SC-004（"拒绝时成本入账恒为 0"），也违反原则三"超限即拒绝、
+  **禁止**先花后报"。**覆盖断言**：`tests/unit/test_billing_refusal_branch.py` 对**普查到的每一处**
+  处理点各一例（被拒的那一笔不入账——该笔为全零、同轮已发生花费照记；后端 0 次调用、
+  `call_count`/`total_cost_usd` 不变、原因含拒绝与额度）；调用点普查见 T1950/T1951。
 - **分型互斥**（规格边界情况，对账须可归因）：`budget_refused`（本系统门禁）≠ 认证失败
   （厂商 401/403 → `PermanentBackendError`，`backends/http.py:31`）≠ 配额/限流
   （厂商 429 → `TransientBackendError`，`backends/http.py:29`）——三类各有独立错误类型与告警 `kind`。
 - 实测超预估（`settle` 使余量 < 0）：如实入账 + `over_limit=true` 告警 + 后续调用拒绝（不回滚、不改写、
   不静默清零）；**登记边界**：上界估算仍可能被超（prompt 实际 token 高于 `len//2`），故余量可为负。
-- 覆盖断言（US1 场景 5"不得绕过"），**两层，缺一不可**（豁免**按规则判定，不用文件白名单**）：
+- 覆盖断言（US1 场景 5"不得绕过"），**两层，缺一不可**（豁免**按规则判定，不用文件白名单**），
+  另加③**条件义务**堵住"以后悄悄开洞"：
   ① **显式性断言**（必要但不充分——`spend_guard=None` 也算"传了"）：`core/`、`agents/`、`ops/` 内任何
   `LLMGateway(...)` 构造**必须显式传** `spend_guard=`；同函数内构造 `MockBackend`（或测试桩）的离线装配
   ⇒ 必须显式 `spend_guard=None`（登记为豁免），离线装配点清单常驻断言（新增一处即红）。
   ② **保证性断言**（真正的"必先过门禁"）：引用 `HttpBackend` / `_llm_backend(kind="http")` 的**真实渠道
-  装配点**必须传**非 `None`** 的 guard——当前**两处**：`agents/pilot/backends.py:210-214`（整条链的唯一
-  装配点）与 `ops/smoke_llm.py:193-198`（最小规模真实调用/校准的装配点）；清单常驻断言，且 `core/` 与
+  装配点**必须传**非 `None`** 的 guard——当前**两处**：`agents/pilot/backends.py:210-214`（链内唯一装配点）
+  与 `ops/smoke_llm.py:193-198`（最小规模真实调用/校准的装配点）；清单常驻断言，且 `core/` 与
   `agents/` 下**不得出现** `spend_guard=None`。该链上"超限即拒"因此是机检事实，而不是从调用点普查
-  推断出的结论（实测普查：非测试构造点共 10 处 = 真实 2 处（本契约所列）+ `ops/` 内 mock/桩 8 处
-  （5 处显式 `MockBackend()` 演示 + `demo_screenplay_loop.py:271` / `screenplay.py:167` / `dev.py:168`
-  的注入后端路径），按①显式登记）。
+  推断出的结论（实测普查：非测试构造点共 10 处 = 真实 2 处（本契约所列）+ `ops/` 内 8 处离线装配
+  ——6 处同函数内构造 mock/桩（`demo_editing_loop.py:219` / `demo_storyboard_loop.py:205` /
+  `demo_dev_loop.py:793` / `demo_visual_loop.py:79` / `demo_promo_loop.py:96` 的显式 `MockBackend()`，
+  加 `demo_screenplay_loop.py:271` 的 `_CountingBackend`（内含 `MockBackend`））+ `screenplay.py:167` /
+  `dev.py:168` 的注入后端路径（**当前不可用**，见③），均按①显式登记）。
+  ③ **条件义务（堵住"以后悄悄开洞"）**：`ops/screenplay.py:167` 与 `ops/dev.py:168` 的注入后端路径
+  **当前为不可用路径**——`--backend http` 走裸构造 `HttpBackend()`，而裸构造恒抛 `GatewayError`
+  （构造器要求显式注入 `base_url`/`api_key`，`core/llm_gateway/backends/http.py:98-105`），故今天它们
+  到不了真实调用面，按①显式 `spend_guard=None` 登记。但断言必须**按规则**判定（引用 `HttpBackend` /
+  `_llm_backend(kind="http")` 的构造点**必须在②保证性清单内**）而非按文件白名单——这样一旦它们被
+  改成可用装配路径（例如改用 `HttpBackend.from_profile`），**该处即红**，必须连同 guard 一起改，
+  门禁的洞不能被静默打开。
   `tests/contract/test_billing_contracts.py` 另断言超限调用后端计数 0、`call_count`/`total_cost_usd` 不变。
 
 ### 场景
@@ -79,6 +110,9 @@ budget:
 2. 本地缓存命中 → 返 `cost 0`、`call_count` 不变、不占额（与厂商缓存维度区分，C5/C7）
 3. 认证失败（401）与厂商限流（429）不落 `budget_refused`，各自分型；三类告警 `kind` 可辨
 4. 未注入 guard 的网关（既有装配）行为逐字节不变；`core/llm_gateway` 中零 `core.billing` import
+5. 调用点（如 `agents/screenplay/loop.py:698`）遇拒绝 ⇒ FAILED 节点照写、同名标记照留，但
+   **被拒的那一笔不入账**（该笔全零）、原因点名"预算拒绝 + 剩余/所需额度"；同一轮**已发生**的花费照记
+   （"花了的钱"与"没花的钱"在节点与运营表里可分辨）
 
 ## C11 跨进程账本（单主机文件账本）
 
@@ -114,6 +148,12 @@ billing/{channel}/ledger.json
   `passed`（阈值 `budget.calibration.deviation_tolerance` 与 `min_samples`）/ 口径备注 / `at`；
   **append-only**（同 `(channel_id, calibration_id)` 重产拒绝，镜像 `core/degraded/evidence.py:237-241`）。
   最小规模调用的实际发生与花费来源须可从运行记录与网关账目回溯（不凭报告自证）。
+- **校准入口是只读汇总，不发厂商调用（本契约判断项）**：`ops/billing.py calibrate` **只读既有真实调用
+  记录**（最小规模单轮 = 运营侧执行的 `ops/smoke_llm.py --round` 所产出的运行记录 + 网关账目/账本记录，
+  口径以 `cost_source` 标注的来源为准）与当时配置价目，算出 `deviation`/`passed` 后落
+  `calibrations/{calibration_id}.json`；**它不联网、不构造后端、不自造数据**——故本特性**不产生第三个
+  真实装配点**（真实装配点仍只有 C10 ②所列两处），"实测花费"这一字段的来源因此是**既有记录的复述**，
+  不是校准命令的新测量。
 - `raise_tier(channel, tier, limit_usd, *, calibration_id, by, reason)` 拒绝条件（**任一命中即拒绝并留痕**）：
   ① 无 `calibration_id`；② 记录不存在或不同渠道；③ `passed != true`；④ 样本量 < `min_samples`；
   ⑤ 记录超期（`record_ttl_days`）；⑥ `deviation` 超容差 ⇒ SC-005"未校准即扩量恒 0 次"。

@@ -58,16 +58,21 @@
 - 粒度：每次真实调用一条 entry（`at` / `stage` / `source ∈ {real, simulated, fallback}` / `adapter_ref` /
   `profile_id` / `result` / `cost_source` / `fallback_reason`）；**真实渠道失败禁止静默回落模拟并照常计费**
   ——回落必须显式声明 `fallback=true` + 原因 + 来源标注（FR-013）。
+- **`source=fallback` 为保留值（本特性无写入点）**：FR-013 的现状是"装配期即拒、网关不设回落路径"
+  （`agents/pilot/backends.py:235-243`），故本特性**没有任何**代码路径会写出 `fallback`——取值域保留
+  该值是为了让"若哪天开了回落"必须**显式**写原因（G4/G2 的真实渠道接入时才可能落地），
+  且保留值**不得**用于绕过 FR-013（不得为它发明写入点）。写入点若将来新增，须过同一套 `head_digest` 链
+  与 `cost_source` 留痕。
 - 日期归属 = `peak_windows.timezone` 的本地日期（与额度时间窗同一日历）；同日文件追加（C3 链式摘要）；
   `sealed` 后当日追加拒绝。
-- `window_coverage(channel_id, *, end, min_days, gap_tolerance_days) -> {covered_days, gaps[], max_gap_days,
-  continuous, meets}`：`covered_days` **只计 `source=real` 的日期**（回落日不算真实运行日）；`gaps` 为缺失
-  日期区间（含天数）、`max_gap_days` = 最长断档天数；**如实列出、禁止插值补齐**（FR-012）。
-- **判定规则（本契约精确口径，收紧 FR-012/SC-001）**：`meets = covered_days ≥ min_days` **∧**
+- `window_coverage(channel_id, *, end, min_window_days, gap_tolerance_days) -> {covered_days, gaps[],
+  max_gap_days, continuous, meets}`：`covered_days` **只计 `source=real` 的日期**（回落日不算真实运行日）；
+  `gaps` 为缺失日期区间（含天数）、`max_gap_days` = 最长断档天数；**如实列出、禁止插值补齐**（FR-012）。
+- **判定规则（本契约精确口径，收紧 FR-012/SC-001）**：`meets = covered_days ≥ min_window_days` **∧**
   `max_gap_days ≤ gap_tolerance_days`——**覆盖与连续双条件**，两项均由配置声明
   （`budget.runs.min_window_days` / `budget.runs.gap_tolerance_days`，后者 0 = 不容断档）。
   **只累计够天数但有断档 ⇒ 恒不通过**（假绿必须被拒）；任一不满足时同时给出**未达标归因**：
-  `covered_days` 与 `min_days` 的差值、`max_gap_days` 与容差的差值，以及逐段 `gaps`——
+  `covered_days` 与 `min_window_days` 的差值、`max_gap_days` 与容差的差值，以及逐段 `gaps`——
   `covered_days`/`continuous`/`gaps` 三项**照旧落在产物里**（通过时也可见），失败可归因、缺口不被隐藏。
 - 术语分辨：`continuous = not gaps`（**有无断档**，与容差无关）；`meets` 才是**带容差的判定**。容差放开时
   `meets=true` 与 `continuous=false` 可**同时出现**——产物并列呈现两者，通过不谎报为"连续"。
@@ -77,11 +82,13 @@
 ### 场景
 
 1. **连续夹具**（窗口内逐日有 `source=real`）→ `meets=true`、`gaps=[]`、`max_gap_days=0`
-2. **散点夹具**（8 天真实运行但中间缺 2 天，容差 0）→ 即使 `covered_days=8 ≥ min_days` 仍 `meets=false`
+2. **散点夹具**（8 天真实运行但中间缺 2 天，容差 0）→ 即使 `covered_days=8 ≥ min_window_days` 仍 `meets=false`
    （`max_gap_days=2 > 0`）；断档区间如实呈现在 `gaps`，文件内**无插值条目**
 3. 容差放开（`gap_tolerance_days=2`）→ 同一散点夹具 `meets=true`，而 `gaps` 与 `max_gap_days` **照旧可见**
    （通过不隐藏缺口）；仅 5 天 → `meets=false` 且给出覆盖差值
-4. 真实失败回落模拟 → entry 标 `source=fallback` + 原因，不计入 `covered_days`
+4. `source=fallback` 为**保留值**（本特性无写入点）：用夹具构造一条保留值 entry，只验证**读取**口径
+   ——不计入 `covered_days`、必须带 `fallback_reason`；本特性**不实现**回落写入路径
+   （FR-013 现状为装配期即拒，`agents/pilot/backends.py:235-243`）
 
 ## C16 CLI / 演示面与退出码
 

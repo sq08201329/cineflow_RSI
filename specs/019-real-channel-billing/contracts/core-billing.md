@@ -15,7 +15,7 @@ core/billing/bill.py         normalize_bill(raw, *, channel_id, bill_id, period,
 core/billing/reconcile.py    reconcile(period, *, channel_id, gateway_ledger, bill, cfg, ...) -> ReconciliationReport
 core/billing/calibration.py  record_calibration(...) -> CalibrationRecord / load_calibration / require_calibration
 core/billing/runlog.py       append_run(channel_id, *, moment, stage, source, ...) / load_run(date)
-                             window_coverage(channel_id, *, end, min_days, gap_tolerance_days) -> Coverage
+                             window_coverage(channel_id, *, end, min_window_days, gap_tolerance_days) -> Coverage
 ```
 
 - **五模块**（与 plan.md 项目结构逐字一致）：守卫与 `budget:` 段解析并入 `budget.py`，不新增第六/第七个模块。
@@ -34,6 +34,9 @@ core/billing/runlog.py       append_run(channel_id, *, moment, stage, source, ..
   （AST + 文本）。断言按此可直接照写：扫 `core/billing/**/*.py` 文本，命中任一被禁字面量即红。
 - **不新增 `.chat(` 调用点**（门禁在网关内）：`tests/unit/test_no_vendor_literals.py:103` 的计数断言保持 8；
   但**新增**同处断言"每个调用点声明 `stage=`（环节 id）"且取值 ∈ 两形态 `budget.tiers` 键集（见 C9/C10）。
+  该 8 处**就是该测试扫描域的 8 处**——扫描域 = `core/`（除 `core/llm_gateway/`）/ `agents/` / `dreaming/`，
+  故**含 `dreaming/candidates.py:79`**、**不含 `ops/smoke_llm.py:215`**（后者在 `ops/` 下，属 C10 ②
+  的另一条装配面断言，不并入本条计数）。
 
 ### 场景
 

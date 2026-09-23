@@ -19,6 +19,10 @@ price_matrix:                                              # 可选；声明即�
   报告/快照口径备注记「未区分峰谷/缓存」；声明后**不得**回落基础价（缺格即报错，不静默取 `prices`）。
 - 单点取价：`price_cell(profile, *, moment, cache_hit) -> (cell_key, prices)`；网关折算（`gateway.py:311-314`）
   与预算估算（C10）**同取该函数**（"估算与折算同源"，`gateway.py:144-159` 遗留 1 收敛点的延伸）。
+- **第二条折算路径必须委派**：`ModelProfile.cost_usd(prompt_tokens=…, completion_tokens=…)`
+  （`profiles.py:92-96`）今天是一条独立的硬编码线性式——与网关折算**两套口径**，改两维价目后会与
+  `price_cell` 脱钩。本特性把它改为**委派 `price_cell` 的实现**（函数签名与返回语义不变、调用方零改动），
+  保证全仓**只有一份**折算口径。
 - 零价目纪律沿用：四格全 0 仍须显式 `zero_marginal: true`（`profiles.py:279-291`）；**单格为 0 合法**
   （如厂商不对命中计费须以校准记录支撑，规格边界情况：命中档位不得默认按 0）。
 - `cached_prompt_tokens`（C7）与本地缓存标记**正交**：网关本地内容哈希命中零成本、无后端调用、

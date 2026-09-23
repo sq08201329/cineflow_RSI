@@ -136,10 +136,15 @@ off_peak_hit}`，每格 `{prompt_per_1k, completion_per_1k}`；**声明即四格
 ⑤ 入账（`total_cost_usd`/`call_count`/`_breakdown`）→ ⑥ `reservation.settle(actual)`。
 拒绝 = `BudgetRefusedError`（`GatewayError` 子类）：`call_count`/`total_cost_usd`/`_breakdown` **均不变**、
 缓存不写、异常上抛（调用计数 0、入账 0），原因落 `billing/{channel}/alerts.jsonl`（`kind=budget_refused`）
-+ 账本 `refusals` 计数。**预估口径 = 既有成本上界估算的唯一实现**（`prompt = max(1, len(prompt)//2)` token +
++ 账本 `refusals` 计数；**且调用点必须走零成本分支**——`BudgetRefusedError` 是 `GatewayError` 子类，
+调用点须**先于** `except GatewayError`（或更宽的 `except Exception`）捕获它，FAILED 记录照写但
+**被拒的那一笔不入账**（该笔全零；同轮**已发生**花费照记）、失败原因点名拒绝（否则拒绝会被既有的"失败照计
+预估成本（原则二）"分支记成花费，与 FR-002/SC-004 及原则三"禁止先花后报"直接冲突；普查与断言见 C10
+调用点分支规则、T1950/T1951）。**预估口径 = 既有成本上界估算的唯一实现**（`prompt = max(1, len(prompt)//2)` token +
 `max_tokens` 满额；先例 `agents/screenplay/loop.py:281-289`）：实现收敛到 `core/llm_gateway`，
 `agents/screenplay/loop.py:672` 的调用改为薄调用，**guard 不自行估算**（避免两套口径），
-由网关填入 `SpendRequest.estimated_usd`。注入点唯一 = `agents/pilot/backends.py:210-214`。
+由网关填入 `SpendRequest.estimated_usd`。装配面 = **链内唯一装配点 + 校准入口，共两处**：
+`agents/pilot/backends.py:210-214` 与 `ops/smoke_llm.py:193-198`。
 
 **理由**：① 前置判定是宪章原文（"调用前**必须**通过……超限即拒绝，**禁止**先花后报"），而今天 LLM 腿
 连上限都没有（`agents/pilot/pilot.py:182-191` 只验价目表存在、额度记 `0.0`；网关只累计、
@@ -205,13 +210,14 @@ LLM 腿上的落地**，而非新发明；③ 预估必须保守：调用前拿�
 登记清单**五处**：① `tests/unit/test_form_switch.py:259-276` 的顶层差异集；②
 `tests/unit/test_config_integrity.py:23-37` 的 `CONFIG_CLASSES`（增
 `("budget", "core.billing.budget", "BudgetConfig")`）与 `:43-67` 的 `REQUIRED_PATHS`（增
-`("budget", ("budget", "tiers"))`）；③ `tests/contract/test_pilot_contracts.py:412` 的 C13 差异集；
+`("budget", ("budget", "tiers"))`）；③ `tests/contract/test_pilot_contracts.py` 的段差异集
+（**该文件内编号 C13**，`:412`）；
 **④ `agents/pilot/pilot.py:101` 的 `config_completeness` 预检清单**（`:167` 调用）；
 **⑤ `tests/conftest.py:3154` 的精简 movie 夹具**。①②③ 是既定钉点，④⑤ 是本次勘查新发现的清单缺口。
 
 **理由**：原则五要求形态差异由配置承载、且"形态配置的例外情况必须是新增配置项"。①②③ 是 017 已经
 踩过的坑（`test_form_switch` 只管形态差异键集；`test_config_integrity` 只管加载器完整性与"缺项即红"；
-C13 是 `tests/contract/` 侧的同类断言）——新配置段不登记即**逃逸门禁**：没有任何测试会发现它在某一形态
+`test_pilot_contracts.py` 的段差异集（**该文件内编号 C13**）是 `tests/contract/` 侧的同类断言）——新配置段不登记即**逃逸门禁**：没有任何测试会发现它在某一形态
 缺失、或解析器静默取默认。④ 是本次勘查新发现的：本特性选择"**缺额度不得启动**"（FR-001），因此预检
 必须把 `budget` 段纳入完整性校验，否则"忘记声明额度"会在模拟路径悄悄跑通、切真实后端时才炸；
 ⑤ 随之判定（精简夹具若参与 pilot 装配则必须补段）。
@@ -278,11 +284,14 @@ unexplained_delta, delta_over_threshold, tier_raised, uncalibrated_raise}`，镜
 配置声明的 `peak_windows.timezone`，与额度时间窗同一日历）：每次真实调用一条 entry（`at` / `stage` /
 `source ∈ {real, simulated, fallback}` / `adapter_ref` / `profile_id` / `result` / `cost_source` /
 `fallback_reason`），`entries` 追加只增、`head_digest` 链式摘要（改写或删除任一条即断链报错），
-当日 `sealed` 后追加拒绝。窗口机检 `window_coverage(channel_id, *, end, min_days)` 输出
-`{covered_days, gaps[], continuous, meets}`，其中 **`covered_days` 只计 `source=real` 的日期**
-（回落日不算真实运行日），`meets = covered_days ≥ min_days`，`continuous = not gaps` **单独呈现**；
-**缺口如实报出，禁止插值补齐**。**口径登记**：SC-001"连续运行 ≥1 周"的机检按覆盖天数判定，
-断档以 `gaps`/`continuous` 如实标注，不静默算作通过。
+当日 `sealed` 后追加拒绝。窗口机检 `window_coverage(channel_id, *, end, min_window_days,
+gap_tolerance_days)` 输出 `{covered_days, gaps[], max_gap_days, continuous, meets}`，其中
+**`covered_days` 只计 `source=real` 的日期**（回落日不算真实运行日）；
+**`meets = covered_days ≥ min_window_days` ∧ `max_gap_days ≤ gap_tolerance_days`**（**覆盖 + 连续双条件**，
+两项均由配置声明，容差 0 = 不容断档）；`continuous = not gaps`（**有无断档**，与容差无关）与
+`gaps`/`max_gap_days` **照旧并列呈现**（通过时也可见，**不得**把通过谎报为"连续"）；
+**缺口如实报出，禁止插值补齐**。**口径登记**：SC-001"连续运行 ≥1 周"的机检按**覆盖 + 连续两条件**判定
+——仅累计够天数但有断档**不得**通过；断档以 `gaps`/`max_gap_days`/`continuous` 如实标注，不静默算作通过。
 
 **理由**：规格 SC-001 要求"LLM 真实渠道连续运行 ≥1 周"**可机检**，而今天**没有任何时间序列证据件**——
 `pilot/runs/{run_id}.json` 的 `run_id` 由配置 + 输入指纹派生（`agents/pilot/pilot.py:261-262`），
