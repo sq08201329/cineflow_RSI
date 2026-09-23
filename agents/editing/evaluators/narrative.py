@@ -5,8 +5,9 @@
 提示词的成对比较（全部经 LLM 网关计费，temperature=0 Mock 后端哈希种子确定性
 投票），胜率均值映射 [0,1]。平局票 0.5 如实记录不二次裁决（决策 6）。
 
-**版本号 = 1.0.0+j{提示词哈希前8}{锚点集前8}{摘要函数前8}**——三者任一变更
-即新版本（原则一；摘要函数是 judge 输入的形成环节，与提示词同等入版本）。
+**版本号 = 1.0.0+j{提示词哈希前8}{锚点集前8}{摘要函数前8}t{输出预算}**——四者任一变更
+即新版本（原则一；摘要函数是 judge 输入的形成环节，与提示词同等入版本；输出预算来自形态
+配置且决定 judge 实际产出，同样属行为口径）。
 """
 
 import json
@@ -29,18 +30,12 @@ from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由�
 EVALUATOR_ID = "judge.narrative_flow"
 
 
-# judge 单票输出的 token 预算（各 judge 共用口径）。为什么不是网关默认 1024：
-# ① 判决输出只需一票（A/B/平局），512 足够；② 判决档是非思考模式（thinking=disabled），
-# 预算不会被思维链吃光——真实故障：思考模式下 judge 的 1024 预算被思维链耗尽、正文为空。
-JUDGE_MAX_TOKENS = 512
-
-
 def _vote_of(response_text: str) -> float:
     """LLM 响应 → 确定性投票位（Mock 后端下逐字节可复现的解析规则）。
 
     哈希 % 3：0 → 负（0.0）、1 → 平局（0.5，如实记录不二次裁决）、2 → 胜（1.0）。
     真实后端接入时此函数替换为答案解析（A/B/平局抽取）；解析规则变更属实现
-    变更（提示词+锚点+摘要三段哈希之外由调用方口径承担）。
+    变更（提示词+锚点+摘要+输出预算四段哈希之外由调用方口径承担）。
     """
     return {0: 0.0, 1: 0.5, 2: 1.0}[int(blake3.blake3(response_text.encode()).hexdigest(), 16) % 3]
 
@@ -55,14 +50,16 @@ class NarrativeFlowJudgeEvaluator(Evaluator):
         model: str,
         prompts: list[str],
         anchor_edls: tuple[EditDecisionList, ...] | list[EditDecisionList],
+        max_tokens: int,
     ) -> None:
         self._gateway = gateway
         self._model = model
         self._prompts = list(prompts)
         self._anchor_edls = list(anchor_edls)
+        self._max_tokens = max_tokens
         # 锚点集经同一摘要函数产出（澄清 Q1：成对比较的对照面是摘要文本）
         self._anchor_summaries = [summarize_edl(a) for a in self._anchor_edls]
-        # 版本号三段哈希：提示词 + 锚点集（规范化 EDL JSON）+ 摘要函数（决策 5）
+        # 版本号四段哈希：提示词 + 锚点集（规范化 EDL JSON）+ 摘要函数 + 输出预算（决策 5）
         prompts_blob = blake3.blake3(
             json.dumps(self._prompts, ensure_ascii=False).encode()
         ).hexdigest()[:8]
@@ -71,7 +68,9 @@ class NarrativeFlowJudgeEvaluator(Evaluator):
         ).hexdigest()[:8]
         self.spec = EvaluatorSpec(
             evaluator_id=EVALUATOR_ID,
-            version=f"1.0.0+j{prompts_blob}{anchors_blob}{summary_function_hash()}",
+            version=(
+                f"1.0.0+j{prompts_blob}{anchors_blob}{summary_function_hash()}t{self._max_tokens}"
+            ),
             kind=EvaluatorKind.JUDGE,
             deterministic=True,
             cost_per_call=0.002,  # 声明性估值（>0 显式）；实际成本经网关按价目表折算入账
@@ -93,9 +92,7 @@ class NarrativeFlowJudgeEvaluator(Evaluator):
                     model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
                     role=Role.JUDGE,  # 功能 016：LLM judge 委员会角色
                     temperature=0.0,
-                    # 判决输出只需一票：显式给足 512 而不是走网关默认 1024；
-                    # 判决档为非思考模式（thinking=disabled），预算不会再被思维链吃光
-                    max_tokens=JUDGE_MAX_TOKENS,
+                    max_tokens=self._max_tokens,  # 输出预算来自形态配置
                 )
                 votes.append(_vote_of(result.text))
                 usage["llm_calls"] += 1

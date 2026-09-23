@@ -209,6 +209,34 @@ class Test一轮剪辑落树:
         by_hash = {n.observation_context["edl_hash"]: n for n in nodes}
         assert set(by_hash) == {e.edl_hash() for e in edls}
 
+    def test_judge_输出预算随树冻结(
+        self,
+        make_edl,
+        tree_store,
+        artifact_store,
+        adapter,
+        editing_jobs_engine,
+        library,
+        structure,
+    ):
+        """judge 输出预算入形态配置并随树冻结（历史节点不受此后配置变更影响，原则一/五）。"""
+        cfg = _config()
+        result = _run(
+            "r1c",
+            _StubPolicy(_three_edls(make_edl)),
+            tree_store,
+            artifact_store,
+            adapter,
+            editing_jobs_engine,
+            cfg,
+            library,
+            structure,
+        )
+        tree = next(
+            t for t in tree_store.trees_by(agent_id="editing") if t.tree_id == result.tree_id
+        )
+        assert tree.config_snapshot["judge"]["max_tokens"] == cfg.judge["max_tokens"] == 512
+
 
 class Test非法EDL执行前拒绝:
     @pytest.mark.parametrize(

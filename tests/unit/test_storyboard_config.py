@@ -72,6 +72,7 @@ class Test真实配置解析:
         """judge 输入 = ShotList 摘要：锚点集解析为 ShotList 供摘要。"""
         cfg = StoryboardConfig.from_dict(_valid_dict())
         assert cfg.judge["model"] == "mock-copy-v1"
+        assert cfg.judge["max_tokens"] == 512  # 输出预算入配置（原则五）
         assert len(cfg.judge["prompts"]) == 3
         assert len(cfg.anchor_shotlists) == 2
         assert all(isinstance(sl, ShotList) for sl in cfg.anchor_shotlists)
@@ -247,6 +248,19 @@ class TestJudge纪律:
         config = _valid_dict()
         del config["storyboard"]["judge"]["model"]
         with pytest.raises(StoryboardConfigError, match="model"):
+            StoryboardConfig.from_dict(config)
+
+    def test_缺_judge_输出预算即报错(self):
+        """judge 输出预算必须显式配置（缺即报错，不静默取默认——原则五）。"""
+        config = _valid_dict()
+        del config["storyboard"]["judge"]["max_tokens"]
+        with pytest.raises(StoryboardConfigError, match="max_tokens"):
+            StoryboardConfig.from_dict(config)
+
+    def test_非正_judge_输出预算即报错(self):
+        config = _valid_dict()
+        config["storyboard"]["judge"]["max_tokens"] = 0
+        with pytest.raises(StoryboardConfigError, match="max_tokens"):
             StoryboardConfig.from_dict(config)
 
     def test_模型名为空即报错(self):

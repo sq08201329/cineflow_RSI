@@ -41,5 +41,6 @@ def build_editing_evaluators(config: EditingConfig, gateway: LLMGateway) -> dict
         model=config.judge.get("model", "mock-copy-v1"),  # 价目表必须覆盖（缺价目网关即报错）
         prompts=list(config.judge["prompts"]),
         anchor_edls=config.anchor_edls,
+        max_tokens=config.judge["max_tokens"],
     )
     return {"gates": gates, "pacing": pacing, "judge": judge, "all": [*gates, pacing, judge]}

@@ -42,6 +42,7 @@ def build_storyboard_evaluators(config: StoryboardConfig, gateway: LLMGateway) -
         model=config.judge["model"],  # 价目表必须覆盖（缺价目网关即报错，不允许零成本）
         prompts=list(config.judge["prompts"]),
         anchor_shotlists=config.anchor_shotlists,
+        max_tokens=config.judge["max_tokens"],
     )
     return {
         "gates": gates,

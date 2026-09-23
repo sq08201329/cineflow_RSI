@@ -1,7 +1,7 @@
 """视觉形态配置（configs/*.yaml 的 visual 段 → VisualConfig）。
 
 配置即形态（宪章原则五）：生成预算、片段规格、帧采样规则、judge 锚点集
-与提示词、五评估器权重全部来自配置，缺失即报错。
+与提示词、judge 单票输出预算、五评估器权重全部来自配置，缺失即报错。
 """
 
 from dataclasses import dataclass, field
@@ -19,6 +19,23 @@ def _require(mapping: dict, key: str, where: str):
     if value is None:
         raise VisualConfigError(f"{where} 缺少配置项 {key!r}")
     return value
+
+
+def _require_judge(judge: dict) -> dict:
+    """judge 段：提示词非空列表 + 单票输出预算（缺即报错，不静默取码内默认，原则五）。"""
+    if not isinstance(judge, dict):
+        raise VisualConfigError(f"visual.judge 必须为 dict，实际为 {judge!r}")
+    prompts = _require(judge, "prompts", "visual.judge")
+    if (
+        not isinstance(prompts, list)
+        or not prompts
+        or not all(isinstance(p, str) and p for p in prompts)
+    ):
+        raise VisualConfigError("visual.judge.prompts 必须为非空字符串列表")
+    max_tokens = _require(judge, "max_tokens", "visual.judge")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1:
+        raise VisualConfigError(f"visual.judge.max_tokens 必须为 ≥1 的整数，实际为 {max_tokens!r}")
+    return dict(judge)
 
 
 @dataclass(frozen=True)
@@ -49,7 +66,7 @@ class VisualConfig:
             clip_spec=dict(_require(visual, "clip_spec", "visual")),
             frame_sampling=dict(_require(visual, "frame_sampling", "visual")),
             simulated_gen=dict(_require(visual, "simulated_gen", "visual")),
-            judge=dict(_require(visual, "judge", "visual")),
+            judge=_require_judge(_require(visual, "judge", "visual")),
             evaluator_weights=evaluator_weights,
         )
 

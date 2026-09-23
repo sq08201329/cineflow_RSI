@@ -187,7 +187,7 @@ def _require_render(render: dict) -> dict:
 
 
 def _require_judge(judge: dict) -> tuple[dict, tuple[ShotList, ...]]:
-    """judge 段：模型名 + 提示词非空列表 + 锚点 ShotList 集解析为 ShotList（C8 版号三段之一）。"""
+    """judge 段：模型名 + 提示词非空列表 + 单票输出预算 + 锚点 ShotList 集（C8 版号分量）。"""
     if not isinstance(judge, dict):
         raise StoryboardConfigError(f"storyboard.judge 必须为 dict，实际为 {judge!r}")
     model = _require(judge, "model", "storyboard.judge")
@@ -195,11 +195,16 @@ def _require_judge(judge: dict) -> tuple[dict, tuple[ShotList, ...]]:
         raise StoryboardConfigError(f"storyboard.judge.model 必须为非空字符串，实际为 {model!r}")
     prompts = _require(judge, "prompts", "storyboard.judge")
     prompts = _require_str_list(prompts, "storyboard.judge.prompts")
+    max_tokens = _require_int(
+        _require(judge, "max_tokens", "storyboard.judge"),
+        "storyboard.judge.max_tokens",
+        minimum=1,
+    )
     anchors = _require(judge, "anchor_shotlists", "storyboard.judge")
     if not isinstance(anchors, list) or not anchors:
         raise StoryboardConfigError("storyboard.judge.anchor_shotlists 必须为非空列表")
     anchor_shotlists = tuple(ShotList.from_dict(anchor) for anchor in anchors)
-    return {"model": model, "prompts": prompts}, anchor_shotlists
+    return {"model": model, "prompts": prompts, "max_tokens": max_tokens}, anchor_shotlists
 
 
 @dataclass(frozen=True)

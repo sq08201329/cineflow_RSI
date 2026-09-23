@@ -13,6 +13,7 @@ C1 场景 1~4：
 """
 
 import json
+from dataclasses import replace
 
 import blake3
 import pytest
@@ -81,6 +82,20 @@ def _stubs():
         StubProxyEvaluator("proxy.timeline_conflict", score=0.6),
         StubJudgeEvaluator("judge.dramatic_tension", score=0.7),
     ]
+
+
+class _RecordingBackend:
+    """记录每次调用的输出预算（证明预算来自配置而非码内常量）。"""
+
+    def __init__(self) -> None:
+        self.budgets: list[int] = []
+        self._delegate = MockBackend()
+
+    def complete(self, prompt, *, model, temperature, max_tokens):
+        self.budgets.append(max_tokens)
+        return self._delegate.complete(
+            prompt, model=model, temperature=temperature, max_tokens=max_tokens
+        )
 
 
 @pytest.fixture()
@@ -238,6 +253,9 @@ class Test一轮三阶段落树:
         }
         assert "gen_params" in snapshot["observation_fields"]  # 回放匹配槽
         assert snapshot["model"] == config.model
+        # 生成输出预算随快照冻结（016 遗留 5：来自形态配置，决定实际产出与成本上界）
+        assert snapshot["max_tokens"] == config.max_tokens == 16384
+        assert snapshot["judge"]["max_tokens"] == config.judge["max_tokens"] == 512
         assert snapshot["lines_per_page"] == config.lines_per_page
         assert snapshot["upgrade_criteria"] == config.upgrade_criteria
         assert len(snapshot["anchor_outlines"]) == len(config.anchor_outlines)
@@ -269,6 +287,8 @@ class Test分阶段输入脉络:
             "target_duration_min",
             "plan_digest",
         }
+        # 采样档取值来自配置（生成预算入形态配置：换形态 = 换配置值，非改代码）
+        assert outline_context["gen_params"]["max_tokens"] == config.max_tokens
         # 生成产物摘要另存观测（输入脉络审计）：outline 无上游、scenes/script 逐级承接
         assert outline_context["previous_artifact_hash"] is None
         assert nodes["scenes"].observation_context["previous_artifact_hash"] == (
@@ -282,6 +302,30 @@ class Test分阶段输入脉络:
         # 三阶段工件互异（stage 与正文都不同）
         hashes = {node.artifact_hash for node in nodes.values()}
         assert len(hashes) == 3
+
+
+class Test生成预算来自配置:
+    def test_生成预算入网关调用(
+        self,
+        policy,
+        tree_store,
+        artifact_store,
+        screenplay_jobs_engine,
+        config,
+    ):
+        """生成输出预算来自形态配置：三阶段逐次原样传给网关（改配置即改预算，非码内常量）。"""
+        backend = _RecordingBackend()
+        gateway = LLMGateway(backend, price_book=config.model_prices, sleep=lambda _: None)
+        _run(
+            "r2b",
+            policy,
+            tree_store,
+            artifact_store,
+            screenplay_jobs_engine,
+            gateway,
+            replace(config, max_tokens=777),
+        )
+        assert backend.budgets == [777] * 3
 
 
 class Test网关缓存键与响应哈希:

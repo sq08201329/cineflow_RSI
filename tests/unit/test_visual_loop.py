@@ -97,6 +97,16 @@ class Test预算门禁:
         assert spent == pytest.approx(result.spent_usd)
 
 
+class Test快照冻结:
+    def test_judge_输出预算随树冻结(self, loop_env):
+        """judge 输出预算入形态配置并随树冻结（历史节点不受此后配置变更影响，原则一/五）。"""
+        result = _run("v-snap", [_clip(1)], loop_env)
+        tree = next(
+            t for t in loop_env["store"].trees_by(agent_id="visual") if t.tree_id == result.tree_id
+        )
+        assert tree.config_snapshot["judge"]["max_tokens"] == loop_env["config"].judge["max_tokens"]
+
+
 class Test幂等:
     def test_重复触发零重复生成零重复扣费(self, loop_env):
         clips = [_clip(1), _clip(2)]

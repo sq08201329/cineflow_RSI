@@ -126,6 +126,9 @@ visual:
       - "哪一段镜头的电影感更强？"
       - "哪一段的叙事张力更好？"
       - "哪一段的画面构图更专业？"
+    # judge 单票输出预算（缺即报错，不允许静默取码内默认）：判决输出只需一票（A/B/平局），
+    # 512 足够；判决档为非思考模式（thinking=disabled），预算不会被思维链吃光
+    max_tokens: 512
 
 # 声音（sound）形态参数：生成预算、响度分档、同步阈值、采样率、
 # 三类型价目表（成本分账粒度）、确定性模拟生成参数（声学属性注入）
@@ -186,11 +189,14 @@ editing:
     codec: libx264
     encode_threads: 1 # 固定单线程档：同 EDL 两次渲染逐字节一致（SC-001）
     price_per_second_usd: 0.02 # 成片时长计价；缺价目即报错（原则三）
-  judge: # judge.narrative_flow 委员会（决策 5）：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
+  judge: # judge.narrative_flow 委员会（决策 5）：版本号 = 提示词 + 锚点集 + 摘要函数 + 输出预算四段哈希
     prompts:
       - "哪一版剪辑的叙事更连贯？"
       - "哪一版的情绪推进更好？"
       - "哪一版的节奏更贴合短剧形态？"
+    # judge 单票输出预算（缺即报错，不允许静默取码内默认）：判决输出只需一票（A/B/平局），
+    # 512 足够；判决档为非思考模式（thinking=disabled），预算不会被思维链吃光
+    max_tokens: 512
     anchor_edls: # 冻结锚点 EDL 集（与候选摘要做成对比较）
       - clips:
           - {shot_id: "anchor-a1", in_ms: 0, out_ms: 1500, transition: {type: cut, duration_ms: 0}}
@@ -234,12 +240,15 @@ storyboard:
     codec: libx264
     encode_threads: 1 # 固定单线程档：消除 x264 多线程编码的非确定性
     price_per_shot_usd: 0.02 # 按镜头数计价；缺价目即报错（原则三）
-  judge: # judge.script_fit 委员会：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
+  judge: # judge.script_fit 委员会：版本号 = 提示词 + 锚点集 + 摘要函数 + 输出预算四段哈希
     model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
     prompts:
       - "哪一版分镜的镜头语言更贴合剧本段落？"
       - "哪一版分镜的景别节奏更能传递剧本情绪？"
       - "哪一版分镜的轴线与机位安排更专业？"
+    # judge 单票输出预算（缺即报错，不允许静默取码内默认）：判决输出只需一票（A/B/平局），
+    # 512 足够；判决档为非思考模式（thinking=disabled），预算不会被思维链吃光
+    max_tokens: 512
     anchor_shotlists: # 冻结锚点 ShotList 集（与候选摘要做成对比较）
       - schema_version: "1.0.0"
         shots:
@@ -280,6 +289,12 @@ screenplay:
     drift_band: 0.1 # 漂移指标容忍带（|漂移| ≤ 该值视为带内）
     gate_violation_max: 0.2 # 门禁违规率上限（超限即不达标）
   model: mock-copy-v1 # 三阶段产出的生成模型（走既有网关；缺价目即报错，原则三）
+  # 单次生成的最大输出 token（三段共用；缺即报错，不允许静默取码内默认）。
+  # 为什么这么大：真实 LLM 单轮实测——接入的**推理模型**（思维链与正文共享输出预算），
+  # `script` 阶段（最长产出）在 1024/4096 预算下都出现 finish_reason='length' +
+  # reasoning_content 非空 + content=''（预算被思维链吃光，正文一字未出）。
+  # 预算必须覆盖"思维链 + 正文"，故按最坏情况给足（预估成本上界随之保守上抬，见 loop._estimate_cost）。
+  max_tokens: 16384
   model_prices: # 生成与 judge 共用的模型价目表（美元/千 token）
     mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
     # DeepSeek 真实 LLM（OpenAI 兼容，base = https://api.deepseek.com）——冒烟用；
@@ -290,12 +305,15 @@ screenplay:
     deepseek-flash: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
     # pro：输入 $1.32/1M → 0.00132/1k；输出 $3.96/1M → 0.00396/1k
     deepseek-v4-pro: {prompt_per_1k: 0.00132, completion_per_1k: 0.00396}
-  judge: # judge.dramatic_tension 委员会（仅 outline 阶段）：版本号 = 提示词 + 锚点集 + 摘要函数三段哈希
+  judge: # judge.dramatic_tension 委员会（仅 outline 阶段）：版本号 = 提示词 + 锚点集 + 摘要函数 + 输出预算四段哈希
     model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
     prompts:
       - "哪一份大纲的戏剧张力更强？"
       - "哪一份大纲的冲突升级更清楚？"
       - "哪一份大纲的人物动机更可信？"
+    # judge 单票输出预算（缺即报错，不允许静默取码内默认）：判决输出只需一票（A/B/平局），
+    # 512 足够；判决档为非思考模式（thinking=disabled），预算不会被思维链吃光
+    max_tokens: 512
     anchor_outlines: # 冻结锚点大纲集（与候选大纲摘要成对比较；对照面不参与门禁）
       - schema_version: "1.0.0"
         stage: outline

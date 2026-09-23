@@ -3202,6 +3202,7 @@ visual:
   judge:
     anchor_gen_params: [{style: "史诗", shots: 2, seed_tier: 1}]
     prompts: ["哪一段镜头的电影感更强？"]
+    max_tokens: 512
 sound:
   exploration_per_round_usd: 300
   clips_per_round: 4
@@ -3247,6 +3248,7 @@ editing:
     price_per_second_usd: 0.05
   judge:
     prompts: ["哪一版剪辑的叙事更连贯？"]
+    max_tokens: 512
     anchor_edls:
       - clips:
           - {shot_id: "anchor-a1", in_ms: 0, out_ms: 1500, transition: {type: cut, duration_ms: 0}}
@@ -3275,6 +3277,7 @@ storyboard:
   judge:
     model: mock-copy-v1
     prompts: ["哪一版分镜的镜头语言更贴合剧本段落？"]
+    max_tokens: 512
     anchor_shotlists:
       - schema_version: "1.0.0"
         shots:
@@ -3301,9 +3304,11 @@ screenplay:
   model: mock-copy-v1
   model_prices:
     mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+  max_tokens: 16384
   judge:
     model: mock-copy-v1
     prompts: ["哪一份大纲的戏剧张力更强？"]
+    max_tokens: 512
     anchor_outlines:
       - schema_version: "1.0.0"
         stage: outline

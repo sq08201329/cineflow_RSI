@@ -15,8 +15,8 @@
 (round_id, stage, params_hash)；二次触发撞树锚点重复约束 → 重建首轮
 ScreenplayRoundResult（0 重复生成、0 重复扣费、0 重复节点/行）。
 
-**配置即形态**（原则五）：节拍表/别名表/比例区间/目标时长/模型与价目/judge 段全部来自
-ScreenplayConfig，冻结进轮次树 config_snapshot（历史节点不受此后配置变更影响）。
+**配置即形态**（原则五）：节拍表/别名表/比例区间/目标时长/模型与价目/生成输出预算/judge 段
+全部来自 ScreenplayConfig，冻结进轮次树 config_snapshot（历史节点不受此后配置变更影响）。
 
 **评估器装配**（T923）：`evaluators=None` → 默认装配真实七评估器（
 `build_screenplay_evaluators`，需网关；gate 短路不跑 judge）；dict → 真实七评估器编排
@@ -59,13 +59,9 @@ from core.tree.store import TreeStore
 AGENT_ID = "screenplay"
 PROJECT_ID = "screenplay"
 TEMPERATURE = 0.0  # 生成走确定性档（缓存收敛非确定性，原则三）
-# 单次生成的最大输出 token（三段共用，也是预估成本上界的输入）。
-# 为什么这么大：真实 LLM 单轮实测——接入的**推理模型**（思维链与正文共享输出预算），`script` 阶段
-# （最长产出：4 场景 × 12 行 JSON）在 1024 与 4096 预算下都出现
-# `finish_reason='length'` + `reasoning_content` 非空 + `content=""`：预算被思维链吃光，
-# 正文一个字都没输出（网关如实报"后端返回空 content"并给出形态，不静默产出空工件）。
-# 预算必须覆盖"思维链 + 正文"，故按最坏情况给足（预估成本上界随之保守上抬，见 _estimate_cost）。
-MAX_TOKENS = 16384
+# 单次生成的最大输出 token 来自形态配置（`screenplay.max_tokens`；缺项即报错，原则五）——
+# 生成预算决定实际产出（推理模型的思维链与正文共享输出预算）与预估成本上界，
+# 不得以码内常量承载（016 遗留 5 收口，见 configs/*.yaml 的该项注释）。
 # 未产出工件的节点占位哈希（拒绝/失败节点无工件可引）
 PLACEHOLDER_HASH = "00" * 32
 # 执行前校验用占位正文（仅试构造工件，不落库、不调网关）
@@ -160,7 +156,7 @@ def stage_match_key(
         "policy_version": policy_version,
         "model": config.model,
         "temperature": TEMPERATURE,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": config.max_tokens,
         "target_duration_min": inputs["target_duration_min"],
         "plan_digest": blake3.blake3(_canonical(markers).encode()).hexdigest(),
     }
@@ -343,6 +339,8 @@ def _config_snapshot(config: ScreenplayConfig, evaluators) -> dict:
         },
         "upgrade_criteria": config.upgrade_criteria,
         "model": config.model,
+        # 生成输出预算随树冻结（原则五：决定实际产出与成本上界，历史节点不受此后变更影响）
+        "max_tokens": config.max_tokens,
         "judge": config.judge,
         "anchor_outlines": [anchor.to_dict() for anchor in config.anchor_outlines],
     }
@@ -670,8 +668,8 @@ def _run_stage(
     # 功能 016（遗留 1 收敛）：估算与折算**同源**——都取网关本次调用生效的价目
     # （接档案时来自角色命中的档案价目；未接档案时来自 price_book），两价目不会脱钩
     call_model, price = gateway.prices_for(role=Role.GENERATION, model=config.model)
-    cache_key = stage_cache_key(call_model, prompt, TEMPERATURE, MAX_TOKENS)  # 实际调用模型
-    estimated = _estimate_cost(prompt, price, MAX_TOKENS)
+    cache_key = stage_cache_key(call_model, prompt, TEMPERATURE, config.max_tokens)  # 实际调用模型
+    estimated = _estimate_cost(prompt, price, config.max_tokens)
     match_key = stage_match_key(
         stage,
         policy_version=policy_version,
@@ -695,7 +693,7 @@ def _run_stage(
             model=config.model,  # 旧路径兼容；接档案后模型由角色路由决定
             role=Role.GENERATION,  # 功能 016：剧本生成角色
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            max_tokens=config.max_tokens,  # 生成输出预算来自形态配置
         )
     except GatewayError as exc:
         return _fail_stage(

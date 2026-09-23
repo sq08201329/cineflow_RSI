@@ -260,6 +260,8 @@ def _config_snapshot(config: StoryboardConfig, evaluators: list[Evaluator] | dic
         "emotion_vectors": config.emotion_vectors,
         "render": config.render,
         "anchor_shotlists": [anchor.to_dict() for anchor in config.anchor_shotlists],
+        # judge 段随树冻结（含单票输出预算：决定实际产出，历史节点不受此后变更影响）
+        "judge": config.judge,
     }
 
 

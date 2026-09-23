@@ -8,7 +8,7 @@ ScriptArtifact（**仅大纲阶段**）→ 确定性结构化文本：总览行 
 
 确定性纪律：文本仅由工件结构决定，无时间戳/随机流/字典序依赖——同输入重算逐字节一致
 （回放与重算一致性的文本底座）。摘要函数变更与提示词变更同样改变打分行为，其实现文件
-BLAKE3 前 8 位入 judge 版本号三段之一（原则一）。
+BLAKE3 前 8 位入 judge 版本号四段之一（原则一）。
 """
 
 from pathlib import Path
@@ -95,7 +95,7 @@ def summarize_outline(artifact: ScriptArtifact) -> str:
 
 
 def summary_function_hash() -> str:
-    """摘要函数哈希 = 本实现文件 BLAKE3 前 8 位（judge 版本号三段之一，决策 6 / 原则一）。
+    """摘要函数哈希 = 本实现文件 BLAKE3 前 8 位（judge 版本号四段之一，决策 6 / 原则一）。
 
     实现文件任一变更（含本函数文本）即哈希变更 → judge 版本变更。
     """

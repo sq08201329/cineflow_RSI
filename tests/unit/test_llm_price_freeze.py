@@ -260,8 +260,9 @@ def test_估算与折算同源_改档案价目同步变化(
     from sqlalchemy import select
 
     from agents.screenplay.db import screenplay_jobs
-    from agents.screenplay.loop import MAX_TOKENS
     from core.llm_gateway.routing import Role
+
+    max_tokens = screenplay_config.max_tokens  # 生成输出预算：形态配置（非码内常量）
 
     profile_prices = {"prompt_per_1k": 0.01, "completion_per_1k": 0.02}  # 档案价目（P2 = 10×P1）
     profiles = load_or_migrate(
@@ -317,12 +318,12 @@ def test_估算与折算同源_改档案价目同步变化(
     # 估算公式（保守上界）：输入 token 实测 + 满额 max_tokens —— 两处都取**档案价目**
     expected_estimate = (
         backend.prompt_tokens / 1000 * profile_prices["prompt_per_1k"]
-        + len(estimates) * MAX_TOKENS / 1000 * profile_prices["completion_per_1k"]
+        + len(estimates) * max_tokens / 1000 * profile_prices["completion_per_1k"]
     )
     assert sum(estimates) == pytest.approx(expected_estimate)
     # 若估算走旧价目表（P1），合计会是 1/10 —— 断言因此可证伪
     legacy_estimate = (
-        backend.prompt_tokens / 1000 * 0.001 + len(estimates) * MAX_TOKENS / 1000 * 0.002
+        backend.prompt_tokens / 1000 * 0.001 + len(estimates) * max_tokens / 1000 * 0.002
     )
     assert sum(estimates) != pytest.approx(legacy_estimate)
 

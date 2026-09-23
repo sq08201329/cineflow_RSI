@@ -267,6 +267,8 @@ class Test观测双键:
         assert "gen_params" in tree.config_snapshot["observation_fields"]
         assert "shotlist" in tree.config_snapshot["observation_fields"]
         assert tree.config_snapshot["evaluator_weights"] == config.evaluator_weights
+        # judge 输出预算入形态配置并随树冻结（原则一/五）
+        assert tree.config_snapshot["judge"]["max_tokens"] == config.judge["max_tokens"] == 512
 
 
 class Test非法ShotList执行前拒绝:

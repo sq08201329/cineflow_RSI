@@ -3,7 +3,8 @@
 C8：ShotList 结构化摘要（summary.summarize_shotlist，确定性）× 3 固定提示词 ×
 冻结锚点 ShotList 集成对比较投票 → 胜率；平局 0.5 如实记录不二次裁决；LLM 全过
 网关计费（Mock 后端确定性）；同比较重跑逐位一致；
-版本号 = 1.0.0+j{提示词前8}{锚点集前8}{摘要函数前8}（三段任一变更即新版本，原则一）。
+版本号 = 1.0.0+j{提示词前8}{锚点集前8}{摘要函数前8}t{输出预算}（四段任一变更即新版本，
+原则一；输出预算来自形态配置，决定 judge 实际产出故属行为口径）。
 """
 
 import json
@@ -14,6 +15,8 @@ import pytest
 from agents.storyboard.evaluators.script_fit import ScriptFitJudgeEvaluator
 from agents.storyboard.summary import summarize_shotlist, summary_function_hash
 from core.evaluators.base import ArtifactRef, EvaluatorKind
+from core.llm_gateway.backends.mock import MockBackend
+from core.llm_gateway.gateway import LLMGateway
 
 _MODEL = "mock-copy-v1"
 
@@ -30,11 +33,26 @@ def evaluator(mock_gateway, storyboard_config):
         model=storyboard_config.judge["model"],
         prompts=list(storyboard_config.judge["prompts"]),
         anchor_shotlists=storyboard_config.anchor_shotlists,
+        max_tokens=storyboard_config.judge["max_tokens"],
     )
 
 
 def _artifact() -> ArtifactRef:
     return ArtifactRef(artifact_hash="ab" * 32)
+
+
+class _RecordingBackend:
+    """记录每次调用的输出预算（证明预算来自配置而非码内常量）。"""
+
+    def __init__(self) -> None:
+        self.budgets: list[int] = []
+        self._delegate = MockBackend()
+
+    def complete(self, prompt, *, model, temperature, max_tokens):
+        self.budgets.append(max_tokens)
+        return self._delegate.complete(
+            prompt, model=model, temperature=temperature, max_tokens=max_tokens
+        )
 
 
 class Test成对比较投票:
@@ -81,6 +99,7 @@ class Test成对比较投票:
                 model=_MODEL,
                 prompts=list(storyboard_config.judge["prompts"]),
                 anchor_shotlists=storyboard_config.anchor_shotlists,
+                max_tokens=storyboard_config.judge["max_tokens"],
             )
             result = evaluator.evaluate(_artifact(), ctx)
             return result.score, result.diagnostics
@@ -118,9 +137,29 @@ class Test成对比较投票:
         assert len(shifted.diagnostics["votes"]) == 6  # 仍然全过网关（无短路）
 
 
-class Test版本号三段哈希:
-    def test_版本号形态与三段构成(self, evaluator, storyboard_config):
-        """C8：版本号 = 1.0.0+j{提示词前8}{锚点集前8}{摘要函数前8}。"""
+class Test输出预算来自配置:
+    def test_预算入网关调用(self, storyboard_config, ctx):
+        """配置的 judge 输出预算逐次原样传给网关（不是码内 512 常量）。"""
+        backend = _RecordingBackend()
+        gateway = LLMGateway(
+            backend,
+            price_book={_MODEL: {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+            sleep=lambda _: None,
+        )
+        evaluator = ScriptFitJudgeEvaluator(
+            gateway,
+            model=_MODEL,
+            prompts=list(storyboard_config.judge["prompts"]),
+            anchor_shotlists=storyboard_config.anchor_shotlists,
+            max_tokens=777,
+        )
+        evaluator.evaluate(_artifact(), ctx)
+        assert backend.budgets == [777] * 6
+
+
+class Test版本号四段哈希:
+    def test_版本号形态与四段构成(self, evaluator, storyboard_config):
+        """C8：版本号 = 1.0.0+j{提示词前8}{锚点集前8}{摘要函数前8}t{输出预算}。"""
         prompts_blob = blake3.blake3(
             json.dumps(storyboard_config.judge["prompts"], ensure_ascii=False).encode()
         ).hexdigest()[:8]
@@ -130,8 +169,19 @@ class Test版本号三段哈希:
                 ensure_ascii=False,
             ).encode()
         ).hexdigest()[:8]
-        expected = f"1.0.0+j{prompts_blob}{anchors_blob}{summary_function_hash()}"
+        expected = f"1.0.0+j{prompts_blob}{anchors_blob}{summary_function_hash()}t512"
         assert evaluator.spec.version == expected
+
+    def test_输出预算变更即新版本(self, mock_gateway, storyboard_config, evaluator):
+        """预算决定 judge 实际产出 → 属行为口径，变更即新版本（原则一）。"""
+        other = ScriptFitJudgeEvaluator(
+            mock_gateway,
+            model=_MODEL,
+            prompts=list(storyboard_config.judge["prompts"]),
+            anchor_shotlists=storyboard_config.anchor_shotlists,
+            max_tokens=1024,
+        )
+        assert other.spec.version != evaluator.spec.version
 
     def test_提示词变更即新版本(self, mock_gateway, storyboard_config, evaluator):
         other = ScriptFitJudgeEvaluator(
@@ -139,6 +189,7 @@ class Test版本号三段哈希:
             model=_MODEL,
             prompts=["换一个提示词？"],
             anchor_shotlists=storyboard_config.anchor_shotlists,
+            max_tokens=512,
         )
         assert other.spec.version != evaluator.spec.version
 
@@ -148,11 +199,12 @@ class Test版本号三段哈希:
             model=_MODEL,
             prompts=list(storyboard_config.judge["prompts"]),
             anchor_shotlists=[storyboard_config.anchor_shotlists[0]],
+            max_tokens=512,
         )
         assert other.spec.version != evaluator.spec.version
 
     def test_摘要函数哈希入版本(self, evaluator):
-        assert evaluator.spec.version.endswith(summary_function_hash())
+        assert evaluator.spec.version.endswith(f"{summary_function_hash()}t512")
 
     def test_注册元数据(self, evaluator):
         """宪章三件套之注册元数据：JUDGE / deterministic / cost_per_call > 0 显式。"""

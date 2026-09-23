@@ -58,6 +58,7 @@ def build_screenplay_evaluators(config: ScreenplayConfig, gateway: LLMGateway) -
         model=config.judge["model"],  # 价目表必须覆盖（缺价目网关即报错，不允许零成本）
         prompts=list(config.judge["prompts"]),
         anchor_outlines=config.anchor_outlines,
+        max_tokens=config.judge["max_tokens"],
     )
     all_evaluators = [*gates, *proxies, judge]
     # 权重节与评估器集合必须一一对应（缺项/多项即拒绝装配——配置漂移不得静默）

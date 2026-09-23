@@ -2,7 +2,7 @@
 
 候选片段与每个锚点做 3 个固定提示词的成对比较（全部经 LLM 网关计费，
 temperature=0 Mock 后端哈希种子确定性投票），胜率均值映射 [0,1]。
-提示词文本与锚点集哈希进入版本号——变更即新版本（SC-007 可机检）。
+提示词文本、锚点集哈希与**输出预算**（来自形态配置）进入版本号——变更即新版本（SC-007 可机检）。
 """
 
 import json
@@ -25,12 +25,6 @@ from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由�
 EVALUATOR_ID = "judge.cinematic"
 
 
-# judge 单票输出的 token 预算（各 judge 共用口径）。为什么不是网关默认 1024：
-# ① 判决输出只需一票（A/B/平局），512 足够；② 判决档是非思考模式（thinking=disabled），
-# 预算不会被思维链吃光——真实故障：思考模式下 judge 的 1024 预算被思维链耗尽、正文为空。
-JUDGE_MAX_TOKENS = 512
-
-
 def _vote_of(response_text: str) -> int:
     """LLM 响应 → 确定性投票位（Mock 后端下逐字节可复现的解析规则）。
 
@@ -51,18 +45,23 @@ class CinematicJudgeEvaluator(Evaluator):
         prompts: list[str],
         anchor_hashes: list[str],
         sampling_spec: dict,
+        max_tokens: int,
     ) -> None:
         self._gateway = gateway
         self._model = model
         self._prompts = list(prompts)
         self._anchor_hashes = list(anchor_hashes)
-        # 版本号携带：实现文件 + 采样规格 + 提示词文本 + 锚点集哈希
+        self._max_tokens = max_tokens
+        # 版本号携带：实现文件 + 采样规格 + 提示词文本 + 锚点集哈希 + 输出预算
         anchors_blob = blake3.blake3(json.dumps(sorted(anchor_hashes)).encode()).hexdigest()
         prompts_blob = blake3.blake3(json.dumps(prompts, ensure_ascii=False).encode()).hexdigest()
         self.spec = EvaluatorSpec(
             evaluator_id=EVALUATOR_ID,
             version=implementation_version(
-                sampling_spec_hash(sampling_spec), prompts_blob, anchors_blob
+                sampling_spec_hash(sampling_spec),
+                prompts_blob,
+                anchors_blob,
+                f"t{self._max_tokens}",
             ),
             kind=EvaluatorKind.JUDGE,
             deterministic=True,
@@ -80,9 +79,7 @@ class CinematicJudgeEvaluator(Evaluator):
                     model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
                     role=Role.JUDGE,  # 功能 016：LLM judge 委员会角色
                     temperature=0.0,
-                    # 判决输出只需一票：显式给足 512 而不是走网关默认 1024；
-                    # 判决档为非思考模式（thinking=disabled），预算不会再被思维链吃光
-                    max_tokens=JUDGE_MAX_TOKENS,
+                    max_tokens=self._max_tokens,  # 输出预算来自形态配置
                 )
                 votes.append(_vote_of(result.text))
                 usage["llm_calls"] += 1

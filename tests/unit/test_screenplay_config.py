@@ -102,6 +102,12 @@ class Test真实配置解析:
         assert cfg.model_prices["mock-copy-v1"]["prompt_per_1k"] == 0.001
         assert cfg.price_of("mock-copy-v1")["completion_per_1k"] == 0.002
 
+    def test_生成与judge输出预算读取(self):
+        """输出预算入形态配置（原则五）：生成 16384 / judge 512 由配置给定，码内不硬编码。"""
+        cfg = ScreenplayConfig.from_dict(_valid_dict())
+        assert cfg.max_tokens == 16384
+        assert cfg.judge["max_tokens"] == 512
+
     def test_judge_提示词与锚点大纲集(self):
         """锚点集经同一解析路径产出 outline 阶段工件（成对比较的对照面）。"""
         cfg = ScreenplayConfig.from_dict(_valid_dict())
@@ -152,6 +158,7 @@ class Test缺失即报错:
             "model",
             "model_prices",
             "judge",
+            "max_tokens",
         ],
     )
     def test_缺字段即报错(self, key):
@@ -361,6 +368,19 @@ class TestJudge纪律:
         config = _valid_dict()
         del config["screenplay"]["judge"]["model"]
         with pytest.raises(ScreenplayConfigError, match="model"):
+            ScreenplayConfig.from_dict(config)
+
+    def test_缺_judge_输出预算即报错(self):
+        """judge 输出预算必须显式配置（缺即报错，不静默取默认——原则五）。"""
+        config = _valid_dict()
+        del config["screenplay"]["judge"]["max_tokens"]
+        with pytest.raises(ScreenplayConfigError, match="max_tokens"):
+            ScreenplayConfig.from_dict(config)
+
+    def test_非正_judge_输出预算即报错(self):
+        config = _valid_dict()
+        config["screenplay"]["judge"]["max_tokens"] = 0
+        with pytest.raises(ScreenplayConfigError, match="max_tokens"):
             ScreenplayConfig.from_dict(config)
 
     def test_锚点集为空即报错(self):

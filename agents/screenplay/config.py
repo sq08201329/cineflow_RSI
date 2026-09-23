@@ -3,7 +3,8 @@
 配置即形态（宪章原则五）：目标时长与页数容差、行-页换算口径、对白行占比区间、节拍表
 （rule.beat_structure 门禁与执行前校验共用单一事实源）、角色别名表（proxy.entity_
 consistency 的规范化依据）、升级判据阈值（澄清 Q1：阈值配置化 + 系统自动判定）、
-生成与 judge 模型价目、judge 提示词与冻结锚点大纲集（三段哈希版本号之一）全部来自配置。
+生成与 judge 模型价目、生成与 judge 输出预算（决定实际产出与成本上界）、judge 提示词与
+冻结锚点大纲集（四段哈希版本号之两段）全部来自配置。
 
 纪律：节拍表/别名表/判据阈值缺失即报错（不允许静默放过门禁或"无判据"）、价目缺失或
 为零即报错（不允许静默零成本，原则三）、模型必须有名有价、judge 锚点集必须是大纲
@@ -213,7 +214,7 @@ def _require_model_prices(prices: dict) -> dict:
 
 
 def _require_judge(judge: dict, model_prices: dict) -> tuple[dict, tuple[ScriptArtifact, ...]]:
-    """judge 段：模型名（须在价目表内）+ 提示词 + 锚点大纲集（仅 outline 阶段工件）。"""
+    """judge 段：模型名（须在价目表内）+ 提示词 + 单票输出预算 + 锚点大纲集（仅 outline 阶段）。"""
     if not isinstance(judge, dict):
         raise ScreenplayConfigError(f"screenplay.judge 必须为 dict，实际为 {judge!r}")
     model = _require_str(_require(judge, "model", "screenplay.judge"), "screenplay.judge.model")
@@ -225,6 +226,9 @@ def _require_judge(judge: dict, model_prices: dict) -> tuple[dict, tuple[ScriptA
     prompts = _require_str_list(
         _require(judge, "prompts", "screenplay.judge"), "screenplay.judge.prompts"
     )
+    max_tokens = _require_int(
+        _require(judge, "max_tokens", "screenplay.judge"), "screenplay.judge.max_tokens", minimum=1
+    )
     anchors = _require(judge, "anchor_outlines", "screenplay.judge")
     if not isinstance(anchors, list) or not anchors:
         raise ScreenplayConfigError("screenplay.judge.anchor_outlines 必须为非空列表")
@@ -235,7 +239,7 @@ def _require_judge(judge: dict, model_prices: dict) -> tuple[dict, tuple[ScriptA
                 f"screenplay.judge.anchor_outlines 必须为 outline 阶段工件，"
                 f"实际为 {anchor.stage!r}（judge 仅作用于大纲阶段）"
             )
-    return {"model": model, "prompts": prompts}, anchor_outlines
+    return {"model": model, "prompts": prompts, "max_tokens": max_tokens}, anchor_outlines
 
 
 @dataclass(frozen=True)
@@ -251,6 +255,7 @@ class ScreenplayConfig:
     upgrade_criteria: dict
     model: str
     model_prices: dict
+    max_tokens: int
     judge: dict
     anchor_outlines: tuple[ScriptArtifact, ...]
     evaluator_weights: dict = field(default_factory=dict)
@@ -302,6 +307,11 @@ class ScreenplayConfig:
             ),
             model=model,
             model_prices=model_prices,
+            max_tokens=_require_int(
+                _require(screenplay, "max_tokens", "screenplay"),
+                "screenplay.max_tokens",
+                minimum=1,
+            ),
             judge=judge,
             anchor_outlines=anchor_outlines,
             evaluator_weights=evaluator_weights,

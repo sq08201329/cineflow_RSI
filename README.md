@@ -144,8 +144,8 @@ uv run python ops/demo_visual_loop.py
 ```
 
 门禁现状：五评估器全确定性（quantize 6 位小数定点归一，版本号携带实现/
-采样/提示词/锚点哈希）；合规 0 分短路不跑 judge（省 LLM 成本）；judge 调用
-全经网关计费；一致性验收为发布阻塞（一致率 100% + τ 分档门禁）。
+采样/提示词/锚点哈希，judge.cinematic 另含输出预算）；合规 0 分短路不跑 judge
+（省 LLM 成本）；judge 调用全经网关计费；一致性验收为发布阻塞（一致率 100% + τ 分档门禁）。
 
 真实生成平台接入是凭证配置的运维动作：`VISUAL_GEN_BASE_URL` /
 `VISUAL_GEN_API_KEY`（缺凭证不假装生成，原则六）。
@@ -211,9 +211,10 @@ uv run pytest tests/unit/test_editing_dreaming.py
 
 门禁现状：五评估器全确定性（三 gate 时长/镜头分布/转场规则库——与执行前
 校验同一配置库 + proxy.pacing_curve 分段基准距离 + judge.narrative_flow
-EDL 摘要成对比较，版本号 = 提示词+锚点集+摘要函数三段哈希；gate 短路不跑
-judge，quantize 6 位定点归一）；渲染编码固定单线程确定性档（同 EDL 逐字节
-复现，004 x264 flake 根因同源消除并已回移 004）；EDL 非法执行前拒绝
+EDL 摘要成对比较，版本号 = 提示词+锚点集+摘要函数+输出预算四段哈希（末段取自
+形态配置 `editing.judge.max_tokens`）；gate 短路不跑 judge，quantize 6 位定点
+归一）；渲染编码固定单线程确定性档（同 EDL 逐字节复现，004 x264 flake 根因
+同源消除并已回移 004）；EDL 非法执行前拒绝
 （0 渲染 0 成本）；无偏性 τ≥0.95 为发布阻塞（实测 τ=1.0）；做梦层
 agent_id 泛化零改动接入（champion 策略 `policies/history/editing/` +
 meta.json 谱系）。
@@ -248,8 +249,9 @@ uv run pytest tests/unit -k "storyboard_dreaming"
 门禁现状：五评估器全确定性（三 gate 景别语法/覆盖率/轴规则——与执行前校验同一配置
 规则库 + proxy.emotion_alignment 读预演画面帧像素（`board_render.storyboard_cards`
 同一帧产出函数，帧哈希与渲染元数据校验一致，禁止两套帧）+ judge.script_fit
-ShotList 摘要成对比较，版本号 = 提示词+锚点集+摘要函数三段哈希；gate 短路不跑
-judge，quantize 6 位定点归一）；ShotList 三层执行前校验（引用行存在/场景承接含关键
+ShotList 摘要成对比较，版本号 = 提示词+锚点集+摘要函数+输出预算四段哈希（末段
+取自形态配置 `storyboard.judge.max_tokens`）；gate 短路不跑 judge，quantize
+6 位定点归一）；ShotList 三层执行前校验（引用行存在/场景承接含关键
 行/档位枚举）违规 0 渲染 0 成本；预演渲染编码固定单线程确定性档（同 ShotList 逐字节
 复现）；无偏性 τ≥0.95 为发布阻塞（实测 τ=1.0）；做梦层 agent_id 泛化零改动接入
 （champion 策略 `policies/history/storyboard/` + meta.json 谱系）。

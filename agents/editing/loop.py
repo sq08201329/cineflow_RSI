@@ -319,6 +319,8 @@ def _config_snapshot(config: EditingConfig, evaluators: list[Evaluator] | dict) 
         "target_duration_s": config.target_duration_s,
         "duration_tolerance_s": config.duration_tolerance_s,
         "render": config.render,
+        # judge 段随树冻结（含单票输出预算：决定实际产出，历史节点不受此后变更影响）
+        "judge": config.judge,
     }
 
 

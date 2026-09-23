@@ -213,6 +213,7 @@ def build_evaluators(config: VisualConfig, gateway: LLMGateway, artifacts: Artif
         prompts=list(config.judge["prompts"]),
         anchor_hashes=_judge_anchor_hashes(config, artifacts),
         sampling_spec=config.frame_sampling,
+        max_tokens=config.judge["max_tokens"],
     )
     return {
         "compliance": compliance,
@@ -267,6 +268,8 @@ def _config_snapshot(config: VisualConfig, compliance, proxies, judge) -> dict:
         "observation_fields": ["gen_params", "clip_id"],
         "clip_spec": config.clip_spec,
         "frame_sampling": config.frame_sampling,
+        # judge 段随树冻结（含单票输出预算：决定实际产出，历史节点不受此后变更影响）
+        "judge": config.judge,
     }
 
 

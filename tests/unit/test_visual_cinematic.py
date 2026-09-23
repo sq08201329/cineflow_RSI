@@ -32,7 +32,22 @@ def evaluator(gateway, visual_config):
         prompts=PROMPTS,
         anchor_hashes=ANCHOR_HASHES,
         sampling_spec=visual_config.frame_sampling,
+        max_tokens=visual_config.judge["max_tokens"],
     )
+
+
+class _RecordingBackend:
+    """记录每次调用的输出预算（证明预算来自配置而非码内常量）。"""
+
+    def __init__(self) -> None:
+        self.budgets: list[int] = []
+        self._delegate = MockBackend()
+
+    def complete(self, prompt, *, model, temperature, max_tokens):
+        self.budgets.append(max_tokens)
+        return self._delegate.complete(
+            prompt, model=model, temperature=temperature, max_tokens=max_tokens
+        )
 
 
 class Test委员会投票:
@@ -58,7 +73,39 @@ class Test委员会投票:
         assert a == b
 
 
+class Test输出预算来自配置:
+    def test_预算入网关调用(self, gateway, visual_config):
+        """配置的 judge 输出预算逐次原样传给网关（不是码内 512 常量）。"""
+        backend = _RecordingBackend()
+        judge = CinematicJudgeEvaluator(
+            LLMGateway(
+                backend,
+                price_book={"mock-copy-v1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+                sleep=lambda _: None,
+            ),
+            model="mock-copy-v1",
+            prompts=PROMPTS,
+            anchor_hashes=ANCHOR_HASHES,
+            sampling_spec=visual_config.frame_sampling,
+            max_tokens=777,
+        )
+        judge.evaluate(ArtifactRef(artifact_hash="cd" * 32), {})
+        assert backend.budgets == [777] * 6
+
+
 class Test版本冻结:
+    def test_输出预算变更_版本变更(self, gateway, visual_config, evaluator):
+        """预算决定 judge 实际产出 → 属行为口径，变更即新版本（可机检）。"""
+        other = CinematicJudgeEvaluator(
+            gateway,
+            model="mock-copy-v1",
+            prompts=PROMPTS,
+            anchor_hashes=ANCHOR_HASHES,
+            sampling_spec=visual_config.frame_sampling,
+            max_tokens=1024,
+        )
+        assert other.spec.key != evaluator.spec.key
+
     def test_提示词变更_注册键变更(self, gateway, visual_config, evaluator):
         """SC-007：提示词文本变更 → 版本号变更（可机检）。"""
         other = CinematicJudgeEvaluator(
@@ -67,6 +114,7 @@ class Test版本冻结:
             prompts=["换一个提示词"] + PROMPTS[1:],
             anchor_hashes=ANCHOR_HASHES,
             sampling_spec=visual_config.frame_sampling,
+            max_tokens=512,
         )
         assert other.spec.key != evaluator.spec.key
 
@@ -77,6 +125,7 @@ class Test版本冻结:
             prompts=PROMPTS,
             anchor_hashes=ANCHOR_HASHES + ["cc" * 32],
             sampling_spec=visual_config.frame_sampling,
+            max_tokens=512,
         )
         assert other.spec.key != evaluator.spec.key
 

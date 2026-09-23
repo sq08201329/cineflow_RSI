@@ -74,7 +74,7 @@ def _require_shot_limits(limits: dict) -> dict:
 
 
 def _require_judge(judge: dict) -> tuple[dict, tuple[EditDecisionList, ...]]:
-    """judge 段：提示词非空列表 + 锚点 EDL 集解析为 EditDecisionList（澄清 Q1）。"""
+    """judge 段：提示词非空列表 + 单票输出预算 + 锚点 EDL 集（澄清 Q1）。"""
     prompts = _require(judge, "prompts", "editing.judge")
     if (
         not isinstance(prompts, list)
@@ -82,11 +82,16 @@ def _require_judge(judge: dict) -> tuple[dict, tuple[EditDecisionList, ...]]:
         or not all(isinstance(p, str) and p for p in prompts)
     ):
         raise EditingConfigError("editing.judge.prompts 必须为非空字符串列表")
+    max_tokens = _require(judge, "max_tokens", "editing.judge")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1:
+        raise EditingConfigError(
+            f"editing.judge.max_tokens 必须为 ≥1 的整数，实际为 {max_tokens!r}"
+        )
     anchors = _require(judge, "anchor_edls", "editing.judge")
     if not isinstance(anchors, list) or not anchors:
         raise EditingConfigError("editing.judge.anchor_edls 必须为非空列表")
     anchor_edls = tuple(EditDecisionList.from_dict(a) for a in anchors)
-    return {"prompts": list(prompts)}, anchor_edls
+    return {"prompts": list(prompts), "max_tokens": max_tokens}, anchor_edls
 
 
 @dataclass(frozen=True)

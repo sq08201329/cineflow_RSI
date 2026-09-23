@@ -58,6 +58,7 @@ class Test真实配置解析:
     def test_judge_锚点集解析为_EDL(self):
         """judge 输入 = EDL 摘要（澄清 Q1）：锚点集解析为 EditDecisionList 供摘要。"""
         cfg = EditingConfig.from_dict(_valid_dict())
+        assert cfg.judge["max_tokens"] == 512  # 输出预算入配置（原则五）
         assert len(cfg.judge["prompts"]) == 3
         assert len(cfg.anchor_edls) == 2
         assert all(isinstance(edl, EditDecisionList) for edl in cfg.anchor_edls)
@@ -160,6 +161,19 @@ class TestJudge纪律:
         config = _valid_dict()
         config["editing"]["judge"]["prompts"] = []
         with pytest.raises(EditingConfigError, match="prompts"):
+            EditingConfig.from_dict(config)
+
+    def test_缺_judge_输出预算即报错(self):
+        """judge 输出预算必须显式配置（缺即报错，不静默取默认——原则五）。"""
+        config = _valid_dict()
+        del config["editing"]["judge"]["max_tokens"]
+        with pytest.raises(EditingConfigError, match="max_tokens"):
+            EditingConfig.from_dict(config)
+
+    def test_非正_judge_输出预算即报错(self):
+        config = _valid_dict()
+        config["editing"]["judge"]["max_tokens"] = 0
+        with pytest.raises(EditingConfigError, match="max_tokens"):
             EditingConfig.from_dict(config)
 
     def test_锚点集为空即报错(self):
