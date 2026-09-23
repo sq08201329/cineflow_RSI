@@ -15,10 +15,10 @@
 策略版本 + 模型 + 温度 + 输出预算），**不含生成产物摘要**——产物一次性且不可复现，入键即
 命中率归零（007 教训）。
 
-**评估器装配**：`evaluators` 为注入点——阶段 3 传确定性桩（四分量 id 与
-`evaluator_weights.dev` 键集一致），`None` 时装配真实四评估器（`build_dev_evaluators`，
-US2 落地）。合成走 core 通用口径（gate 短路 + 加权求和），定点归一 6 位；US2 的 dev 合成
-策略接线后替换本调用、口径随之进 `config_snapshot`（版本元信息，历史节点不重算）。
+**评估器装配**：`evaluators` 为注入点——`None` 时装配真实四评估器（`build_dev_evaluators`，
+两门禁 + 两模拟数据源驱动的确定性代理）；显式注入（回放重算 / 测试桩）按 `rule.*` 前缀
+分列门禁与代理。合成走 dev 合成口径（门禁先行、任一判 0 短路不跑代理 + 适用权重归一 +
+定点 6 位），口径常量随 `config_snapshot` 冻结（版本元信息，历史节点不重算）。
 
 **失败隔离**（原则二）：网关失败 / 工件构造失败 / 评估器崩溃一律落 FAILED 节点 + 运营表
 failed 行，**成本照常入账**（预估即上界，actual ≤ estimated 由 schema CHECK 兜底）。
@@ -37,9 +37,8 @@ from sqlalchemy.engine import Engine
 from agents.dev.artifact import TopicSlate, simulated_signal_sources
 from agents.dev.config import DevConfig
 from agents.dev.db import dev_jobs
-from core.evaluators.base import ArtifactRef, EvalResult, Evaluator
-from core.evaluators.composite import composite_score_versioned
-from core.evaluators.quantize import quantize_score
+from agents.dev.evaluators import COMPOSITE_POLICY, build_dev_evaluators, evaluate_dev
+from core.evaluators.base import ArtifactRef, Evaluator
 from core.llm_gateway.gateway import GatewayError, LLMGateway
 from core.llm_gateway.profiles import gateway_profile_snapshot, with_llm_profiles
 from core.llm_gateway.routing import Role
@@ -56,11 +55,9 @@ TEMPERATURE = 0.0
 PLACEHOLDER_HASH = "00" * 32
 # 执行前校验用占位论证要点（仅试构造工件，不落库、不调网关）
 PLACEHOLDER_RATIONALE = "（待生成：仅供执行前校验）"
-# 合成口径（进 config_snapshot 版本元信息；US2 装配 dev 合成策略时同步更新）
-COMPOSITE_POLICY = (
-    "gate 短路（rule.* 判 0 → 总分 0）+ 加权求和 + quantize 6 位定点（core 通用口径）"
-)
 
+# 门禁语义前缀（与 dev 合成口径一致：`rule.*` 且判 0 即短路）
+_GATE_PREFIX = "rule."
 _ENTRY_KEYS = ("direction_id", "genre", "constraints", "characters")
 # 条目可选键：论证草稿（人写的判断，入提示词，最终正文仍由网关生成）与条目级分量呈现
 _OPTIONAL_ENTRY_KEYS = ("rationale_seed", "eval_components")
@@ -283,42 +280,48 @@ def _entry_prompt(
     return "\n".join(rows)
 
 
-def _score(
-    evaluators, artifact_ref: ArtifactRef, context: dict, weights: dict
-) -> tuple[dict, float, dict]:
-    """打分：评估器协议注入 + core 通用合成（gate 短路 + 加权求和）+ 定点归一 6 位。
+def _assembly(evaluators) -> dict:
+    """把注入的评估器序列按门禁语义分列（`rule.*` 前缀，与合成口径同源）。
 
-    返回 (breakdown, score, 评估器计费用量)：逐评估器汇总 `last_usage`（judge 类评估器暴露
-    llm_calls/llm_tokens/cost_usd），由调用方入节点成本；本环节无 judge（两代理确定性），
-    增量恒 0——**字段仍落盘，不得省略**。
+    真实装配（`build_dev_evaluators`）本身就返回 {"gates","proxies","all"}；注入路径
+    （回放重算 / 测试桩）给的是扁平列表，此处归一为同一形状——避免两套编排分支。
     """
-    usage = {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
-    breakdown: dict[str, dict] = {}
-    aligned: dict[str, EvalResult] = {}
-    for evaluator in evaluators:
-        result = evaluator.evaluate(artifact_ref, context)
-        breakdown[evaluator.spec.key] = {
-            "score": result.score,
-            "diagnostics": result.diagnostics,
-        }
-        aligned[evaluator.spec.key] = result
-        last_usage = getattr(evaluator, "last_usage", None)
-        if isinstance(last_usage, dict):
-            usage["llm_calls"] += int(last_usage.get("llm_calls", 0))
-            usage["llm_tokens"] += int(last_usage.get("llm_tokens", 0))
-            usage["cost_usd"] += float(last_usage.get("cost_usd", 0.0))
-    numeric = {
-        key: 0.0 if str(value).lower() == "gate" else float(value) for key, value in weights.items()
-    }  # 硬规则门禁不参与加权求和（gate 语义由 core 合成的 rule.* 前缀 + 判 0 短路承担）
-    return breakdown, quantize_score(composite_score_versioned(aligned, numeric)), usage
+    if isinstance(evaluators, dict):
+        return evaluators
+
+    def _is_gate(evaluator) -> bool:
+        return evaluator.spec.evaluator_id.startswith(_GATE_PREFIX)
+
+    gates = [evaluator for evaluator in evaluators if _is_gate(evaluator)]
+    proxies = [evaluator for evaluator in evaluators if not _is_gate(evaluator)]
+    if not gates or not proxies:
+        raise DevLoopError(
+            "评估器装配必须同时含门禁（rule.*）与代理分量："
+            f"实际门禁 {len(gates)} 个、代理 {len(proxies)} 个"
+        )
+    return {"gates": gates, "proxies": proxies, "all": [*gates, *proxies]}
 
 
-def _config_snapshot(config: DevConfig, evaluators) -> dict:
-    """配置快照随树冻结（原则五/FR-005）：此后配置变更不影响历史节点与得分。"""
+def _resolve_evaluators(evaluators, config: DevConfig) -> dict:
+    """评估器装配：注入优先（测试桩 / 回放重算）；None → 真实四评估器装配（唯一装配点）。"""
+    if evaluators is not None:
+        if not evaluators:
+            raise DevLoopError("evaluators 不能为空列表（评估器协议注入需要至少一个评估器）")
+        return _assembly(evaluators)
+    return build_dev_evaluators(config)
+
+
+def _config_snapshot(config: DevConfig, assembly: dict) -> dict:
+    """配置快照随树冻结（原则五/FR-005）：此后配置变更不影响历史节点与得分。
+
+    冻结口径：权重 + 门禁阈值（条目数区间/标记区间/重复率上限）+ 合成口径 + 模拟数据源
+    参数 + 升级判据阈值 + 生成档（模型与输出预算）+ 逐评估器 `id@version`
+    （版本含实现哈希与数据源参数——数据源即行为口径，原则一）。
+    """
     return {
         "evaluator_weights": config.evaluator_weights,
         "evaluator_versions": {
-            evaluator.spec.evaluator_id: evaluator.spec.version for evaluator in evaluators
+            evaluator.spec.evaluator_id: evaluator.spec.version for evaluator in assembly["all"]
         },
         # 回放投影白名单（002）：只暴露策略侧可消费的观测槽——网关核对键
         # （cache_key/response_hash）留运营表与节点观测，不进沙箱投影（原则四）
@@ -467,22 +470,6 @@ def _reconcile(
     }
 
 
-def _resolve_evaluators(evaluators, config: DevConfig, gateway: LLMGateway) -> list[Evaluator]:
-    """评估器装配：注入（桩/回放重算）优先；None → 真实四评估器装配（US2 落地）。"""
-    if evaluators is not None:
-        if not evaluators:
-            raise DevLoopError("evaluators 不能为空列表（评估器协议注入需要至少一个评估器）")
-        return list(evaluators)
-    try:
-        from agents.dev.evaluators import build_dev_evaluators
-    except ImportError as exc:  # US2（阶段 4）尚未落地：不静默降级为无评估器
-        raise DevLoopError(
-            "开发 Agent 真实评估器装配（agents.dev.evaluators.build_dev_evaluators）"
-            "尚未落地（US2）；当前必须注入确定性评估器"
-        ) from exc
-    return build_dev_evaluators(config, gateway)
-
-
 def run_dev_round(
     round_id: str,
     policy: DevPolicy,
@@ -492,16 +479,16 @@ def run_dev_round(
     gateway: LLMGateway,
     config: DevConfig,
     inputs: dict,
-    evaluators: list[Evaluator] | None = None,
+    evaluators: list[Evaluator] | dict | None = None,
 ) -> DevRoundResult:
     """执行一轮立项组合产出（全流程幂等）。
 
-    evaluators：None → 装配真实四评估器（需 gateway；US2 落地）；list → 评估器协议注入
-    （阶段 3 的确定性桩、US3 的回放重算）。
+    evaluators：None → 装配真实四评估器（两门禁 + 两确定性代理，无需网关）；list/dict →
+    评估器协议注入（测试桩、US3 的回放重算）。
     失败隔离：网关失败 / 工件构造失败 / 评估器崩溃都只影响本轮产出（成本照计）。
     """
     normalized_inputs = _validate_inputs(inputs)  # 预检先于一切副作用
-    evaluators = _resolve_evaluators(evaluators, config, gateway)
+    assembly = _resolve_evaluators(evaluators, config)
     policy_version = getattr(policy, "policy_version", "unknown")
     raw_plan = policy.plan(normalized_inputs, config)
     entries, marks, reject_reason = _slate_plan(raw_plan, config)
@@ -517,7 +504,7 @@ def run_dev_round(
         root_id=root_id,
         node_ids=[],
         config_snapshot=with_llm_profiles(
-            _config_snapshot(config, evaluators),
+            _config_snapshot(config, assembly),
             gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
         ),
     )
@@ -713,8 +700,8 @@ def run_dev_round(
         "match_key": match_key,
     }
     try:
-        breakdown, score, usage = _score(
-            evaluators, artifact_ref, context, config.evaluator_weights
+        breakdown, score, usage = evaluate_dev(
+            assembly, artifact_ref, context, config.evaluator_weights
         )
     except Exception as exc:  # noqa: BLE001 - 崩溃隔离：FAILED 成本入账轮次继续
         _mark_inserted(engine, job_id)

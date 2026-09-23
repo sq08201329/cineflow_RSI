@@ -3,7 +3,7 @@
 契约 C11~C13：输入预检先于一切副作用（缺题材边界/受众 → 拒绝且 0 落库）、计划执行前校验
 （缺结构标记 → 0 网关调用 0 成本）、单一产出落树与成本对账、幂等重建（0 重复生成/扣费/节点）、
 网关失败成本照计（原则二）、`slate_match_key` 只含策略可复现结构键（不含生成产物摘要）、
-配置快照冻结权重与阈值、评估器必须可注入（`None` → 真实装配尚未落地即明确报错，不静默降级）。
+配置快照冻结权重与阈值、评估器必须可注入（`None` → 装配真实四评估器；空列表拒绝）。
 真实 PostgreSQL 侧的字段/约束/两段式断言见 tests/integration/test_dev_loop.py。
 """
 
@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 
 from agents.dev.artifact import TopicSlate
 from agents.dev.db import dev_jobs
+from agents.dev.evaluators.composite import COMPOSITE_POLICY
 from agents.dev.loop import (
     AGENT_ID,
     DevLoopError,
@@ -189,20 +190,43 @@ class Test执行前拒绝:
             assert rows == 0  # 拒绝轮次不占运营表行（无成本可计）
         assert dev_gateway.call_count == 0
 
-    def test_评估器装配未落地即明确报错(
-        self, dev_round_engine, dev_artifacts, dev_gateway, dev_config, dev_policy_source
+    def test_默认装配真实四评估器(
+        self,
+        dev_round_engine,
+        dev_artifacts,
+        dev_gateway,
+        dev_config,
+        dev_policy_source,
     ):
-        """US2 尚未落地：真实装配不可用即报错（不静默降级为"无评估器"）。"""
-        with pytest.raises(DevLoopError, match="尚未落地"):
-            _run(
-                dev_round_engine,
-                dev_artifacts,
-                dev_gateway,
-                dev_config,
-                dev_policy_source("compliant"),
-                round_id="unit-no-evaluators",
-                evaluators=None,
-            )
+        """`evaluators=None` → 真实四评估器装配（两门禁 + 两确定性代理），空列表仍拒绝。"""
+        store = create_tree_store(dev_round_engine)
+        result = _run(
+            dev_round_engine,
+            dev_artifacts,
+            dev_gateway,
+            dev_config,
+            dev_policy_source("compliant"),
+            round_id="unit-real-evaluators",
+            evaluators=None,
+        )
+        node = _product_node(store, result.tree_id)
+        assert node.status is NodeStatus.EVALUATED
+        assert {key.rsplit("@", 1)[0] for key in node.eval_breakdown} == set(
+            dev_config.evaluator_weights
+        )
+        versions = {key.rsplit("@", 1)[0]: key.rsplit("@", 1)[1] for key in node.eval_breakdown}
+        assert all(
+            version.startswith("1.0.0+") and len(version) == len("1.0.0+") + 12
+            for version in versions.values()
+        )
+        # 两代理均为确定性模拟数据源：分量诊断携带来源标注（SC-009）
+        for key, fragment in node.eval_breakdown.items():
+            if key.startswith("proxy."):
+                assert fragment["diagnostics"]["simulated"] is True
+                assert "非真实商业数据" in fragment["diagnostics"]["note"]
+        # 合规组合（movie 权重 0.6/0.4，两代理同值）→ 适用权重归一点定
+        assert node.score == pytest.approx(0.5)
+
         with pytest.raises(DevLoopError, match="不能为空列表"):
             _run(
                 dev_round_engine,
@@ -213,6 +237,37 @@ class Test执行前拒绝:
                 round_id="unit-empty-evaluators",
                 evaluators=[],
             )
+
+    def test_门禁判零短路不落代理分量(
+        self,
+        dev_round_engine,
+        dev_artifacts,
+        dev_gateway,
+        dev_config,
+        dev_policy_source,
+    ):
+        """真实门禁判 0 ⇒ 总分 0 且 `eval_breakdown` 只含门禁分量（代理未跑、不伪造）。"""
+        store = create_tree_store(dev_round_engine)
+        result = _run(
+            dev_round_engine,
+            dev_artifacts,
+            dev_gateway,
+            dev_config,
+            dev_policy_source("duplicate_direction"),
+            round_id="unit-gate-short-circuit",
+            evaluators=None,
+        )
+        node = _product_node(store, result.tree_id)
+        assert node.status is NodeStatus.EVALUATED
+        assert node.score == 0.0
+        assert set(node.eval_breakdown) == {
+            key for key in node.eval_breakdown if key.startswith("rule.")
+        }
+        assert len(node.eval_breakdown) == 2
+        violations = node.eval_breakdown[
+            next(key for key in node.eval_breakdown if key.startswith("rule.slate_structure"))
+        ]["diagnostics"]["violations"]
+        assert any("重复" in item for item in violations)
 
 
 class Test产出落树与成本:
@@ -309,6 +364,15 @@ class Test产出落树与成本:
             "min": dev_config.production_marks[0],
             "max": dev_config.production_marks[1],
         }
+        assert snapshot["slate"] == {
+            "min": dev_config.slate_entries[0],
+            "max": dev_config.slate_entries[1],
+        }
+        assert snapshot["combination"] == {
+            "max_direction_repeat_rate": dev_config.max_direction_repeat_rate
+        }
+        assert snapshot["composite_policy"] == COMPOSITE_POLICY
+        assert set(snapshot["evaluator_versions"]) == set(dev_config.evaluator_weights)
 
     def test_幂等重建零重复(
         self,

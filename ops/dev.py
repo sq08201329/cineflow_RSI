@@ -9,8 +9,10 @@
   LLM 网关生成论证要点、成本入账、节点一次性落发现树；工件内容寻址入
   `<data-dir>/artifacts`；结果 JSON 打到 stdout。
 
-评估器装配：US1 期间 `produce` 以 `evaluators=None` 请求真实四评估器装配
-（`build_dev_evaluators`，US2 落地）；装配不可用时以退出码 1 明确报错，**不静默降级为无评估器**。
+评估器装配：`produce` 以 `evaluators=None` 请求**真实四评估器装配**
+（`agents/dev/evaluators.build_dev_evaluators`：两门禁 + 两确定性代理，驱动自 `dev.signals`
+模拟数据源，零 LLM 调用）；装配口径（权重/阈值/合成策略/评估器 `id@version`）随轮次树
+`config_snapshot` 冻结，历史节点不重算（原则一/原则五）。
 
 CLI 默认面向 PG 库（--dsn 或 CINEFLOW_PG_DSN，schema 由 Alembic 迁移管理，CLI 不隐式改 PG
 schema）；SQLite DSN（测试/本地）自动建表。`--policy-dir` 为**策略历史根目录**（默认
@@ -170,10 +172,12 @@ def _cmd_produce(args) -> int:
             gateway=gateway,
             config=config,
             inputs=inputs,
-            evaluators=None,  # 真实四评估器装配（US2 落地）
+            evaluators=None,  # 真实四评估器装配（两门禁 + 两确定性代理）
         )
     except DevLoopError as exc:
         return _fail(str(exc), 1)
+    except DevConfigError as exc:  # 装配期配置漂移（权重键与评估器集合不一致）
+        return _fail(f"评估器装配失败：{exc}", 2)
 
     payload = result.to_dict()
     payload["policy_source"] = policy_path

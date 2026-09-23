@@ -1,14 +1,17 @@
 #!/usr/bin/env python
-"""端到端演示：开发 Agent 降级模式（quickstart.md 六步，功能 017 —— 阶段 3 交付步①②）。
+"""端到端演示：开发 Agent 降级模式（quickstart.md 六步，功能 017 —— 阶段 4 交付步①②）。
 
-演示（确定性夹具 + Mock 网关 + SQLite 内存库 + **仓库真实人工策略**，全程离线无需凭证）：
+演示（确定性夹具 + Mock 网关 + SQLite 内存库 + **仓库真实人工策略 + 真实四评估器**，
+全程离线无需凭证）：
 
   1. **立项组合产出落树与成本对账**：引导树人工策略（`policies/history/dev/{版本}.py`）+
      立项约束 → 逐条目经网关生成立项论证要点 → 立项组合工件内容寻址落树（节点含
-     `policy_version`）→ 成本入账并对账（树内 == 运营表 + 评估器计费增量）；同轮次二次触发
-     幂等重建（0 重复生成、0 重复扣费、0 重复节点）
-  2. **结构/组合门禁短路重算**：注入门禁桩（真实实现属 US2/T1735）——违规组合（方向标识
-     重复 + 条目数越界 + 标记越界且悬空）被两门禁判 0 → 总分 0（gate 短路，代理分不救场）
+     `policy_version`）→ 真实四评估器打分（两门禁 + 两模拟数据源驱动的确定性代理）→
+     成本入账并对账（树内 == 运营表 + 评估器计费增量）；同轮次二次触发幂等重建
+     （0 重复生成、0 重复扣费、0 重复节点）；产物与代理分量诊断均带模拟源来源标注（SC-009）
+  2. **结构/组合门禁短路重算**：真实二门禁（`rule.slate_structure` / `rule.slate_combination`）
+     ——违规组合（方向标识重复 + 条目数越界 + 标记越界且悬空）被判 0 → 总分 0，
+     **两代理未跑也未落分量键**（gate 判 0 ⇒ 不跑后续分量，阶段 3 的桩组合无法断言这一点）
      且诊断点名违规项；合规组合重跑逐位一致且命中网关缓存（零边际成本复现，原则三）
 
 其余四步属 US3，按序追加 `_step_3.._step_6` 即可（报告结构已按步分列，`steps` 键名带序号）：
@@ -36,7 +39,6 @@ from agents.dev.config import DevConfig  # noqa: E402
 from agents.dev.db import create_jobs_schema, dev_jobs  # noqa: E402
 from agents.dev.loop import run_dev_round  # noqa: E402
 from agents.dev.policy_versions import list_policy_versions, load_policy_source  # noqa: E402
-from core.evaluators.base import EvalResult, Evaluator, EvaluatorKind, EvaluatorSpec  # noqa: E402
 from core.llm_gateway.backends.mock import MockBackend  # noqa: E402
 from core.llm_gateway.gateway import LLMGateway  # noqa: E402
 from core.tree.artifacts import LocalArtifactStore  # noqa: E402
@@ -73,116 +75,6 @@ _VIOLATING_SOURCE = '''class Policy:
 '''
 
 
-class _StructureGateStub(Evaluator):
-    """`rule.slate_structure` 桩（契约 C7 口径；真实实现在 US2/T1735 替换）。
-
-    判定：条目数落在形态区间、方向标识组合内唯一、可移交要点齐备（genre/constraints/
-    characters 非空）。违规判 0 并逐个点名，**不抛异常**。
-    """
-
-    def __init__(self, config: DevConfig) -> None:
-        self.spec = EvaluatorSpec(
-            evaluator_id="rule.slate_structure",
-            version="demo-stub",
-            kind=EvaluatorKind.RULE,
-            deterministic=True,
-        )
-        self.config = config
-        self.calls = 0
-
-    def violations_of(self, slate: TopicSlate) -> list[str]:
-        lower, upper = self.config.slate_entries
-        count = len(slate.entries)
-        violations: list[str] = []
-        if not lower <= count <= upper:
-            violations.append(f"条目数 {count} 不在形态区间 [{lower}, {upper}]")
-        seen: list[str] = []
-        for entry in slate.entries:
-            if entry.direction_id in seen:
-                violations.append(f"方向标识重复：{entry.direction_id}")
-            seen.append(entry.direction_id)
-        for entry in slate.entries:
-            missing = [
-                field
-                for field, value in (
-                    ("genre", entry.genre),
-                    ("constraints", entry.constraints),
-                    ("characters", entry.characters),
-                )
-                if not value
-            ]
-            if missing:
-                violations.append(f"方向 {entry.direction_id} 缺要点：{missing}")
-        return violations
-
-    def evaluate(self, artifact, context) -> EvalResult:
-        self.calls += 1
-        violations = self.violations_of(context["artifact"])
-        return EvalResult(score=0.0 if violations else 1.0, diagnostics={"violations": violations})
-
-
-class _CombinationGateStub(Evaluator):
-    """`rule.slate_combination` 桩（契约 C8 口径；真实实现在 US2/T1735 替换）。
-
-    判定：条目数不超上限、进入生产标记数量落在形态区间、标记必须指向组合内已存在条目。
-    """
-
-    def __init__(self, config: DevConfig) -> None:
-        self.spec = EvaluatorSpec(
-            evaluator_id="rule.slate_combination",
-            version="demo-stub",
-            kind=EvaluatorKind.RULE,
-            deterministic=True,
-        )
-        self.config = config
-        self.calls = 0
-
-    def violations_of(self, slate: TopicSlate) -> list[str]:
-        lower, upper = self.config.production_marks
-        marks = slate.produce_ids()
-        known = set(slate.direction_ids())
-        violations: list[str] = []
-        if not lower <= len(marks) <= upper:
-            violations.append(f"进入生产标记数 {len(marks)} 不在形态区间 [{lower}, {upper}]")
-        for mark in marks:
-            if mark not in known:
-                violations.append(f"标记指向组合内不存在的方向：{mark}")
-        return violations
-
-    def evaluate(self, artifact, context) -> EvalResult:
-        self.calls += 1
-        violations = self.violations_of(context["artifact"])
-        return EvalResult(score=0.0 if violations else 1.0, diagnostics={"violations": violations})
-
-
-class _ProxyStub(Evaluator):
-    """代理模型桩（US2 的确定性模拟数据源在 T1731/T1732 替换）；固定分，计调用次数。"""
-
-    def __init__(self, evaluator_id: str, score: float) -> None:
-        self.spec = EvaluatorSpec(
-            evaluator_id=evaluator_id,
-            version="demo-stub",
-            kind=EvaluatorKind.PROXY_MODEL,
-            deterministic=True,
-        )
-        self.score = score
-        self.calls = 0
-
-    def evaluate(self, artifact, context) -> EvalResult:
-        self.calls += 1
-        return EvalResult(score=self.score, diagnostics={"stub": self.spec.evaluator_id})
-
-
-def _evaluators(config: DevConfig, *, gate_score: bool) -> list[Evaluator]:
-    """四分量桩组合：id 与 `evaluator_weights.dev` 键集逐一对应（真实装配的注入面）。"""
-    return [
-        _StructureGateStub(config),
-        _CombinationGateStub(config),
-        _ProxyStub("proxy.genre_regression", 0.6 if gate_score else 0.0),
-        _ProxyStub("proxy.buzz_heat", 0.6 if gate_score else 0.0),
-    ]
-
-
 def _policy_of(source: str, version: str):
     """实例化策略源码并绑定版本（与 ops/dev.py 的加载口径同构：版本 = 源码 BLAKE3 前 12 位）。"""
     namespace: dict = {"__name__": "dev_demo_policy"}
@@ -213,10 +105,15 @@ def _node_of(store, tree_id: str):
     return next(item for item in store.nodes_of(tree_id) if item.parent_id is not None)
 
 
+def _component_versions(eval_breakdown: dict) -> dict:
+    """节点 `eval_breakdown` → {裸键: 版本}（分量键带 `@版本`，原则一）。"""
+    return {key.split("@")[0]: key.split("@")[1] for key in eval_breakdown}
+
+
 def _step_1_立项组合产出落树与对账(
     store, artifacts, engine, gateway, config, policy, report
 ) -> None:
-    """步①：产出落树 + 成本对账 + 幂等重建（0 重复生成/扣费/节点）。"""
+    """步①：产出落树 + 真实四评估器打分 + 成本对账 + 幂等重建（0 重复生成/扣费/节点）。"""
     calls_before = gateway.call_count
     result = run_dev_round(
         round_id="demo-r1",
@@ -227,7 +124,7 @@ def _step_1_立项组合产出落树与对账(
         gateway=gateway,
         config=config,
         inputs=INPUTS,
-        evaluators=_evaluators(config, gate_score=True),
+        evaluators=None,  # 真实四评估器装配（两门禁 + 两确定性代理）
     )
     node = _node_of(store, result.tree_id)
     slate = TopicSlate.from_dict(json.loads(artifacts.get(node.artifact_hash)))
@@ -243,12 +140,24 @@ def _step_1_立项组合产出落树与对账(
         gateway=gateway,
         config=config,
         inputs=INPUTS,
-        evaluators=_evaluators(config, gate_score=True),
+        evaluators=None,
     )
     with engine.connect() as conn:
         rows = conn.execute(
             select(func.count()).select_from(dev_jobs).where(dev_jobs.c.round_id == "demo-r1")
         ).scalar()
+    versions = _component_versions(node.eval_breakdown)
+    # 来源标注第二落点：代理分量诊断（对比报告与判据材料的数据面，SC-009）
+    proxy_annotated = {
+        key: (
+            fragment["diagnostics"].get("simulated") is True
+            and "非真实商业数据" in fragment["diagnostics"].get("note", "")
+            and bool(fragment["diagnostics"].get("source"))
+            and len(fragment["diagnostics"].get("params_digest", "")) == 12
+        )
+        for key, fragment in node.eval_breakdown.items()
+        if key.startswith("proxy.")
+    }
     step1 = {
         "policy_version": result.policy_version,
         "job_status": result.job["status"],
@@ -261,7 +170,9 @@ def _step_1_立项组合产出落树与对账(
             source["simulated"] and "非真实商业数据" in source["note"] for source in sources
         ),
         "score": node.score,
-        "components": sorted(key.split("@")[0] for key in node.eval_breakdown),
+        "components": sorted(versions),
+        "evaluator_versions": versions,
+        "proxy_components_annotated": proxy_annotated,
         "generation_calls": first_round_calls,
         "spent_usd": round(result.spent_usd, 6),
         "reconciliation": result.cost_reconciliation,
@@ -283,7 +194,10 @@ def _step_1_立项组合产出落树与对账(
         step1["job_status"] == "inserted"
         and interval_ok
         and len(step1["components"]) == len(config.evaluator_weights) == 4
+        and all(version.startswith("1.0.0+") for version in versions.values())
         and step1["signal_sources_annotated"]
+        and len(proxy_annotated) == 2
+        and all(proxy_annotated.values())
         and first_round_calls == len(slate.entries)
         and result.spent_usd > 0
         and result.cost_reconciliation["consistent"] is True
@@ -302,7 +216,7 @@ def _step_1_立项组合产出落树与对账(
 def _step_2_结构组合门禁短路与重算(
     store, artifacts, engine, gateway, config, policy, report
 ) -> None:
-    """步②：违规组合被门禁判 0（gate 短路）+ 合规组合重跑逐位一致（缓存命中复现）。"""
+    """步②：真实门禁判 0（gate 短路，代理不跑）+ 合规组合重跑逐位一致（缓存命中复现）。"""
     from agents.dev.loop import run_dev_round as _run  # 同模块内取用，保持步函数自足
 
     violating = _run(
@@ -314,11 +228,12 @@ def _step_2_结构组合门禁短路与重算(
         gateway=gateway,
         config=config,
         inputs=INPUTS,
-        evaluators=_evaluators(config, gate_score=True),
+        evaluators=None,
     )
     violating_node = _node_of(store, violating.tree_id)
+    violating_versions = _component_versions(violating_node.eval_breakdown)
     violations = {
-        key: fragment.get("diagnostics", {}).get("violations", [])
+        key.split("@")[0]: fragment.get("diagnostics", {}).get("violations", [])
         for key, fragment in violating_node.eval_breakdown.items()
     }
 
@@ -334,15 +249,21 @@ def _step_2_结构组合门禁短路与重算(
         gateway=gateway,
         config=config,
         inputs=INPUTS,
-        evaluators=_evaluators(config, gate_score=True),
+        evaluators=None,
     )
     first_node = _node_of(store, "dev-round-demo-r1")
     rerun_node = _node_of(store, rerun.tree_id)
     rerun_slate = TopicSlate.from_dict(json.loads(artifacts.get(rerun_node.artifact_hash)))
     step2 = {
         "violating_score": violating_node.score,
+        "violating_components": sorted(violating_versions),
         "violating_violations": violations,
+        # gate 判 0 ⇒ 不跑后续分量：代理键缺席即"未跑也未计费"（阶段 3 的桩组合无法断言）
+        "proxies_skipped_on_gate_zero": not any(
+            key.startswith("proxy.") for key in violating_versions
+        ),
         "rerun_score": rerun_node.score,
+        "rerun_components": sorted(_component_versions(rerun_node.eval_breakdown)),
         "rerun_matches_first_round": rerun_node.score == first_node.score,
         "rerun_artifact_matches": rerun_node.artifact_hash == first_node.artifact_hash,
         "rerun_cache_hits": gateway.cache_hits - cache_hits_before,
@@ -351,9 +272,15 @@ def _step_2_结构组合门禁短路与重算(
     }
     step2["ok"] = (
         step2["violating_score"] == 0.0  # 两门禁判 0 → gate 短路，代理分不救场
-        and any("重复" in item for item in violations.get("rule.slate_structure@demo-stub", []))
-        and any("区间" in item for item in violations.get("rule.slate_structure@demo-stub", []))
-        and any("不存在" in item for item in violations.get("rule.slate_combination@demo-stub", []))
+        and step2["violating_components"] == ["rule.slate_combination", "rule.slate_structure"]
+        and step2["proxies_skipped_on_gate_zero"]  # 代理未跑也未落分量键
+        and any("重复" in item for item in violations["rule.slate_structure"])
+        and any("区间" in item for item in violations["rule.slate_structure"])
+        and any("不存在" in item for item in violations["rule.slate_combination"])
+        and any("标记数" in item for item in violations["rule.slate_combination"])
+        and len(step2["rerun_components"])
+        == len(config.evaluator_weights)
+        == 4  # 合规组合跑满四分量
         and step2["rerun_matches_first_round"]
         and step2["rerun_artifact_matches"]  # 内容寻址逐位一致（确定性）
         and step2["rerun_generation_calls"] == 0  # 缓存命中即零成本复现（原则三）
