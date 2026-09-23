@@ -135,3 +135,18 @@ class TestS3ArtifactStore:
             s3_store.get("bad")
         with pytest.raises(ValidationError):
             s3_store.exists("bad")
+
+
+def test_非字符串哈希归_ValidationError(tmp_path):
+    """纵深防御：`artifacts.get(None)` 必须给 ValidationError（带实际值），
+    而不是裸 `TypeError: expected string or bytes-like object, got 'NoneType'`
+    ——真实故障里这种消息落进运行记录后看不出任何业务信息。"""
+    from core.tree.artifacts import LocalArtifactStore
+    from core.tree.errors import ValidationError
+
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    with pytest.raises(ValidationError) as excinfo:
+        store.get(None)
+    assert "artifact_hash" in str(excinfo.value) and "None" in str(excinfo.value)
+    with pytest.raises(ValidationError):
+        store.exists("")

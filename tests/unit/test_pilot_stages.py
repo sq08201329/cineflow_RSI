@@ -165,3 +165,108 @@ def test_agents_不反向依赖_ops():
 def test_候选结果类型可序列化():
     outcome = StageOutcome(products=(), cost_usd=0.0)
     assert outcome.detail == {}
+
+
+class Test候选集不可绕过判败:
+    """真实故障（功能 016 收尾）：`_script_entry` **直接构造** `CandidateSet(candidates,
+    expected=1)` 而不经 `candidate_set()` → `failure_reason` 恒为空 → `_require_ok` 形同虚设：
+    script 阶段产物未成功时**不报"剧本阶段失败"**，而是带着 `artifact_hash=None` 继续走到
+    `artifacts.get(None)`，抛出与业务无关的 `TypeError`（真实跑批就死在这里，
+    失败原因里没有任何业务信息）。
+
+    修法：判败逻辑下沉到 `CandidateSet.__post_init__`（构造即判），任何构造点都无法绕过。
+    """
+
+    def _candidate(self, *, score: float, reasons=(), candidate_id="c1"):
+        from core.orchestration.models import CandidateOutcome
+
+        return CandidateOutcome(candidate_id=candidate_id, score=score, reasons=tuple(reasons))
+
+    def test_直接构造也判败_判零(self):
+        judged_zero = self._candidate(score=0.0, reasons=("阶段产出未成功：failed 工件缺失",))
+        outcome = stages_module.CandidateSet(candidates=(judged_zero,), expected=1)
+        assert not outcome.all_ok
+        assert "判 0" in outcome.failure_reason and "工件缺失" in outcome.failure_reason
+
+    def test_直接构造也判败_数量不足(self):
+        outcome = stages_module.CandidateSet(candidates=(), expected=1)
+        assert not outcome.all_ok and "数量" in outcome.failure_reason
+
+    def test_显式理由不被覆盖(self):
+        outcome = stages_module.CandidateSet(
+            candidates=(self._candidate(score=1.0),),
+            expected=1,
+            failure_reason="外部显式理由",
+        )
+        assert outcome.failure_reason == "外部显式理由"
+
+    def test_剧本阶段产物未成功即报阶段失败而非_TypeError(self, monkeypatch):
+        """端到端式断言：script 产物未成功 → `_require_ok` 必须给**业务原因**（含环节明细）。"""
+        from core.orchestration.errors import StageFailedError
+
+        stalled = [
+            {
+                "job_id": "screenplay-round-x-script",
+                "stage": "script",
+                "status": "failed",
+                "reason": "工件构造失败：text 必须为非空字符串",
+                "artifact_hash": None,
+            }
+        ]
+        from core.orchestration.models import CandidateOutcome
+
+        candidates = tuple(
+            CandidateOutcome(
+                candidate_id=job["job_id"],
+                score=1.0 if job.get("status") == "ok" and job.get("artifact_hash") else 0.0,
+                reasons=()
+                if job.get("status") == "ok" and job.get("artifact_hash")
+                else (f"阶段产出未成功：{job.get('status')} {job.get('reason', '')}".strip(),),
+            )
+            for job in stalled
+        )
+        outcome = stages_module.CandidateSet(candidates=candidates, expected=1)
+        with pytest.raises(StageFailedError) as excinfo:
+            stages_module._require_ok("剧本阶段", outcome, jobs=stalled)
+        message = str(excinfo.value)
+        assert "剧本阶段" in message and "工件构造失败" in message
+
+
+def test_剧本产物哈希缺失时给业务化报错(tmp_path):
+    """纵深防御：`_load_script_artifact(runtime, None)` 必须给 `StageFailedError`
+    （说明"该阶段未产出可寻址工件"），而不是让 `artifacts.get(None)` 抛裸 TypeError。"""
+    from types import SimpleNamespace
+
+    from core.orchestration.errors import StageFailedError
+    from core.tree.artifacts import LocalArtifactStore
+
+    runtime = SimpleNamespace(artifacts=LocalArtifactStore(tmp_path / "artifacts"))
+    with pytest.raises(StageFailedError, match="产物哈希缺失"):
+        stages_module._load_script_artifact(runtime, None)
+
+
+def test_作业成功判据以产物哈希为准():
+    """回归：成功判据**不看状态词**（各 Agent 用词不同：screenplay `inserted`、视觉/声音
+    `ingested`/`generated`）——曾写死 `== "ok"` 导致恒假、判败被漏（真实故障的根因之一）。"""
+    succeeded = {
+        "job_id": "j1",
+        "status": "inserted",
+        "reason": "",
+        "artifact_hash": "ab" * 32,
+    }
+    assert stages_module._job_succeeded(succeeded) is True
+    for status in ("failed", "rejected", "ingested", "generated"):
+        job = {
+            "job_id": "j2",
+            "status": status,
+            "reason": "预算门禁" if status == "rejected" else "",
+            "artifact_hash": None,
+        }
+        assert stages_module._job_succeeded(job) is False
+    # 失败原因优先取 Agent 的 reason（不编造）
+    assert "预算门禁" in stages_module._job_failure_text(
+        {"status": "rejected", "reason": "预算门禁", "artifact_hash": None}
+    )
+    assert "status=failed" in stages_module._job_failure_text(
+        {"status": "failed", "reason": "", "artifact_hash": None}
+    )

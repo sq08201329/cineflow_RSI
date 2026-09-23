@@ -253,15 +253,43 @@ def build_shot_plan(configs: AgentConfigs, *, scene_count: int) -> tuple[dict, .
 
 @dataclass(frozen=True)
 class CandidateSet:
-    """环节候选集：全部达标才算成功；任一不足或判 0 即给失败原因（含全部理由）。"""
+    """环节候选集：全部达标才算成功；任一不足或判 0 即给失败原因（含全部理由）。
+
+    **判败逻辑在构造期**（`__post_init__`）而不是在 `candidate_set()` 里：真实故障（功能 016
+    收尾）——某个阶段入口直接构造 `CandidateSet(candidates, expected=1)` 时 `failure_reason`
+    恒为空，`_require_ok` 形同虚设，产物未成功也一路走到下游，抛出的却是与业务无关的
+    `TypeError: expected string or bytes-like object, got 'NoneType'`（`artifacts.get(None)`），
+    失败原因里没有任何业务信息。构造即判后，**任何构造点都无法绕过**。
+    """
 
     candidates: tuple[CandidateOutcome, ...]
     expected: int
     failure_reason: str = ""
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "candidates", tuple(self.candidates))
+        if not self.failure_reason:
+            object.__setattr__(
+                self, "failure_reason", _failure_reason(self.candidates, self.expected)
+            )
+
     @property
     def all_ok(self) -> bool:
         return not self.failure_reason
+
+
+def _failure_reason(candidates: Sequence[CandidateOutcome], expected: int) -> str:
+    """候选集判败原因（计数不足 / 有判 0 候选）：唯一口径，构造期与汇总函数共用。"""
+    if len(candidates) < expected:
+        return f"环节候选数量 {len(candidates)} != 期望 {expected}（不足即判败）"
+    judged_zero = [
+        f"{candidate.candidate_id}：{'；'.join(candidate.reasons)}"
+        for candidate in candidates
+        if candidate.score <= 0.0
+    ]
+    if judged_zero:
+        return "候选全部未达标（判 0 理由）：" + "；".join(judged_zero)
+    return ""
 
 
 def candidate_set(nodes: Sequence[Any], *, expected: int | None = None) -> CandidateSet:
@@ -269,23 +297,7 @@ def candidate_set(nodes: Sequence[Any], *, expected: int | None = None) -> Candi
     node_list = list(nodes)
     want = len(node_list) if expected is None else int(expected)
     candidates = tuple(_candidate(node) for node in node_list)
-    if len(candidates) < want:
-        return CandidateSet(
-            candidates=candidates,
-            expected=want,
-            failure_reason=f"环节候选数量 {len(candidates)} != 期望 {want}（不足即判败）",
-        )
-    judged_zero = [
-        f"{candidate.candidate_id}：{'；'.join(candidate.reasons)}"
-        for candidate in candidates
-        if candidate.score <= 0.0
-    ]
-    if judged_zero:
-        return CandidateSet(
-            candidates=candidates,
-            expected=want,
-            failure_reason="候选全部未达标（判 0 理由）：" + "；".join(judged_zero),
-        )
+    # 判败原因由 CandidateSet 构造期统一给出（此处不再另写一份，避免两套口径）
     return CandidateSet(candidates=candidates, expected=want)
 
 
@@ -308,6 +320,29 @@ def _round_candidates(runtime: PilotRuntime, tree_id: str, *, expected: int) -> 
         key=lambda node: node.node_id,
     )
     return candidate_set(nodes, expected=expected)
+
+
+def _job_succeeded(job: Mapping) -> bool:
+    """阶段作业是否成功：**以产物哈希为准**（不看状态词）。
+
+    为什么不用状态词：各 Agent 的成功状态词不同（screenplay 用 `inserted`、声音/视觉用
+    `ingested`/`generated`…），这里曾写死 `job.get("status") == "ok"`——**恒假**：成功作业
+    被判 0，失败作业也判 0，而 `CandidateSet` 当时又不自带判败原因，于是"剧本阶段"门禁形同
+    虚设，失败一路走到 `artifacts.get(None)`，抛出与业务无关的 `TypeError`（真实跑批故障）。
+    判据改为"有没有产出可寻址工件"：与各 Agent 的状态词解耦，失败原因由 `reason` 给出。
+    """
+    return bool(job.get("artifact_hash"))
+
+
+def _job_failure_text(job: Mapping) -> str:
+    """作业失败的可读原因：优先 Agent 给的 `reason`，否则回落到状态词（不编造）。"""
+    reason = str(job.get("reason") or "").strip()
+    status = job.get("status")
+    return (
+        f"阶段产出未成功（status={status}）：{reason}"
+        if reason
+        else f"阶段产出未成功（status={status}）"
+    )
 
 
 def _job_label(job: Mapping) -> str:
@@ -380,10 +415,8 @@ def _script_entry(stage_input: StageInput) -> StageOutcome:
     candidates = tuple(
         CandidateOutcome(
             candidate_id=job["job_id"],
-            score=1.0 if job.get("status") == "ok" and job.get("artifact_hash") else 0.0,
-            reasons=()
-            if job.get("status") == "ok" and job.get("artifact_hash")
-            else (f"阶段产出未成功：{job.get('status')} {job.get('reason', '')}".strip(),),
+            score=1.0 if _job_succeeded(job) else 0.0,
+            reasons=() if _job_succeeded(job) else (_job_failure_text(job),),
         )
         for job in script_jobs
     )
@@ -408,8 +441,14 @@ def _script_entry(stage_input: StageInput) -> StageOutcome:
 
 
 def _load_script_artifact(runtime: PilotRuntime, artifact_hash: str):
+    """按哈希取回剧本工件（**先校验哈希**）：产物缺失时给业务化报错，不抛裸 TypeError。"""
     from agents.screenplay.artifact import ScriptArtifact
 
+    if not isinstance(artifact_hash, str) or not artifact_hash:
+        raise StageFailedError(
+            f"剧本阶段产物哈希缺失（artifact_hash={artifact_hash!r}）：该阶段未产出可寻址工件，"
+            "按判败处理（不继续下游，也不对 None 做哈希/正则）"
+        )
     return ScriptArtifact.from_dict(json.loads(runtime.artifacts.get(artifact_hash)))
 
 

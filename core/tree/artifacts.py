@@ -27,8 +27,13 @@ def content_hash(content: bytes) -> str:
 
 
 def _require_hash(artifact_hash: str) -> None:
-    """哈希格式校验：非法格式直接拒绝，杜绝路径穿越与枚举（哈希驱动读取）。"""
-    if not _HASH_RE.match(artifact_hash):
+    """哈希格式校验：非法格式直接拒绝，杜绝路径穿越与枚举（哈希驱动读取）。
+
+    非字符串（如 `None`）也走同一路径：给 **ValidationError**（带收到的值）而不是让
+    `re.match` 抛裸 `TypeError: expected string or bytes-like object, got 'NoneType'` ——
+    真实故障里这种裸 TypeError 落进运行记录，失败原因看不出任何业务信息（功能 016 收尾）。
+    """
+    if not isinstance(artifact_hash, str) or not _HASH_RE.match(artifact_hash):
         raise ValidationError(f"artifact_hash 必须为 64 位小写十六进制，实际为 {artifact_hash!r}")
 
 
