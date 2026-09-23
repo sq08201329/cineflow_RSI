@@ -412,12 +412,15 @@ llm:
       legacy_env: false
       prices: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012}
       price_note: "峰时缓存未命中上限（保守高估；缓存命中与错峰更低；记账 ≠ 厂商账单）"
+      # 单请求超时：推理模型的思维链+正文常超过默认 30s（实测 30s 即 timeout），故放宽
+      timeout_seconds: 120
     local-qwen: # 本地/自建示例：零边际成本（仍非免费：机器/电/运维成本不在本表）
       base_url_env: LOCAL_LLM_BASE_URL
       api_key_env: LOCAL_LLM_API_KEY
       prices: {prompt_per_1k: 0.0, completion_per_1k: 0.0}
       zero_marginal: true
       price_note: "自建推理：零边际成本（机器/电/运维成本不在本表）"
+      timeout_seconds: 60 # 本地推理：单请求超时（按部署规模可调）
   roles: # 角色 → 档案（单层；未映射的枚举内角色回落 default_profile）
     generation: deepseek-flash
     judge: deepseek-flash

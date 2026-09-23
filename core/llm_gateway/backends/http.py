@@ -120,9 +120,16 @@ class HttpBackend:
 
     @classmethod
     def from_profile(
-        cls, profile, *, timeout_seconds: float = 30.0, environ: dict | None = None
+        cls, profile, *, timeout_seconds: float | None = None, environ: dict | None = None
     ) -> "HttpBackend":
-        """按**档案声明**注入端点与密钥（凭证只按声明读取，不碰其它变量）。"""
+        """按**档案声明**注入端点与密钥（凭证只按声明读取，不碰其它变量）。
+
+        超时优先级：显式入参 > 档案声明的 `timeout_seconds` > 默认 30s。
+        推理模型（如 deepseek-flash）的思维链+正文常超过 30s，故档案里可声明更长超时
+        （真实实测：30s 会 `The read operation timed out`）。
+        """
+        if timeout_seconds is None:
+            timeout_seconds = getattr(profile, "timeout_seconds", None) or 30.0
         env = os.environ if environ is None else environ
         if profile.base_url:
             base_url = str(profile.base_url)
@@ -152,7 +159,7 @@ class HttpBackend:
         cls,
         load,
         *,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float | None = None,
         environ: dict | None = None,
     ) -> "HttpBackend":
         """多档案：按 `model`（= 路由命中的档案 id）分派到各自端点。
@@ -269,6 +276,18 @@ class HttpBackend:
             raise TransientBackendError(
                 f"后端响应 content 非字符串（实际 {type(content).__name__}）；"
                 f"响应片段：{_snippet(raw)}"
+            )
+        if not content.strip():
+            # 空正文的**形态诊断**（真实排障需要）：是被截断（finish_reason=length）、
+            # 只有思维链（reasoning_content 非空）、还是平台就是回了空串。
+            message = payload["choices"][0].get("message") or {}
+            finish = payload["choices"][0].get("finish_reason")
+            reasoning = message.get("reasoning_content")
+            raise TransientBackendError(
+                "后端返回空 content："
+                f"finish_reason={finish!r}，reasoning_content="
+                + ("非空（模型只产出思维链，正文被截断或未输出）" if reasoning else "空/缺失")
+                + f"；响应片段：{_snippet(raw)}"
             )
         return content
 

@@ -308,20 +308,6 @@ class LLMGateway:
         else:
             raise last_error  # type: ignore[misc]
 
-        # 空/缺失正文一律如实失败（原则六：不静默、不编造）——真实跑批踩到过：
-        # 某次调用返回空内容，下游对 None/空串做哈希/正则，报错只有
-        # 「TypeError: expected string or bytes-like object, got 'NoneType'」，无法定位是哪次调用。
-        # 这里指名模型与角色，并说明收到的是什么（None / 空串 / 全空白）。
-        if not isinstance(raw.text, str) or not raw.text.strip():
-            raise TransientBackendError(
-                f"后端返回空文本（model={call_model!r}"
-                + (f"，role={decision_role!r}" if decision_role else "")
-                + (f"，profile={profile_id!r}" if profile_id else "")
-                + f"）：收到 {type(raw.text).__name__}"
-                + ("（None：正文缺失）" if raw.text is None else "（空串/全空白：可能被截断）")
-                + "——空正文不落缓存、不入账，请重试或检查模型与 max_tokens 设置"
-            )
-
         cost = (
             raw.prompt_tokens / 1000 * price["prompt_per_1k"]
             + raw.completion_tokens / 1000 * price["completion_per_1k"]
@@ -335,7 +321,8 @@ class LLMGateway:
             role=decision_role,
             profile_id=profile_id,
         )
-        self._cache[key] = result
+        # 先记账再判正文：这次调用**确实发生过、token 确实被消耗**（原则二"费用照计"），
+        # 故账本与成本分解照记；只是**不落缓存、不返回空结果**。
         self.total_cost_usd += cost
         self.call_count += 1
         self._accumulate(  # 成本分解（C6）：按（角色，档案）累计
@@ -346,6 +333,21 @@ class LLMGateway:
             cost=cost,
             zero_marginal=zero_marginal,
         )
+        # 空/缺失正文一律如实失败（原则六：不静默、不编造）——真实跑批踩到过：某次调用返回
+        # 空内容，下游对 None/空串做哈希/正则，报错只有「TypeError: expected string or
+        # bytes-like object, got 'NoneType'」，无法定位是哪次调用。这里指名模型/角色/档案，
+        # 并说明收到的是什么（None / 空串 / 全空白）。
+        if not isinstance(raw.text, str) or not raw.text.strip():
+            raise TransientBackendError(
+                f"后端返回空文本（model={call_model!r}"
+                + (f"，role={decision_role!r}" if decision_role else "")
+                + (f"，profile={profile_id!r}" if profile_id else "")
+                + f"）：收到 {type(raw.text).__name__}"
+                + ("（None：正文缺失）" if raw.text is None else "（空串/全空白：可能被截断）")
+                + "——本次调用费用照记（原则二），但空正文不落缓存、不返回给调用方："
+                "请重试或检查模型与 max_tokens 设置"
+            )
+        self._cache[key] = result
         return result
 
     def profile_snapshot(self):

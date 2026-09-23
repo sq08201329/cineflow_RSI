@@ -436,7 +436,12 @@ class Test工件构造失败:
         screenplay_jobs_engine,
         config,
     ):
-        """网关成功但正文非法（空）→ 阶段失败且已发生费用照计（原则二）。"""
+        """网关返回**空正文** → 网关层即拒（指名模型/角色/档案）→ 阶段失败且费用照计（原则二）。
+
+        注：空正文的拦截点在网关（功能 016 收尾修复）——此前空正文会一路走到工件构造
+        才报"工件构造失败：text 必须为非空字符串"，且真实跑批里更会先撞上下游
+        `artifacts.get(None)` 的裸 TypeError。现在失败原因直接给出"后端返回空文本"。
+        """
         gateway = LLMGateway(
             _EmptyTextBackend(), price_book=config.model_prices, sleep=lambda _: None
         )
@@ -444,11 +449,11 @@ class Test工件构造失败:
             "r13", policy, tree_store, artifact_store, screenplay_jobs_engine, gateway, config
         )
         assert [job["status"] for job in result.jobs] == ["failed"] * 3
-        assert all("工件构造失败" in job["reason"] for job in result.jobs)
+        assert all("空文本" in job["reason"] for job in result.jobs)  # 网关层拦截（带模型/角色）
         rows = {row.stage: row for row in _rows(screenplay_jobs_engine)}
         assert set(rows) == set(STAGES)
         assert {row.status for row in rows.values()} == {"failed"}
-        assert all(row.error and "工件构造失败" in row.error for row in rows.values())
+        assert all(row.error and "空文本" in row.error for row in rows.values())
         assert all(row.actual_cost_usd > 0 for row in rows.values())  # 费用照计
         assert all(row.artifact_hash is None for row in rows.values())
         nodes = _node_by_stage(tree_store, result.tree_id)

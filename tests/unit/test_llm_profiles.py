@@ -126,3 +126,23 @@ class Test口径备注与密钥隔离:
             assert snapshot["api_key_env"].isupper()  # 只记变量名，不记值
             assert SECRET not in str(snapshot)
             assert set(snapshot["prices"]) == {"prompt_per_1k", "completion_per_1k"}
+
+
+class Test档案超时声明:
+    def test_可选且入快照(self, llm_profiles_config_factory):
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["timeout_seconds"] = 120
+        profiles, _, _ = load_profiles(config)
+        assert profiles["deepseek-flash"].timeout_seconds == 120.0
+        assert profiles["deepseek-flash"].to_snapshot()["timeout_seconds"] == 120.0
+
+    def test_缺省为_None(self, llm_profiles_config_factory):
+        profiles, _, _ = load_profiles(llm_profiles_config_factory("single"))
+        assert profiles["deepseek-flash"].timeout_seconds is None
+
+    @pytest.mark.parametrize("bad", [0, -1, "120", True])
+    def test_非法即拒(self, llm_profiles_config_factory, bad):
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["timeout_seconds"] = bad
+        with pytest.raises(ProfileConfigError, match="timeout_seconds"):
+            load_profiles(config)

@@ -59,7 +59,13 @@ from core.tree.store import TreeStore
 AGENT_ID = "screenplay"
 PROJECT_ID = "screenplay"
 TEMPERATURE = 0.0  # 生成走确定性档（缓存收敛非确定性，原则三）
-MAX_TOKENS = 1024
+# 单次生成的最大输出 token（三段共用，也是预估成本上界的输入）。
+# 为什么这么大：真实 LLM 单轮实测——接入的**推理模型**（思维链与正文共享输出预算），`script` 阶段
+# （最长产出：4 场景 × 12 行 JSON）在 1024 与 4096 预算下都出现
+# `finish_reason='length'` + `reasoning_content` 非空 + `content=""`：预算被思维链吃光，
+# 正文一个字都没输出（网关如实报"后端返回空 content"并给出形态，不静默产出空工件）。
+# 预算必须覆盖"思维链 + 正文"，故按最坏情况给足（预估成本上界随之保守上抬，见 _estimate_cost）。
+MAX_TOKENS = 16384
 # 未产出工件的节点占位哈希（拒绝/失败节点无工件可引）
 PLACEHOLDER_HASH = "00" * 32
 # 执行前校验用占位正文（仅试构造工件，不落库、不调网关）

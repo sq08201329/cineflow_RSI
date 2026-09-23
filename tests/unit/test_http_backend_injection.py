@@ -179,3 +179,77 @@ class Test旧路径保留:
         llm_env()
         with pytest.raises(GatewayError, match="OPENAI_BASE_URL"):
             HttpBackend.from_env()
+
+
+class Test档案声明的超时:
+    """真实实测：推理模型的思维链+正文超过默认 30s（`The read operation timed out`），
+    故超时可由档案声明——`from_profile` 必须采用档案值，显式入参优先。"""
+
+    def _profile(self, **overrides):
+        from core.llm_gateway.profiles import load_or_migrate
+
+        raw = {
+            "base_url": "https://api.example.invalid",
+            "api_key_env": "PROVIDER_API_KEY",
+            "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+            "price_note": "测试档",
+            **overrides,
+        }
+        loaded = load_or_migrate(
+            {"llm": {"profiles": {"reasoner": raw}, "roles": {}, "default_profile": "reasoner"}}
+        )
+        return loaded.profiles["reasoner"]
+
+    def test_档案声明的超时生效(self, llm_env):
+        llm_env(PROVIDER_API_KEY="k")
+        profile = self._profile(timeout_seconds=120)
+        assert profile.timeout_seconds == 120.0
+        assert HttpBackend.from_profile(profile)._timeout == 120.0
+
+    def test_显式入参优先于档案(self, llm_env):
+        llm_env(PROVIDER_API_KEY="k")
+        backend = HttpBackend.from_profile(self._profile(timeout_seconds=120), timeout_seconds=5.0)
+        assert backend._timeout == 5.0
+
+    def test_未声明回落默认_30s(self, llm_env):
+        llm_env(PROVIDER_API_KEY="k")
+        assert HttpBackend.from_profile(self._profile())._timeout == 30.0
+
+    def test_多档案各自用自己的超时(self, llm_env, stub_factory):
+        from core.llm_gateway.profiles import load_or_migrate
+
+        first, second = stub_factory(), stub_factory()
+        llm_env(A_KEY=first.api_key, B_KEY=second.api_key)
+        loaded = load_or_migrate(
+            {
+                "llm": {
+                    "profiles": {
+                        "slow": {
+                            "base_url": first.base_url,
+                            "api_key_env": "A_KEY",
+                            "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                            "price_note": "慢档",
+                            "timeout_seconds": 300,
+                        },
+                        "fast": {
+                            "base_url": second.base_url,
+                            "api_key_env": "B_KEY",
+                            "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                            "price_note": "快档",
+                            "timeout_seconds": 5,
+                        },
+                    },
+                    "roles": {},
+                    "default_profile": "slow",
+                }
+            }
+        )
+        backend = HttpBackend.from_profiles(loaded)
+        assert backend._backends["slow"]._timeout == 300.0
+        assert backend._backends["fast"]._timeout == 5.0
+
+    def test_超时值非法即拒(self):
+        from core.llm_gateway.profiles import ProfileConfigError
+
+        with pytest.raises(ProfileConfigError, match="timeout_seconds"):
+            self._profile(timeout_seconds=0)

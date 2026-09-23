@@ -72,6 +72,7 @@ class ModelProfile:
     price_note: str = ""
     zero_marginal: bool = False
     legacy_env: bool = False
+    timeout_seconds: float | None = None  # 单请求超时（推理模型需更长；None = 用后端默认）
     notes: tuple[str, ...] = ()
 
     @property
@@ -98,6 +99,7 @@ class ModelProfile:
             "price_note": self.price_note,
             "zero_marginal": self.zero_marginal,
             "legacy_env": self.legacy_env,
+            "timeout_seconds": self.timeout_seconds,
         }
 
 
@@ -219,6 +221,7 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
             "——不隐式读 OPENAI_*（假阳性归零），也不允许无凭证档案"
         )
     prices, zero_marginal, price_notes = _parse_prices(profile_id, raw)
+    timeout_seconds = _parse_timeout(profile_id, raw)
     price_note = raw.get("price_note")
     notes = list(price_notes)
     if not isinstance(price_note, str) or not price_note:
@@ -234,6 +237,7 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
             price_note=price_note,
             zero_marginal=zero_marginal,
             legacy_env=bool(raw.get("legacy_env", False)),
+            timeout_seconds=timeout_seconds,
             notes=tuple(notes),
         ),
         notes,
@@ -273,6 +277,22 @@ def _parse_prices(
             f"档案 {profile_id!r} 声明了 zero_marginal: true 但价目非 0：零边际成本标记与价目矛盾"
         )
     return parsed, zero_marginal, notes
+
+
+def _parse_timeout(profile_id: str, raw: Mapping[str, Any]) -> float | None:
+    """单请求超时（秒，可选）：**推理模型需要更长**——真实实测：思维链+正文在 30s 内
+    回不来（`The read operation timed out`），故按时长在档案里声明（缺省用后端默认 30s）。
+    非正数/类型不符即报错（配置错误不静默）。
+    """
+    value = raw.get("timeout_seconds")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ProfileConfigError(
+            f"档案 {profile_id!r} 的 timeout_seconds 非正数或类型不符：{value!r}"
+            "（必须为 > 0 的秒数；缺省即用后端默认超时）"
+        )
+    return float(value)
 
 
 # ---------------------------------------------------------------------------

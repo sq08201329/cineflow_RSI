@@ -160,7 +160,9 @@ class Test空文本拒绝:
         assert "NoneType" in message or "空" in message  # 诊断：如实说明收到了什么
         assert backend.call_count == 1
 
-    def test_空文本不污染缓存与账目(self):
+    def test_空文本照记账但不落缓存(self):
+        """费用照计（原则二）：调用确实发生、token 确实消耗 → 账本与分解照记；
+        但**空正文不落缓存**（否则后续同参调用会拿到空结果）。"""
         backend = self._BadTextBackend(None)
         gateway = LLMGateway(
             backend,
@@ -170,5 +172,8 @@ class Test空文本拒绝:
         )
         with pytest.raises(TransientBackendError):
             gateway.chat("提示词", model="m")
-        assert gateway.call_count == 0 and gateway.total_cost_usd == 0.0
-        assert gateway.cost_breakdown() == {}  # 失败调用不入分解
+        assert gateway.call_count == 1 and gateway.total_cost_usd > 0
+        assert gateway.cost_breakdown()[""]["m"]["calls"] == 1  # 已入分解（未接档案：role 为空）
+        with pytest.raises(TransientBackendError):
+            gateway.chat("提示词", model="m")
+        assert backend.call_count == 2  # 未命中缓存：空正文没有被缓存成"成功结果"
