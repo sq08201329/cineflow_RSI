@@ -31,6 +31,7 @@
 - 回放对比报告（`core/degraded/compare.py`；009 同位 `agents/screenplay/sandbox_compare.py:206`）：逐树得分 / 分项评估器差异 / pareto_auc 曲线 / UNKNOWN 说明
 - **最小池门槛（前置）**：可比对树数 < 形态配置下限 ⇒ **拒绝产出报告并报错**（错误含实测树数与门槛值，SC-011）；与"未过无偏性不得产出报告"（`sandbox_compare.py:227`）并列（计划研究决策 6）
 - 报告与采纳记录 append-only；**采纳是唯一能移动部署指针的动作**：定点改写 `deployment.dev.current_policy_version`（`core/yaml_edit.py:155`，注释与其他段逐字节保留；009 同位 `agents/screenplay/adoption.py:67`）；拒绝同样留痕（理由非空），未采纳 ⇒ 指针逐字节不变（SC-002）
+- **策略执行隔离（宪章 v2.0.0 原则四例外条款的两项落地义务）**：① 该路径的策略执行**必须**带**执行超时**（静态检查不禁循环，防策略内死循环占用宿主；009 现行无超时，改造时一并补齐，超时判 `CompareError`）；② **必须**有断言守护"**不向策略执行交付任何环境对象**"——策略仅 `plan(inputs, config)`，既不 `observed()` 也不 `probe()`，探测由宿主代为执行（防后续改动把模拟器或 observation 通道引入策略）；③ 静态检查前置：未过检查的策略不入回放（同 C2/`sandbox_compare.py:227` 的凭证门槛并列）
 
 ## C15 禁止自动进化三重机检
 

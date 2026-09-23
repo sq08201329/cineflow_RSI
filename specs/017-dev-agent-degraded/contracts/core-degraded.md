@@ -3,9 +3,11 @@
 > 对应规格 FR-008~010 的机制面、plan.md 项目结构 / 阶段 0 决策 1~3。实现：`core/degraded/` 四模块（新）
 > + `agents/screenplay/{policy_versions,sandbox_compare,adoption,upgrade_evidence}.py` 薄适配。
 >
-> ⚠️ **前置裁决（plan.md D1）**：`compare.py` 的策略执行隔离与宪章原则四冲突（现状为同进程
-> `exec`，未过 002 沙箱）。本契约涉及 `compare.py` 的实现须在裁决路径 (a) 沙箱化 或 (b) 宪章
-> 豁免 落盘后动手；**裁决前不得以"沿用 009 现状"为由开工**。
+> ⚠️ **原则四口径（已裁决）**：宪章 **v2.0.0** 为"人工编写的降级模式策略"新增显式例外条款
+> （策略为 `plan(inputs, config)` 纯规划形态、不交互模拟器，容器隔离不适用）。本契约涉及
+> `compare.py` 的实现须落实例外的**两项义务**：① 策略执行带**执行超时**；② 有断言守护
+> "**不向策略交付任何环境对象**"（详见 plan.md「前置裁决」节与契约
+> `dev-loop-degraded.md` C14）。
 
 ## C1 通用件落点与业务无关性
 
