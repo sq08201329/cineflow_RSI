@@ -473,7 +473,9 @@ def main() -> int:
         report["steps"]["5_禁止自动进化拒绝语义"] = step5
 
         # ---- 步骤 6：升级判据材料（meets 与 below 两路径如实呈现）----
+        # 材料按 agent 分目录（017 迁移）：`{data_dir}/screenplay/{period}.json`
         events_dir = root / "upgrade-events"
+        materials_dir = events_dir / "screenplay"
         # meets 路径：合法产出轮次（无门禁违规）+ 达标台账 + 带内漂移
         clean_rate = gate_violation_rate_of(list(nodes.values()))
         # below 路径：含 gate 短路轮次的全量记录（门禁违规率超限）+ 无台账 + 漂移未测量
@@ -514,7 +516,7 @@ def main() -> int:
             },
             "below": {"conclusion": below.conclusion, "reasons": below.reasons},
             "gate_violation_rate": {"clean_round": clean_rate, "all_recorded": period_rate},
-            "materials": sorted(path.name for path in events_dir.glob("*.json")),
+            "materials": sorted(path.name for path in materials_dir.glob("*.json")),
         }
         step6["ok"] = (
             meets.conclusion == "meets"

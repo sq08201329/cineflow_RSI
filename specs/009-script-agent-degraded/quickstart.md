@@ -53,3 +53,25 @@ uv run python ops/demo_screenplay_loop.py         # 降级模式演示
 - 全量 `uv run pytest tests/integration -m integration`（真实 PG）：**74 过**（用时 16 分 25 秒）✓
 - 人工策略首版：`policies/history/screenplay/fa6b7bca77ed.py` + `.meta.json`（谱系根，`parent_version=null`，
   `no_auto_evolve=true` 名单审计）；部署指针 `deployment.screenplay.current_policy_version = fa6b7bca77ed`
+
+### 路径迁移复核（2026-09-23，功能 017 阶段 2 / T1713~T1716 追加）
+
+- **判据材料路径迁移**：`calibration/upgrade-events/{period}.json` →
+  `calibration/upgrade-events/{agent_id}/{period}.json`（009 有效路径 = `…/screenplay/{period}.json`）。
+  动机：原路径不含 agent id，第二个降级 Agent 写入同一 ISO 周会**静默覆盖**第一个 Agent 的材料
+  （审计证据失效）。**不做 legacy 读取**（不读旧路径、不迁移、不改写；既有旧文件原地保留，
+  不可变快照不可回写），避免同周期出现"两份材料"的二义性
+- **同步面**：`tests/unit/test_screenplay_evidence.py`（三处路径断言 + "不产材料"扫描改为
+  `rglob`）、`tests/unit/test_screenplay_cli.py`（两处）、`ops/screenplay.py`（`--data-dir`
+  帮助文案：根目录 + 按 agent 分目录）、`ops/demo_screenplay_loop.py`（材料清点目录）、
+  `README.md`（路径字面量）
+- **通用件薄化**：四处模块的机制下沉 `core/degraded/{policy,compare,adoption,evidence}.py`
+  （业务无关、参数化为 `agent_id` + 注入可调用），009 侧只做适配——导出名、签名、关键字默认值、
+  异常类与默认目录**逐字不变**；009 同享两项新义务（策略执行**超时**、**"不向策略执行交付
+  任何环境对象"**的守护断言，宪章 v2.0.0 原则四例外条款）
+- `uv run pytest tests/unit tests/contract tests/unbiasedness -k screenplay -q`：**450 passed** ✓
+  （改造前基线 449；+1 为新用例 `test_core_degraded_policy.py::…::test_no_auto_evolve_审计位[screenplay-True]`
+  因参数 id 含 `screenplay` 被 `-k` 选中）
+- `uv run python ops/demo_screenplay_loop.py`：**退出码 0，六步全 ok ✓**（用时 ~0.8s；
+  步⑥ 材料清点为 `{data_dir}/screenplay/` 下两条：2026-W38.json / 2026-W39.json）
+- `uv run ruff check .` + `uv run ruff format --check .`：**双绿** ✓

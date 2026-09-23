@@ -1,7 +1,14 @@
-"""升级判据材料（合同 screenplay-upgrade-evidence.md C15，FR-010）。
+"""升级判据材料（薄适配：合同 screenplay-upgrade-evidence.md C15，FR-010）。
 
-产出 `calibration/upgrade-events/{period}.json`（research 决策 8）：**不可变快照**（每次
-生成一条，含当时阈值与原始数值）+ **系统自动判定结论**（`meets | below`）+ 推翻留痕。
+机制在通用件 `core/degraded/evidence.py`（业务无关）：阈值全量校验、判据项逐项可评价性
+（实测值 / `无法评价（来源缺失）` + 缺失原因，无空白无省略）、系统字段不可改写、只增不改。
+本模块注入剧本线的业务口径：判据项清单（judge 信度 / 样本量 / 漂移 / 门禁违规率 / 人评
+锚点数）、阈值来源（`ScreenplayConfig.upgrade_criteria` + 010 校准的 `reliability_target`）
+与判定措辞。
+
+产出 `calibration/upgrade-events/screenplay/{period}.json`：**按 agent 分目录**——009 原路径
+不含 agent id，两个降级 Agent 同 ISO 周写入同一路径会互相覆盖（审计证据失效）；本特性一并
+迁移，**不读旧路径**（避免同周期出现两份材料的二义性；旧文件原地保留，不可变快照不可回写）。
 
 判定口径（澄清 Q1：阈值配置化 + 系统自动判定；四条齐达才达标）：
 1. judge 信度相关系数 ≥ `judge_r_target`（相关系数/样本量来源 010 周校准台账）；
@@ -15,12 +22,29 @@
 本特性范围，须另立决议并修订宪章原则六相关表述。
 """
 
-import json
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
-import blake3
+from core.degraded import evidence as _core_evidence
+from core.degraded.evidence import (
+    UpgradeEvidence,
+    UpgradeEvidenceError,
+)
+
+# 导出面（009 公共 API 逐字不变；机制全在 `core/degraded/evidence.py`）
+__all__ = [
+    "AGENT_ID",
+    "BLIND_REVIEW_OBSERVATION_MATCH",
+    "CONCLUSIONS",
+    "DEFAULT_EVIDENCE_DIR",
+    "JUDGE_EVALUATOR_ID",
+    "UpgradeEvidence",
+    "UpgradeEvidenceError",
+    "build_upgrade_evidence",
+    "gate_violation_rate_of",
+    "judge_reliability",
+    "load_evidence",
+    "override_conclusion",
+]
 
 AGENT_ID = "screenplay"
 DEFAULT_EVIDENCE_DIR = Path("calibration/upgrade-events")
@@ -31,44 +55,6 @@ BLIND_REVIEW_OBSERVATION_MATCH = {"stage": "outline"}
 CONCLUSIONS = ("meets", "below")
 JUDGE_EVALUATOR_ID = "judge.dramatic_tension"
 _REQUIRED_THRESHOLDS = ("judge_r_target", "min_samples", "drift_band", "gate_violation_max")
-_SYSTEM_FIELDS = (
-    "period",
-    "agent_id",
-    "threshold_snapshot",
-    "raw",
-    "conclusion",
-    "reasons",
-    "alerts",
-    "human_anchor_count",
-    "created_at",
-)
-
-
-class UpgradeEvidenceError(Exception):
-    """判据材料错误（阈值缺失/材料已存在/完整性校验失败/留痕缺字段）。"""
-
-
-@dataclass(frozen=True)
-class UpgradeEvidence:
-    """升级判据材料（快照）：阈值 + 原始数值 + 系统结论 + 告警 + 推翻记录。"""
-
-    period: str
-    agent_id: str
-    threshold_snapshot: dict
-    raw: dict
-    conclusion: str  # meets | below（系统自动写入）
-    reasons: list[str] = field(default_factory=list)
-    alerts: list[str] = field(default_factory=list)
-    human_anchor_count: int = 0
-    created_at: str = ""
-    system_digest: str = ""
-    overrides: list[dict] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def _require_thresholds(cfg) -> dict:
@@ -138,16 +124,65 @@ def gate_violation_rate_of(nodes) -> float:
     return violated / len(evaluated)
 
 
-def _system_digest(payload: dict) -> str:
-    """系统写入部分的内容哈希（推翻不改写；手工篡改即机检失败）。"""
-    canonical = json.dumps(
-        {key: payload.get(key) for key in _SYSTEM_FIELDS}, ensure_ascii=False, sort_keys=True
+def _items(
+    *, reliability: dict, drift, gate_violation_rate, human_anchor_count
+) -> tuple[dict, ...]:
+    """判据项（键 + 阈值键 + 提供者）：取值来源在本模块内闭合，机制在通用件。
+
+    每项必有取值形态：取不到数即 `无法评价（来源缺失）` + 原因（不留空、不省略）。
+    """
+    return (
+        {
+            "key": "judge_correlation",
+            "threshold_key": "judge_r_target",
+            "provider": lambda: (
+                _core_evidence.measured(
+                    reliability["correlation"],
+                    judge_metric=reliability["metric"],
+                    judge_metric_note=reliability["note"],
+                )
+                if reliability["correlation"] is not None
+                else _core_evidence.unavailable(
+                    reliability["note"] or "010 台账无本周期 judge 记录",
+                    judge_metric=reliability["metric"],
+                    judge_metric_note=reliability["note"],
+                )
+            ),
+        },
+        {
+            "key": "judge_samples",
+            "threshold_key": "min_samples",
+            "provider": lambda: _core_evidence.measured(reliability["samples"]),
+        },
+        {
+            "key": "drift",
+            "threshold_key": "drift_band",
+            "provider": lambda: (
+                _core_evidence.measured(float(drift))
+                if drift is not None
+                else _core_evidence.unavailable("未测量（调用方未提供漂移指标）")
+            ),
+        },
+        {
+            "key": "gate_violation_rate",
+            "threshold_key": "gate_violation_max",
+            "provider": lambda: _core_evidence.measured(
+                0.0 if gate_violation_rate is None else float(gate_violation_rate)
+            ),
+        },
+        {
+            "key": "human_anchor_count",
+            "threshold_key": None,
+            "provider": lambda: _core_evidence.measured(int(human_anchor_count)),
+        },
     )
-    return blake3.blake3(canonical.encode()).hexdigest()
 
 
-def _evaluate(snapshot: dict, raw: dict) -> tuple[str, list[str], list[str]]:
-    """系统自动判定：四条齐达才 meets；不达标逐条给出原因（并产告警）。"""
+def _evaluate(snapshot: dict, raw: dict, items=()) -> tuple[str, list[str], list[str]]:
+    """系统自动判定：四条齐达才 meets；不达标逐条给出原因（并产告警）。
+
+    `items` 由通用件传入（逐项取值形态的载体）；判定只读 `raw` 的数值口径。
+    """
     reasons: list[str] = []
     alerts: list[str] = []
     if raw["judge_samples"] < snapshot["min_samples"]:
@@ -184,6 +219,11 @@ def _evaluate(snapshot: dict, raw: dict) -> tuple[str, list[str], list[str]]:
     return conclusion, reasons, alerts
 
 
+def _system_digest(payload: dict) -> str:
+    """系统写入部分的内容哈希（推翻不改写；手工篡改即机检失败）。"""
+    return _core_evidence.system_digest(payload)
+
+
 def build_upgrade_evidence(
     period: str,
     cfg,
@@ -196,7 +236,7 @@ def build_upgrade_evidence(
     data_dir: str | Path = DEFAULT_EVIDENCE_DIR,
     agent_id: str = AGENT_ID,
 ) -> UpgradeEvidence:
-    """生成周期判据材料（不可变快照：同周期已存在即拒绝）。
+    """生成周期判据材料（不可变快照：同周期已存在即拒绝，落 `{data_dir}/{agent_id}/`）。
 
     cfg：剧本形态配置（`upgrade_criteria` 判据阈值，缺即报错）；
     ledger：010 周校准台账的 judge 分量记录（相关系数与样本量来源）；
@@ -209,49 +249,27 @@ def build_upgrade_evidence(
     snapshot = _require_thresholds(cfg)
     snapshot["reliability_target"] = _require_reliability_target(calibration)
     reliability = judge_reliability(ledger)
-    raw = {
-        "judge_correlation": reliability["correlation"],
-        "judge_samples": reliability["samples"],
-        "judge_metric": reliability["metric"],
-        "judge_metric_note": reliability["note"],
-        "drift": None if drift is None else float(drift),
-        "gate_violation_rate": 0.0 if gate_violation_rate is None else float(gate_violation_rate),
-        "human_anchor_count": int(human_anchor_count),
-    }
-    conclusion, reasons, alerts = _evaluate(snapshot, raw)
-    payload = {
-        "period": period,
-        "agent_id": agent_id,
-        "threshold_snapshot": snapshot,
-        "raw": raw,
-        "conclusion": conclusion,
-        "reasons": reasons,
-        "alerts": alerts,
-        "human_anchor_count": int(human_anchor_count),
-        "created_at": datetime.now(UTC).isoformat(),
-        "overrides": [],
-    }
-    payload["system_digest"] = _system_digest(payload)
-    directory = Path(data_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / f"{period}.json"
-    if target.exists():
-        raise UpgradeEvidenceError(
-            f"判据材料已存在（不可变快照，只增不改）：{target}"
-            "（如需推翻结论请用 override_conclusion）"
-        )
-    target.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+    return _core_evidence.build_upgrade_evidence(
+        period,
+        cfg,
+        _items(
+            reliability=reliability,
+            drift=drift,
+            gate_violation_rate=gate_violation_rate,
+            human_anchor_count=human_anchor_count,
+        ),
+        judge=_evaluate,
+        snapshot=snapshot,
+        conclusions=CONCLUSIONS,
+        human_anchor_count=int(human_anchor_count),
+        agent_id=agent_id,
+        data_dir=data_dir,
     )
-    return UpgradeEvidence(**payload)
 
 
 def load_evidence(period: str, *, data_dir: str | Path = DEFAULT_EVIDENCE_DIR) -> dict:
     """读取周期判据材料（不存在即报错，不静默返回空）。"""
-    path = Path(data_dir) / f"{period}.json"
-    if not path.is_file():
-        raise UpgradeEvidenceError(f"判据材料不存在：{path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _core_evidence.load_evidence(period, agent_id=AGENT_ID, data_dir=data_dir)
 
 
 def override_conclusion(
@@ -261,28 +279,7 @@ def override_conclusion(
     reason: str,
     data_dir: str | Path = DEFAULT_EVIDENCE_DIR,
 ) -> UpgradeEvidence:
-    """人推翻系统结论：追加留痕（人/时间/理由）——**系统结论字段逐字节不变**。
-
-    快照完整性机检（`system_digest`）：系统字段被手工改写即拒绝（不覆盖篡改，也不放行）。
-    """
-    if not isinstance(by, str) or not by:
-        raise UpgradeEvidenceError("推翻人（by）不能为空（留痕必填）")
-    if not isinstance(reason, str) or not reason.strip():
-        raise UpgradeEvidenceError("推翻理由（reason）不能为空（留痕必填）")
-    path = Path(data_dir) / f"{period}.json"
-    if not path.is_file():
-        raise UpgradeEvidenceError(f"判据材料不存在：{path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.pop("system_digest", None) != _system_digest(payload):
-        raise UpgradeEvidenceError(
-            f"判据材料完整性校验失败：{path} 的系统字段被改写（不得篡改、不得覆盖）"
-        )
-    payload["overrides"] = [
-        *payload.get("overrides", []),
-        {"by": by, "reason": reason, "at": datetime.now(UTC).isoformat()},
-    ]
-    payload["system_digest"] = _system_digest(payload)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+    """人推翻系统结论：追加留痕（人/时间/理由）——**系统结论字段逐字节不变**。"""
+    return _core_evidence.override_conclusion(
+        period, by=by, reason=reason, agent_id=AGENT_ID, data_dir=data_dir
     )
-    return UpgradeEvidence(**payload)

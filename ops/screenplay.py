@@ -570,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     evidence.add_argument(
         "--data-dir",
         default=str(REPO_ROOT / "calibration" / "upgrade-events"),
-        help="判据材料落盘目录",
+        help="判据材料落盘根目录（材料落 <根>/screenplay/<周期>.json，按 agent 分目录）",
     )
     evidence.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
     evidence.add_argument("--dsn", default=None, help="PG DSN（用于门禁违规率统计）")

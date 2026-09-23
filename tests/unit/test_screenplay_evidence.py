@@ -6,7 +6,8 @@
 judge_r_target、样本量 ≥ min_samples、漂移在 drift_band 内、门禁违规率 ≤
 gate_violation_max 四条齐达才算达标）；阈值缺失即报错（不允许静默"无判据"）。
 
-材料为**不可变快照**（`calibration/upgrade-events/{period}.json`，已存在即拒绝）；
+材料为**不可变快照**（`calibration/upgrade-events/{agent_id}/{period}.json`——按 agent 分目录，
+防两个降级 Agent 同 ISO 周互相覆盖；已存在即拒绝）；
 人可推翻结论但**必须留痕**（人/时间/理由），且**系统结论字段逐字节不变**；
 不达标必须如实标注（不得暗示可升级）。
 """
@@ -112,10 +113,10 @@ class Test判据材料内容:
         assert evidence.raw["human_anchor_count"] == 5
 
     def test_阈值快照记录_010_信度目标与材料落盘(self, cfg, calibration, tmp_path):
-        """快照含 010 信度目标（对账口径）+ 材料落 calibration/upgrade-events/{period}.json。"""
+        """快照含 010 信度目标（对账口径）+ 材料落 calibration/upgrade-events/screenplay/。"""
         evidence = _build(cfg, calibration, data_dir=tmp_path)
         assert evidence.threshold_snapshot["reliability_target"] == pytest.approx(0.6)
-        path = tmp_path / f"{_PERIOD}.json"
+        path = tmp_path / "screenplay" / f"{_PERIOD}.json"
         assert path.is_file()
         payload = json.loads(path.read_text(encoding="utf-8"))
         assert payload["period"] == _PERIOD
@@ -136,7 +137,7 @@ class Test判据材料内容:
         _build(cfg, calibration, data_dir=tmp_path)
         other = _build(cfg, calibration, period="2026-W39", data_dir=tmp_path)
         assert other.period == "2026-W39"
-        assert sorted(path.name for path in tmp_path.glob("*.json")) == [
+        assert sorted(path.name for path in (tmp_path / "screenplay").glob("*.json")) == [
             "2026-W38.json",
             "2026-W39.json",
         ]
@@ -210,7 +211,7 @@ class Test阈值缺失即报错:
         stale = SimpleNamespace(upgrade_criteria=criteria)
         with pytest.raises(UpgradeEvidenceError, match=missing):
             _build(stale, calibration, data_dir=tmp_path)
-        assert list(tmp_path.glob("*.json")) == []  # 不产材料
+        assert list(tmp_path.rglob("*.json")) == []  # 不产材料（按 agent 分目录亦无文件）
 
     def test_缺_010_信度目标即报错(self, cfg, tmp_path):
         with pytest.raises(UpgradeEvidenceError, match="reliability_target"):
@@ -271,7 +272,7 @@ class Test人推翻留痕:
     def test_篡改系统字段被拒(self, cfg, calibration, tmp_path):
         """快照完整性：系统字段被手工改写 → 推翻被拒（system_digest 机检）。"""
         _build(cfg, calibration, data_dir=tmp_path)
-        path = tmp_path / f"{_PERIOD}.json"
+        path = tmp_path / "screenplay" / f"{_PERIOD}.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
         payload["threshold_snapshot"]["judge_r_target"] = 0.01  # 手工放宽阈值
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

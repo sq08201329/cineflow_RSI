@@ -98,8 +98,10 @@ def _require_thresholds(section: dict) -> dict:
             raise DevConfigError(f"dev.upgrade_criteria 缺少配置项 {key!r}")
     return {
         "correlation_target": _require_number(
-            section["correlation_target"], "dev.upgrade_criteria.correlation_target",
-            minimum=0.0, maximum=1.0,
+            section["correlation_target"],
+            "dev.upgrade_criteria.correlation_target",
+            minimum=0.0,
+            maximum=1.0,
         ),
         "min_samples": _require_int(
             section["min_samples"], "dev.upgrade_criteria.min_samples", minimum=1
@@ -108,8 +110,10 @@ def _require_thresholds(section: dict) -> dict:
             section["drift_band"], "dev.upgrade_criteria.drift_band", minimum=0.0, maximum=1.0
         ),
         "gate_violation_max": _require_number(
-            section["gate_violation_max"], "dev.upgrade_criteria.gate_violation_max",
-            minimum=0.0, maximum=1.0,
+            section["gate_violation_max"],
+            "dev.upgrade_criteria.gate_violation_max",
+            minimum=0.0,
+            maximum=1.0,
         ),
     }
 

@@ -602,7 +602,8 @@ class TestCompareAdoptRejectEvidence子命令:
         assert any("台账" in reason for reason in payload["reasons"])
         assert any("漂移指标缺失" in reason for reason in payload["reasons"])
         assert payload["threshold_snapshot"]["judge_r_target"] == 0.6
-        assert Path(tmp_path / "events" / "2026-W38.json").is_file()
+        # 判据材料按 agent 分目录（017 迁移）：`{data_dir}/screenplay/{period}.json`
+        assert Path(tmp_path / "events" / "screenplay" / "2026-W38.json").is_file()
 
     def test_evidence_达标路径需带内漂移与台账(self, cli, capsys, tmp_path, monkeypatch):
         """显式传入带内漂移 + 010 台账达标记录 → meets（判据四条齐达）。"""
@@ -643,7 +644,8 @@ class TestCompareAdoptRejectEvidence子命令:
 
     def test_evidence_推翻留痕(self, cli, capsys, tmp_path):
         events = tmp_path / "events"
-        events.mkdir()
+        # 材料按 agent 分目录（017 迁移）：`{data_dir}/screenplay/{period}.json`
+        (events / "screenplay").mkdir(parents=True)
         material = {
             "period": "2026-W39",
             "agent_id": "screenplay",
@@ -659,7 +661,7 @@ class TestCompareAdoptRejectEvidence子命令:
         from agents.screenplay.upgrade_evidence import _system_digest
 
         material["system_digest"] = _system_digest(material)
-        (events / "2026-W39.json").write_text(
+        (events / "screenplay" / "2026-W39.json").write_text(
             json.dumps(material, ensure_ascii=False), encoding="utf-8"
         )
         code, payload = _invoke(
