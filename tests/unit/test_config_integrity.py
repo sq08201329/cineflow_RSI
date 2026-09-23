@@ -33,6 +33,7 @@ CONFIG_CLASSES = (
     ("calibration", "core.calibration.config", "CalibrationConfig"),
     ("drift", "core.calibration.drift_config", "DriftConfig"),
     ("deployment", "core.deployment.config", "DeploymentConfig"),
+    ("budget", "core.billing.budget", "BudgetConfig"),
     ("web", "web.queries", "WebConfig"),
 )
 
@@ -63,6 +64,7 @@ REQUIRED_PATHS = (
     ("calibration", ("calibration", "self_pairing_exclusions")),
     ("drift", ("calibration", "drift")),
     ("deployment", ("deployment", "gate")),
+    ("budget", ("budget", "tiers")),
     ("web", ("web", "data_dirs")),
 )
 

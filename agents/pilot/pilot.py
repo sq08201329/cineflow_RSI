@@ -100,6 +100,7 @@ class FileRunStore:
 
 def config_completeness(config_path: str | Path) -> tuple[str, ...]:
     """配置完整性：全部加载器逐个通过（缺项即抛错，不静默回退）。"""
+    from core.billing.budget import BudgetConfig
     from core.calibration.config import CalibrationConfig
     from core.calibration.drift_config import DriftConfig
     from core.deployment.config import DeploymentConfig
@@ -122,6 +123,8 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
         ("calibration", lambda: CalibrationConfig.from_yaml(path)),
         ("drift", lambda: DriftConfig.from_yaml(path)),
         ("deployment", lambda: DeploymentConfig.from_yaml(path)),
+        # 019：预算门禁的档位声明（缺段/缺档即拒绝启动——"忘记声明额度"不得悄悄跑通）
+        ("budget", lambda: BudgetConfig.from_yaml(path)),
         ("web", lambda: WebConfig.from_yaml(path)),
     ):
         try:
@@ -138,6 +141,24 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
     return tuple(checked)
 
 
+def _declared_tier_limits(config_path: Path) -> dict[str, float]:
+    """LLM 腿的声明额度（键 = **环节 id**）：`budget.tiers` 的声明值，缺段/缺档即拒绝启动。
+
+    **不发明 agent → 环节映射**（如实登记的口径张力）：环节 id 由**调用点**声明
+    （`chat(..., stage=<环节 id>)`），与 Agent 名不必一一对应（judge 一个角色覆盖四个环节、
+    一个 Agent 可有多个环节），故此处按环节 id 原样登记。
+    """
+    from core.billing.budget import BudgetConfig
+
+    try:
+        cfg = BudgetConfig.from_yaml(config_path)
+    except Exception as exc:  # noqa: BLE001 - 预检统一收口：缺额度不得启动
+        raise PrecheckError(f"预算不可用（budget 段）：{exc}") from exc
+    if not cfg.tiers:
+        raise PrecheckError("预算不可用：budget.tiers 为空（缺档即拒绝启动）")
+    return {tier_id: tier.limit_usd for tier_id, tier in cfg.tiers.items()}
+
+
 def precheck(
     *,
     form: str,
@@ -152,6 +173,9 @@ def precheck(
     后端面（`pilot` 段）在此**只做取值校验与如实登记**：取值非法即拒绝（与配置完整性同
     口径），但**不验凭证**——`backend: http` 而凭证缺失由装配期（`build_runtime`）显式失败，
     本报告以 `credentials_checked: false` 明确标注这条边界。
+
+    `budgets` 的键口径（019）：平台腿按 **agent 名**登记单轮预算；LLM 腿按**环节 id**登记
+    `budget.tiers` 的声明额度（agent 名与环节 id 不一一对应，故不编造映射）。
     """
     if not isinstance(inputs, PilotInputs):
         raise PrecheckError(f"试水输入必须为 PilotInputs，实际为 {inputs!r}")
@@ -180,6 +204,7 @@ def precheck(
         promo=stages_module.PromoConfig.from_yaml(path),
     )
     budgets = {}
+    declared_tiers = _declared_tier_limits(path)
     for agent in ("screenplay", "storyboard", "visual", "sound", "editing", "promo"):
         # 剧本 Agent 的预算面上限在模型价目表（按 token 计费），其余五段为单轮预算
         config = getattr(configs, agent)
@@ -188,7 +213,11 @@ def precheck(
             prices = getattr(config, "model_prices", {}) or {}
             if not prices:
                 raise PrecheckError(f"预算不可用：{agent} 既无单轮预算也无模型价目表（拒绝启动）")
-            budgets[agent] = 0.0
+            # 019：LLM 腿的额度按**环节**分档声明（`budget.tiers` 的键 = 各 `.chat(` 调用点声明的
+            # `stage=` 取值）。Agent 名与"环节 id"**并非一一对应**（judge 一个角色覆盖四个环节、
+            # 一个 Agent 可有多个环节），故此处**不发明 agent → 环节映射**：按环节 id 登记声明额度，
+            # 不再写 `0.0` 占位（占位与 FR-001"额度随配置快照冻结留痕"冲突）。
+            budgets.update(declared_tiers)
             continue
         if float(budget) <= 0:
             raise PrecheckError(f"预算不可用：{agent} 单轮预算 {budget} 必须为正（拒绝启动）")

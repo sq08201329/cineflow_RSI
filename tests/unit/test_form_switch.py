@@ -273,6 +273,10 @@ class Test差异逐项可归因:
             "dreaming",
             # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）
             "deployment",
+            # 019：budget 段按形态声明（短剧额度更小、时间窗更短——运营节奏即形态）；
+            # 该段的键集与其差异逐项由 019 自己的用例承担（本文件 :156 的权重差异循环
+            # 遍历 evaluator_weights 的七个 Agent，budget 段不属其中，故不并入）
+            "budget",
         }
         # 形态无关基建段逐字相同（web / cost_regression 不因形态而变）；
         # deployment 段**唯一**按形态声明的键是 `spot_check.pending_alert_days`

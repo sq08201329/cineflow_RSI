@@ -419,7 +419,7 @@ class TestC10到C13试水运行:
             (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
         )
         differing = {key for key in set(movie) | set(short) if movie.get(key) != short.get(key)}
-        # 形态差异逐项落在配置上（13 个段；017 起含 dev）；形态无关基建段逐字相同
+        # 形态差异逐项落在配置上（14 个段；017 起含 dev，019 起含 budget）；形态无关基建段逐字相同
         assert differing == {
             "form",
             "dev",
@@ -435,6 +435,8 @@ class TestC10到C13试水运行:
             "dreaming",
             # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）
             "deployment",
+            # 019：budget 段按形态声明（短剧额度更小、时间窗更短；键集本身两形态一致）
+            "budget",
         }
         for key in ("web", "cost_regression"):
             assert movie[key] == short[key]

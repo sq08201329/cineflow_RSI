@@ -491,6 +491,103 @@ llm:
     dreaming_candidates: deepseek-flash-fast # 策略代码生成：先非思考，质量不足再调（改本行即可）
   default_profile: deepseek-flash # 多档案必须显式声明（单档案才可省略并自动认定）
 
+# 真实渠道与账单对账（功能 019）：预算门禁 / 账单导入面 / 逐项对账 / 校准先决 / 连续运行证据。
+# **渠道 id、环节 id 与账单格式 id 只在本段声明**（`core/billing/` 零渠道/环节/格式字面量、
+# 零分支）；缺任一键即装配期报错（不取码内默认，FR-001/FR-014）。
+# **额度取值为最小规模档且"未标定"**：具体数字由运营给定（规格开放问题 1）——未标定期间
+# 按最小规模运行并如实标注；运营给定后**只改本段**（机制面一行不动）。
+# **两形态取值不同**（与电影态的差异逐项落在本段，见 T1923）：短剧额度更小、时间窗更短
+# （投放节奏密集 → 单条物料数天内见效/失效，周校准粒度太粗）。
+budget:
+  channels: # 渠道登记（本特性唯实例化 LLM 渠道；媒体渠道与生成侧渠道结转 G4/G2）
+    llm:
+      adapter: pilot_llm # 真实调用面的装配入口（链内唯一装配点 + 校准入口，见 agents/pilot/backends.py）
+      bill: # 账单导入面：格式 id + 来源形态 + 列映射（**列映射驱动分类**，缺声明即导入报错）
+        format: csv_lines # 内置通用格式键（`core/billing/` 内唯一允许出现的格式字面量）
+        fetch: export # export|api：导出导入为本特性的来源形态（本特性不实现联网拉取）
+        columns: # 语义字段 → 账单列名；entry_id/amount/currency/period/line_kind/amount_sign 必填
+          entry_id: entry_id
+          amount: amount
+          currency: currency
+          period: period
+          line_kind: line_kind
+          amount_sign: amount_sign
+          # 异币种**条件必填**（账单币种 ≠ 记账币种时缺任一即导入报错，不猜汇率）
+          fx_rate: fx_rate
+          fx_source: fx_source
+          fx_at: fx_at
+        classification: # 分类驱动列的取值域（C13：分类输入面由配置声明，不用金额阈值或符号启发式）
+          line_kind: # 账单 line_kind 取值 → 固定六类之一；**映射不到的取值 ⇒ 未分类 ⇒ 告警**
+            usage: 计费口径
+            unbilled: 未入账
+            timing_shift: 时序错位
+            discount: 免费额度与折扣
+            free_quota: 免费额度与折扣
+            fx_adjustment: 币种汇率
+            unsettled: 未结账
+          amount_sign: # 账单 amount_sign 取值 → 金额符号（+1 记账 / -1 冲减）
+            charge: 1.0
+            credit: -1.0
+  tiers: # 按环节分档额度：**键 = 环节 id = 各 .chat( 调用点声明的 stage= 取值**（不发明 agent 名 ↔ 环节 id 映射）
+    screenplay: # 剧本正文三阶段生成（agents/screenplay/loop.py）
+      limit_usd: 2.0 # 上限（> 0）；**未标定**：运营给定前按最小规模档运行
+      window: {kind: day} # run|day|period；短剧按**日**结算（比电影态的账单周期更短）
+      on_exhausted: refuse # 唯一取值：拒绝（不排队、不降级为模拟）
+      note: "未标定（剧本生成最小规模档）：运营给定后只改本值；估算额/网关记账/厂商账单三数分离"
+    dev: # 立项组合逐条目论证生成（agents/dev/loop.py）
+      limit_usd: 1.0 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "未标定（立项论证最小规模档）：运营给定后只改本值"
+    promo: # 宣发文案生成（agents/promo/material.py）
+      limit_usd: 0.5 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: run}
+      on_exhausted: refuse
+      note: "未标定（宣发文案最小规模档）：单轮物料数即单轮调用数，运营给定后只改本值"
+    screenplay_judge: # 剧本 judge 委员会（agents/screenplay/evaluators/dramatic_tension.py）
+      limit_usd: 0.8 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: run}
+      on_exhausted: refuse
+      note: "未标定（剧本判官最小规模档）：票数 × 锚点数即单轮调用数，运营给定后只改本值"
+    storyboard_judge: # 分镜 judge 委员会（agents/storyboard/evaluators/script_fit.py）
+      limit_usd: 0.8 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: run}
+      on_exhausted: refuse
+      note: "未标定（分镜判官最小规模档）：运营给定后只改本值"
+    visual_judge: # 视觉 judge 委员会（agents/visual/evaluators/cinematic.py）
+      limit_usd: 0.8 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: run}
+      on_exhausted: refuse
+      note: "未标定（视觉判官最小规模档）：运营给定后只改本值"
+    editing_judge: # 剪辑 judge 委员会（agents/editing/evaluators/narrative.py）
+      limit_usd: 0.8 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: run}
+      on_exhausted: refuse
+      note: "未标定（剪辑判官最小规模档）：运营给定后只改本值"
+    dreaming_candidates: # 做梦层候选策略生成（dreaming/candidates.py）
+      limit_usd: 0.5 # 上限（> 0）；**未标定**（同最小规模档口径）
+      window: {kind: run}
+      on_exhausted: refuse
+      note: "未标定（做梦候选最小规模档）：运营给定后只改本值"
+  peak_windows: # 峰谷时段：**渠道日历的唯一来源**（峰谷判定 + 额度 day 窗口 + 运行记录日期共用）
+    timezone: Asia/Shanghai # 必填（缺即装配报错）；不引入第二个时区配置键
+    attribution: call_start # 取值域单元素：按**调用开始时刻**归属（跨峰谷切换不拆分）
+    windows: [{start: "08:30", end: "00:30"}] # 峰时区间，闭开 [start, end)，支持跨夜；不需峰谷定价的渠道写 []
+  calibration: # 最小规模校准记录（扩量的先决条件）
+    min_samples: 5 # 样本量下限（短剧单笔小额、噪声大，故下限高于电影态的 3）
+    deviation_tolerance: 0.1 # 实测偏差容差 |deviation| ≤ 0.1
+    record_ttl_days: 14 # 记录有效期（投放节奏密集 ⇒ 过期更快；超期 ⇒ stale，扩量恒拒绝）
+  reconcile: # 账单对账阈值（单笔量级更小 ⇒ 容差与告警阈值按比例收紧）
+    amount_tolerance_usd: 0.001 # |delta| ≤ 容差视为零差异（**仍须分类与口径备注**）
+    alert_threshold_usd: 0.1 # 超阈值 ⇒ delta_over_threshold 告警
+    unexplained_alert: true # 存在未分类/未解释项 ⇒ 告警（为真时**不得**关闭该行为）
+  ledger: # 跨进程账本（单主机文件账本：flock + 原子替换 + 单调 revision）
+    root: billing # 产物根（相对仓库根；绝对路径原样使用）
+    lock_timeout_seconds: 5.0 # 锁超时 ⇒ 拒绝调用（不无锁写、不静默放行）
+  runs: # 运行记录窗口机检（覆盖 + 连续双条件）
+    min_window_days: 7 # 覆盖下限（≥1 周里程碑）
+    gap_tolerance_days: 0 # 断档容差（0 = 不容断档；缺口如实列出、不插值）
+
 pilot:
   backend: simulated # simulated | http：五个环节的平台适配器（分镜/视觉/声音/剪辑/宣发）
   llm_backend: mock # mock | http：LLM 网关后端（http 读 OPENAI_BASE_URL / OPENAI_API_KEY）

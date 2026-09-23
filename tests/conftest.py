@@ -3384,6 +3384,85 @@ web:
     calibration: calibration
     pools: replay/pools
   export_dir: web/dist
+budget:
+  # 019 精简档：与真实配置**同键集**（渠道 id / 环节 id / 格式 id），取值压到夹具量级
+  # （`thresholds_snapshot` 一类的取值差异由 T1923 的用例承担）。缺段即预检拒绝启动。
+  channels:
+    llm:
+      adapter: pilot_llm
+      bill:
+        format: csv_lines
+        fetch: export
+        columns:
+          entry_id: entry_id
+          amount: amount
+          currency: currency
+          period: period
+          line_kind: line_kind
+          amount_sign: amount_sign
+          fx_rate: fx_rate
+          fx_source: fx_source
+          fx_at: fx_at
+        classification:
+          line_kind:
+            usage: 计费口径
+            unbilled: 未入账
+            timing_shift: 时序错位
+            discount: 免费额度与折扣
+            free_quota: 免费额度与折扣
+            fx_adjustment: 币种汇率
+            unsettled: 未结账
+          amount_sign: {charge: 1.0, credit: -1.0}
+  tiers:
+    # 键 = 环节 id（各 .chat( 调用点声明的 stage= 取值）；块式（一行一标量）以支持定点改写
+    screenplay:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    dev:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    promo:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    screenplay_judge:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    storyboard_judge:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    visual_judge:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    editing_judge:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+    dreaming_candidates:
+      limit_usd: 1.0
+      window: {kind: day}
+      on_exhausted: refuse
+      note: "夹具未标定档（最小规模）"
+  peak_windows:
+    timezone: Asia/Shanghai
+    attribution: call_start
+    windows: []
+  calibration: {min_samples: 1, deviation_tolerance: 0.5, record_ttl_days: 7}
+  reconcile: {amount_tolerance_usd: 0.01, alert_threshold_usd: 1.0, unexplained_alert: true}
+  ledger: {root: billing, lock_timeout_seconds: 5.0}
+  runs: {min_window_days: 7, gap_tolerance_days: 0}
 deployment:
   mode_default: manual
   gate: {validation_top_ratio: 0.2, require_unbiasedness: true, allow_without_judge: false}
@@ -3943,3 +4022,419 @@ def dev_data_dir(tmp_path):
     for sub in ("artifacts", "rounds", "comparisons", "adoptions"):
         (base / sub).mkdir(parents=True)
     return base
+
+
+# ---------------------------------------------------------------------------
+# 功能 019（真实渠道与账单对账）夹具族（T1904）
+#
+# 三个原则：
+# 1. **零真实调用**：夹具账单是声明值的载体，网关账目是 dict（`cost_report()` 形状），
+#    校准记录与运行记录的"实测花费"都是既有记录的复述——不构造后端、不联网；
+# 2. **不掩盖缺项**：小额度假配置从**两形态真实配置**派生后只压额度/阈值，**键集与真实配置一致**
+#    （漏键、缺档的取舍由 019 自己的用例承担）；
+# 3. **产物零污染**：billing 根一律落在 tmp_path（绝对路径原样使用，见 core/billing 的
+#    `billing_root`），仓库的 pilot/ deployment/ calibration/ 零新增文件。
+# ---------------------------------------------------------------------------
+
+# 夹具的记账币种（与账单条目币种比对；异币种条目必须带 fx）
+_BILLING_ACCOUNTING_CURRENCY = "USD"
+
+
+def _billing_budget_payload(
+    form: str,
+    *,
+    tier_limit_usd: float | None,
+    window_kind: str | None,
+    **overrides,
+) -> dict:
+    """小额度假 `budget:` 段：从真实形态配置派生后压额度/窗口，其余逐字保留。"""
+    import copy
+
+    import yaml
+
+    payload = copy.deepcopy(
+        yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8"))[
+            "budget"
+        ]
+    )
+    if tier_limit_usd is not None:
+        for tier in payload["tiers"].values():
+            tier["limit_usd"] = float(tier_limit_usd)
+    if window_kind is not None:
+        for tier in payload["tiers"].values():
+            tier["window"] = {"kind": window_kind}
+    payload.update(overrides)
+    return payload
+
+
+@pytest.fixture()
+def billing_budget_factory():
+    """两形态小额度假 `budget:` 段工厂：`_make(form="movie"|"shortdrama", ...)` → 段 dict。
+
+    只压额度与窗口（默认 `day`，避免夹具依赖 `run`/`period` 窗口实例）；键集与真实配置一致。
+    """
+
+    def _make(
+        form: str = "movie",
+        *,
+        tier_limit_usd: float | None = 1.0,
+        window_kind: str | None = "day",
+        **overrides,
+    ) -> dict:
+        return _billing_budget_payload(
+            form, tier_limit_usd=tier_limit_usd, window_kind=window_kind, **overrides
+        )
+
+    return _make
+
+
+@pytest.fixture()
+def budget_config_factory(billing_budget_factory):
+    """`BudgetConfig` 工厂（小额度假）：`_make(...)` → BudgetConfig（缺项校验同真实配置）。"""
+    from core.billing.budget import BudgetConfig
+
+    def _make(form: str = "movie", **overrides):
+        return BudgetConfig.from_dict({"budget": billing_budget_factory(form, **overrides)})
+
+    return _make
+
+
+@pytest.fixture()
+def billing_root(tmp_path):
+    """billing 产物根（临时绝对路径；`billing_root()` 原样使用，仓库零污染）。"""
+    return tmp_path / "billing"
+
+
+@pytest.fixture()
+def billing_alerts(billing_root, budget_config_factory):
+    """`alerts.jsonl` 只增写手（落夹具 billing 根）。"""
+    from core.billing.budget import AlertLog, alerts_path
+
+    cfg = budget_config_factory()
+
+    def _make(channel_id: str | None = None):
+        channel = channel_id or next(iter(cfg.channels))
+        return AlertLog(alerts_path(billing_root, channel))
+
+    return _make
+
+
+@pytest.fixture()
+def billing_ledger_factory(billing_root, budget_config_factory):
+    """`FileLedger` 工厂（落夹具 billing 根；`timeout_seconds` 可压到毫秒级做锁用例）。"""
+    from core.billing.budget import FileLedger, ledger_path
+
+    cfg = budget_config_factory()
+
+    def _make(channel_id: str | None = None, *, timeout_seconds: float | None = None):
+        channel = channel_id or next(iter(cfg.channels))
+        return FileLedger(
+            ledger_path(billing_root, channel),
+            timeout_seconds=timeout_seconds or cfg.ledger["lock_timeout_seconds"],
+        )
+
+    return _make
+
+
+@pytest.fixture()
+def billing_bill_fixture():
+    """夹具账单（`csv_lines`）：**六类差异各若干** + 口径差 + 缺失条目 + 时序错位 +
+    折扣与免费额度 + 异币种（带 fx）+ 未识别的 `line_kind`（取值域外 ⇒ 未分类）。
+
+    返回 `{bill_id, period, currency, text, rows, expect}`：`expect` 是按行手算的期望值
+    （分类 → 账单侧带符号金额合计；独立于实现，供对账用例逐项断言）。
+    """
+    period = "2026-09"
+    columns = (
+        "entry_id,amount,currency,period,line_kind,amount_sign,model_ref,"
+        "fx_rate,fx_source,fx_at,note"
+    )
+    rows = [
+        # (entry_id, amount, currency, line_kind, amount_sign, model_ref, fx_rate, note)
+        ("b-1", "1.20", "USD", "usage", "charge", "deepseek-flash", "", "峰时缓存未命中"),
+        ("b-2", "0.80", "USD", "usage", "charge", "deepseek-flash", "", "同档案第二笔"),
+        ("b-3", "0.30", "USD", "usage", "charge", "deepseek-flash-fast", "", "判决档"),
+        (
+            "b-4",
+            "0.05",
+            "USD",
+            "discount",
+            "credit",
+            "deepseek-flash",
+            "",
+            "折扣：不得静默按 0 记账",
+        ),
+        ("b-5", "0.02", "USD", "free_quota", "credit", "deepseek-flash", "", "免费额度"),
+        (
+            "b-6",
+            "0.10",
+            "USD",
+            "timing_shift",
+            "charge",
+            "deepseek-flash",
+            "",
+            "上期调账：留待下期",
+        ),
+        ("b-7", "0.07", "USD", "unsettled", "charge", "deepseek-flash", "", "账期未到：留待下期"),
+        ("b-8", "0.06", "USD", "unbilled", "charge", "deepseek-flash-fast", "", "账单侧新增行"),
+        ("b-9", "0.04", "EUR", "usage", "charge", "deepseek-flash", "1.25", "异币种：按 fx 折算"),
+        ("b-10", "0.01", "USD", "fx_adjustment", "charge", "deepseek-flash", "", "汇率调整项"),
+        ("b-11", "0.03", "USD", "mystery_kind", "charge", "deepseek-flash", "", "取值域外"),
+    ]
+    lines = [columns]
+    for entry_id, amount, currency, line_kind, sign, model_ref, fx_rate, note in rows:
+        fx_source = "fixture-fx" if fx_rate else ""
+        fx_at = "2026-09-30T00:00:00+00:00" if fx_rate else ""
+        lines.append(
+            f"{entry_id},{amount},{currency},{period},{line_kind},{sign},{model_ref},"
+            f'{fx_rate},{fx_source},{fx_at},"{note}"'
+        )
+    return {
+        "bill_id": "vendor-2026-09",
+        "period": period,
+        "currency": _BILLING_ACCOUNTING_CURRENCY,
+        "text": "\n".join(lines) + "\n",
+        "rows": rows,
+        # 手算期望（账单侧、记账币种、已带符号；异币种 b-9 按 1.25 折算 = 0.05）
+        "expect": {
+            "计费口径": 2.35,  # 1.20 + 0.80 + 0.30 + 0.05（b-9 折算后）
+            "未入账": 0.06,
+            "时序错位": 0.10,
+            "免费额度与折扣": -0.07,  # 0.05 + 0.02 冲减（不得静默按 0）
+            "币种汇率": 0.01,
+            "未结账": 0.07,
+            "unclassified": 0.03,
+            "bill_total_usd": 2.55,
+        },
+    }
+
+
+@pytest.fixture()
+def billing_gateway_ledger_fixture(billing_bill_fixture):
+    """网关账目夹具（`cost_report()` 形状）：含**口径差**（同档案金额不同）与
+    **账单缺失条目**（网关有记账而账单无对应档案）。"""
+    return {
+        "by_profile": {
+            "deepseek-flash": {
+                "calls": 3,
+                "cost_usd": 2.00,
+                "prompt_tokens": 3000,
+                "completion_tokens": 900,
+            },
+            "deepseek-flash-fast": {
+                "calls": 1,
+                "cost_usd": 0.30,
+                "prompt_tokens": 400,
+                "completion_tokens": 200,
+            },
+            # 账单侧无该档案的计费线 ⇒ 未入账（网关记账不得自证）
+            "local-qwen": {
+                "calls": 1,
+                "cost_usd": 0.25,
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+            },
+        },
+        "total_usd": 2.55,
+        "cache_hits": 0,
+        "accounting_note": "夹具网关账目：折算值，≠ 厂商账单",
+    }
+
+
+@pytest.fixture()
+def billing_broken_bills():
+    """坏账单族（导入必须**整体拒绝、零落盘**）：映射 场景名 → (文本/形状, 期望错误说明)。
+
+    `fmt` 为 `json_lines` 的两项用 JSON 行表达（bool 金额只能由 JSON 给出）。
+    """
+    header = (
+        "entry_id,amount,currency,period,line_kind,amount_sign,"
+        "model_ref,fx_rate,fx_source,fx_at,note"
+    )
+    good = f'{header}\nb-1,1.00,USD,2026-09,usage,charge,deepseek-flash,,,,"ok"\n'
+    return {
+        "negative_amount": (
+            "csv_lines",
+            f'{header}\nb-1,-1.00,USD,2026-09,usage,charge,deepseek-flash,,,,"负数"\n',
+        ),
+        "bool_amount": (
+            "json_lines",
+            '{"entry_id": "b-1", "amount": true, "currency": "USD", "period": "2026-09", '
+            '"line_kind": "usage", "amount_sign": "charge", "model_ref": "deepseek-flash"}\n',
+        ),
+        "duplicate_entry_id": (
+            "csv_lines",
+            good.replace("b-1,1.00", "b-1,1.00")
+            + 'b-1,2.00,USD,2026-09,usage,charge,deepseek-flash,,,,"重号"\n',
+        ),
+        "missing_entry_id": (
+            "csv_lines",
+            f'{header}\n,1.00,USD,2026-09,usage,charge,deepseek-flash,,,,"无 id"\n',
+        ),
+        "missing_fx": (
+            "csv_lines",
+            f'{header}\nb-1,1.00,EUR,2026-09,usage,charge,deepseek-flash,,,,"异币种缺 fx"\n',
+        ),
+        "missing_driver_column": (
+            "csv_lines",
+            f'{header}\nb-1,1.00,USD,2026-09,,charge,deepseek-flash,,,,"缺 line_kind"\n',
+        ),
+        "unrecognized_format": ("csv_lines", good),
+    }
+
+
+@pytest.fixture()
+def billing_calibration_factory(tmp_path):
+    """校准记录夹具工厂：`_make(outcome=...)` → `record_calibration` 的关键字参数。
+
+    `outcome ∈ {pass, fail, expired, insufficient}`：超期靠 `at` 回拨、样本不足靠
+    `min_samples`（两形态取值不同，故按传入 cfg 判定）。
+    """
+    import datetime as dt
+
+    moment = dt.datetime(2026, 9, 23, 12, 0, tzinfo=dt.UTC)
+
+    def _make(
+        cfg,
+        *,
+        outcome: str = "pass",
+        channel_id: str | None = None,
+        tier_id: str = "screenplay",
+        **overrides,
+    ):
+        channel = channel_id or next(iter(cfg.channels))
+        ttl_days = int(cfg.calibration["record_ttl_days"])
+        min_samples = int(cfg.calibration["min_samples"])
+        params = {
+            "calibration_id": f"cal-{outcome}",
+            "channel_id": channel,
+            "tier_id": tier_id,
+            "prices_snapshot": {"profile-1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
+            "sample_count": min_samples,
+            "measured_cost_usd": 4.8,
+            "expected_cost_usd": 5.0,
+            "note": "夹具：最小规模单轮（成本来源：既有运行记录）",
+            "cost_source": "gateway_accounting",
+            "at": moment,
+        }
+        if outcome == "fail":
+            params["measured_cost_usd"] = 8.0  # 偏差 0.6 远超容差
+        elif outcome == "expired":
+            params["at"] = moment - dt.timedelta(days=ttl_days + 1)
+        elif outcome == "insufficient":
+            params["sample_count"] = 1
+        elif outcome != "pass":
+            raise ValueError(f"未知校准场景：{outcome!r}")
+        params.update(overrides)
+        return params
+
+    return _make
+
+
+@pytest.fixture()
+def billing_runlog_factory():
+    """运行记录夹具工厂：`_make(scenario=...)` → 逐日追加参数列表 + 期望窗口结论。
+
+    - `continuous`：窗口内逐日 `source=real`（`covered_days`=8、`gaps=[]`）；
+    - `scattered`：8 个真实运行日中间缺 2 天（容差 0 ⇒ 不通过；容差 2 ⇒ 通过且缺口照旧可见）；
+    - `fallback`：含一条保留值 `source=fallback`（带原因，**不计入** `covered_days`）；
+    - `sparse`：仅 5 天（覆盖不足，给出差值）。
+    """
+    import datetime as dt
+
+    base = dt.datetime(2026, 9, 1, 3, 0, tzinfo=dt.UTC)
+
+    def _day(offset: int, **overrides) -> dict:
+        params = {
+            "moment": base + dt.timedelta(days=offset),
+            "stage": "screenplay",
+            "source": "real",
+            "adapter_ref": "pilot_llm",
+            "profile_id": "deepseek-flash",
+            "result": "ok",
+            "cost_source": "gateway_accounting",
+        }
+        params.update(overrides)
+        return params
+
+    scenarios = {
+        "continuous": {
+            "entries": [_day(offset) for offset in range(8)],
+            "expect": {"covered_days": 8, "max_gap_days": 0, "continuous": True, "meets": True},
+        },
+        "scattered": {
+            "entries": [
+                *[_day(offset) for offset in range(4)],
+                *[_day(offset) for offset in (6, 7, 8, 9)],
+            ],
+            "expect": {"covered_days": 8, "max_gap_days": 2, "continuous": False, "meets": False},
+        },
+        "fallback": {
+            "entries": [
+                _day(0),
+                _day(
+                    1, source="fallback", fallback_reason="装配期凭证缺失，显式声明本日未走真实渠道"
+                ),
+                _day(2),
+            ],
+            "expect": {"covered_days": 2, "max_gap_days": 0, "continuous": True, "meets": False},
+        },
+        "sparse": {
+            "entries": [_day(offset) for offset in range(5)],
+            "expect": {"covered_days": 5, "max_gap_days": 0, "continuous": True, "meets": False},
+        },
+    }
+
+    def _make(scenario: str = "continuous") -> dict:
+        if scenario not in scenarios:
+            raise ValueError(f"未知运行记录场景：{scenario!r}")
+        return scenarios[scenario]
+
+    return _make
+
+
+@pytest.fixture()
+def billing_ledger_lock(billing_ledger_factory):
+    """账本锁占用夹具：持锁期间 `FileLedger.update` 必须超时拒绝（不无锁写、不静默放行）。
+
+    `flock` 的锁属于 open file description，故同进程另开 fd 也会真冲突——夹具无需起子进程。
+    """
+    import contextlib
+    import fcntl
+    import os
+
+    @contextlib.contextmanager
+    def _hold(ledger=None):
+        target = ledger or billing_ledger_factory()
+        target.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = os.open(target.lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield target
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            os.close(handle)
+
+    return _hold
+
+
+@pytest.fixture()
+def billing_subprocess_runner():
+    """跨进程夹具：`_run(source)` 在独立解释器（cwd = 仓库根）里执行代码并返回结果。
+
+    用真进程证明账本的"跨进程"口径（同进程 flock 不足以证明丢失更新被挡住）。
+    """
+    import subprocess
+    import sys
+
+    def _run(source: str, *, timeout: float = 60.0):
+        return subprocess.run(
+            [sys.executable, "-c", source],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    return _run
