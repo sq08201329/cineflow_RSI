@@ -65,6 +65,7 @@ class ModelProfile:
     """一条模型档案（端点 + 凭证变量名 + 价目 + 口径备注）。"""
 
     profile_id: str
+    model: str  # 厂商模型名（**请求体里的 model**；档案 id 只是本仓的路由键）
     api_key_env: str
     prices: Mapping[str, float]
     base_url: str | None = None
@@ -73,7 +74,13 @@ class ModelProfile:
     zero_marginal: bool = False
     legacy_env: bool = False
     timeout_seconds: float | None = None  # 单请求超时（推理模型需更长；None = 用后端默认）
+    request_options: Mapping[str, Any] = field(default_factory=dict)  # 请求参数（白名单，见下）
     notes: tuple[str, ...] = ()
+
+    @property
+    def vendor_model(self) -> str:
+        """发给厂商的模型名（真实故障：曾把档案 id 当模型名发出，被厂商 400 拒）。"""
+        return self.model or self.profile_id
 
     @property
     def endpoint_ref(self) -> str:
@@ -92,6 +99,7 @@ class ModelProfile:
         """档案快照条目（价目 + 备注 + 端点 host/变量名 + 标记；**无密钥**）。"""
         return {
             "profile_id": self.profile_id,
+            "model": self.vendor_model,
             "endpoint": self.endpoint_ref,
             "endpoint_source": "base_url" if self.base_url else "base_url_env",
             "api_key_env": self.api_key_env,
@@ -100,6 +108,7 @@ class ModelProfile:
             "zero_marginal": self.zero_marginal,
             "legacy_env": self.legacy_env,
             "timeout_seconds": self.timeout_seconds,
+            "request_options": _deep_copy_options(self.request_options),
         }
 
 
@@ -220,8 +229,10 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
             f"档案 {profile_id!r} 缺 api_key_env：必须声明凭证环境变量名"
             "——不隐式读 OPENAI_*（假阳性归零），也不允许无凭证档案"
         )
+    model = str(raw.get("model") or profile_id)  # 缺省 = 档案 id（旧形态兼容）
     prices, zero_marginal, price_notes = _parse_prices(profile_id, raw)
     timeout_seconds = _parse_timeout(profile_id, raw)
+    request_options = _parse_request_options(profile_id, raw)
     price_note = raw.get("price_note")
     notes = list(price_notes)
     if not isinstance(price_note, str) or not price_note:
@@ -230,6 +241,7 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
     return (
         ModelProfile(
             profile_id=profile_id,
+            model=model,
             api_key_env=api_key_env,
             prices=prices,
             base_url=str(base_url) if base_url else None,
@@ -238,6 +250,7 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
             zero_marginal=zero_marginal,
             legacy_env=bool(raw.get("legacy_env", False)),
             timeout_seconds=timeout_seconds,
+            request_options=request_options,
             notes=tuple(notes),
         ),
         notes,
@@ -277,6 +290,61 @@ def _parse_prices(
             f"档案 {profile_id!r} 声明了 zero_marginal: true 但价目非 0：零边际成本标记与价目矛盾"
         )
     return parsed, zero_marginal, notes
+
+
+# 请求参数白名单（防注入任意请求字段）：**档案 = 模型 + 请求参数组合**
+# `thinking`：思考模式开关 `{type: enabled|disabled}`（厂商默认 enabled + effort=high）
+# `reasoning_effort`：思考强度 low|high|max
+# 注：**思考模式下 `temperature` 被厂商忽略**（不报错但无效，已如实登记在文档与快照说明中）
+_REQUEST_OPTION_WHITELIST: dict[str, tuple[str, ...] | None] = {
+    "thinking": ("enabled", "disabled"),
+    "reasoning_effort": ("low", "high", "max"),
+}
+
+
+def _parse_request_options(profile_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+    """档案声明的请求参数白名单校验（可选）：非法键/非法取值一律报错，防注入任意字段。"""
+    options = raw.get("request_options")
+    if options is None:
+        return {}
+    if not isinstance(options, Mapping):
+        raise ProfileConfigError(
+            f"档案 {profile_id!r} 的 request_options 必须为映射，实际 {type(options).__name__}"
+        )
+    parsed: dict[str, Any] = {}
+    for key, value in options.items():
+        if key not in _REQUEST_OPTION_WHITELIST:
+            raise ProfileConfigError(
+                f"档案 {profile_id!r} 的 request_options 出现白名单外的键 {key!r}："
+                f"只允许 {sorted(_REQUEST_OPTION_WHITELIST)}（防注入任意请求字段）"
+            )
+        allowed = _REQUEST_OPTION_WHITELIST[key]
+        if key == "thinking":
+            if not isinstance(value, Mapping) or str(value.get("type")) not in allowed:
+                raise ProfileConfigError(
+                    f"档案 {profile_id!r} 的 request_options.thinking 必须为 "
+                    f"{{'type': {'|'.join(allowed)}}}，实际 {value!r}"
+                )
+            unknown = set(value) - {"type"}
+            if unknown:
+                raise ProfileConfigError(
+                    f"档案 {profile_id!r} 的 request_options.thinking 含未知键 {sorted(unknown)}"
+                )
+        elif str(value) not in allowed:
+            raise ProfileConfigError(
+                f"档案 {profile_id!r} 的 request_options.{key} 取值非法：{value!r}"
+                f"（只允许 {list(allowed)}）"
+            )
+        parsed[str(key)] = dict(value) if isinstance(value, Mapping) else value
+    return parsed
+
+
+def _deep_copy_options(options: Mapping[str, Any]) -> dict:
+    """请求参数深拷贝（快照冻结用；嵌套一层足够表达白名单结构）。"""
+    return {
+        str(key): dict(value) if isinstance(value, Mapping) else value
+        for key, value in options.items()
+    }
 
 
 def _parse_timeout(profile_id: str, raw: Mapping[str, Any]) -> float | None:
@@ -331,6 +399,7 @@ def migrate_legacy(
             )
             profiles[model] = ModelProfile(
                 profile_id=model,
+                model=model,
                 api_key_env=LEGACY_API_KEY_ENV,
                 prices=parsed,
                 base_url_env=LEGACY_BASE_URL_ENV,
@@ -409,6 +478,7 @@ def legacy_price_book_snapshot(price_book: Mapping[str, Mapping[str, float]]) ->
     profiles = tuple(
         {
             "profile_id": str(model),
+            "model": str(model),
             "endpoint": LEGACY_BASE_URL_ENV,
             "endpoint_source": "base_url_env",
             "api_key_env": LEGACY_API_KEY_ENV,
@@ -416,6 +486,8 @@ def legacy_price_book_snapshot(price_book: Mapping[str, Mapping[str, float]]) ->
             "price_note": "旧扁平价目表（未声明档案；端点/凭证沿用旧变量名）",
             "zero_marginal": all(float(prices.get(key, 0.0)) == 0.0 for key in _PRICE_KEYS),
             "legacy_env": True,
+            "timeout_seconds": None,
+            "request_options": {},
         }
         for model, prices in price_book.items()
     )

@@ -45,6 +45,12 @@ def _vote_of(response_text: str) -> float:
     return {0: 0.0, 1: 0.5, 2: 1.0}[int(blake3.blake3(response_text.encode()).hexdigest(), 16) % 3]
 
 
+# judge 单票输出的 token 预算（各 judge 共用口径）。为什么不是网关默认 1024：
+# ① 判决输出只需一票（A/B/平局），512 足够；② 判决档是非思考模式（thinking=disabled），
+# 预算不会被思维链吃光——真实故障：思考模式下 judge 的 1024 预算被思维链耗尽、正文为空。
+JUDGE_MAX_TOKENS = 512
+
+
 def _empty_usage() -> dict:
     return {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
 
@@ -114,6 +120,9 @@ class DramaticTensionJudgeEvaluator(Evaluator):
                     model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
                     role=Role.JUDGE,  # 功能 016：LLM judge 委员会角色
                     temperature=0.0,
+                    # 判决输出只需一票：显式给足 512 而不是走网关默认 1024；
+                    # 判决档为非思考模式（thinking=disabled），预算不会再被思维链吃光
+                    max_tokens=JUDGE_MAX_TOKENS,
                 )
                 votes.append(_vote_of(result.text))
                 usage["llm_calls"] += 1

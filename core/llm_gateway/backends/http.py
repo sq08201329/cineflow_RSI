@@ -40,6 +40,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 
 from core.llm_gateway.gateway import (
     BackendResult,
@@ -91,6 +92,8 @@ class HttpBackend:
         *,
         timeout_seconds: float = 30.0,
         legacy_env_note: str = "",
+        request_options: Mapping | None = None,
+        model_name: str | None = None,
     ) -> None:
         if not base_url or not api_key:
             raise GatewayError(
@@ -101,6 +104,12 @@ class HttpBackend:
         self.base_url = base_url
         self.api_key = api_key
         self.legacy_env_note = legacy_env_note
+        # 档案声明的请求参数（白名单已在 profiles 层校验）：合并进请求体，
+        # **不覆盖**调用方显式给出的 model/messages/temperature/max_tokens（显式入参优先）
+        self._request_options = {str(k): v for k, v in dict(request_options or {}).items()}
+        # 请求体里的 model：档案声明的**厂商模型名**（缺省 = 传入的 model，兼容旧形态）
+        self._model_name = model_name or ""
+        self._models: dict = {}
         self._timeout = timeout_seconds
         self.call_count = 0
 
@@ -152,7 +161,14 @@ class HttpBackend:
                 f"档案 {profile.profile_id!r} 沿用旧变量名（{profile.api_key_env}）："
                 "建议改中立名（如 <VENDOR>_API_KEY）以避免与其它供应商的同名变量混淆"
             )
-        return cls(base_url, api_key, timeout_seconds=timeout_seconds, legacy_env_note=note)
+        return cls(
+            base_url,
+            api_key,
+            timeout_seconds=timeout_seconds,
+            legacy_env_note=note,
+            request_options=getattr(profile, "request_options", None),
+            model_name=getattr(profile, "vendor_model", None),
+        )
 
     @classmethod
     def from_profiles(
@@ -197,6 +213,7 @@ class HttpBackend:
     def complete(
         self, prompt: str, *, model: str, temperature: float, max_tokens: int
     ) -> BackendResult:
+        """`model` 参数 = **档案 id**（路由键）；请求体里的 model 由档案声明的厂商模型名决定。"""
         self.call_count += 1
         raw = self._post(prompt, model=model, temperature=temperature, max_tokens=max_tokens)
         payload = self._json(raw)
@@ -209,16 +226,30 @@ class HttpBackend:
 
     # ---- 内部 ----
 
+    def _options_for(self, model: str) -> dict:
+        """本次请求生效的**档案请求参数**：单端点后端用自身选项；多档案后端按 model 分派。"""
+        return dict(self._request_options)
+
+    def _vendor_model_for(self, model: str) -> str:
+        """请求体里的 model：档案声明的厂商模型名（`model` 仍是**档案 id**，用于分派）。"""
+        if model in self._models:
+            return self._models[model] or model
+        return self._model_name or model
+
     def _post(self, prompt: str, *, model: str, temperature: float, max_tokens: int) -> bytes:
         base_url, api_key = self._endpoint_for(model)
-        payload = json.dumps(
+        # 档案请求参数先入、显式入参后覆盖：`thinking`/`reasoning_effort` 由档案声明
+        # （思考模式下 temperature 被厂商忽略——如实登记，不做本地改写）
+        body: dict = dict(self._options_for(model))
+        body.update(
             {
-                "model": model,
+                "model": self._vendor_model_for(model),
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-        ).encode("utf-8")
+        )
+        payload = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
             f"{base_url.rstrip('/')}/chat/completions",
             data=payload,
@@ -316,6 +347,7 @@ class _RoutedHttpBackend(HttpBackend):
         first = next(iter(backends.values()))
         super().__init__(first.base_url, first.api_key, timeout_seconds=timeout_seconds)
         self._backends = dict(backends)
+        self._models = {pid: backend._model_name for pid, backend in backends.items()}
         self._pending = dict(pending or {})  # 缺凭证的档案：调用时报错（不静默回落）
         notes = [
             backend.legacy_env_note for backend in backends.values() if backend.legacy_env_note
@@ -323,6 +355,12 @@ class _RoutedHttpBackend(HttpBackend):
         if self._pending:
             notes.append(f"以下档案缺凭证（调用即失败）：{sorted(self._pending)}")
         self.legacy_env_note = "；".join(notes)
+
+    def _options_for(self, model: str) -> dict:
+        backend = self._backends.get(model)
+        return (
+            dict(backend._request_options) if backend is not None else dict(self._request_options)
+        )
 
     def _endpoint_for(self, model: str) -> tuple[str, str]:
         backend = self._backends.get(model)

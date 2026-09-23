@@ -146,3 +146,71 @@ class Test档案超时声明:
         config["llm"]["profiles"]["deepseek-flash"]["timeout_seconds"] = bad
         with pytest.raises(ProfileConfigError, match="timeout_seconds"):
             load_profiles(config)
+
+
+class Test档案请求参数:
+    """档案 = 模型 + 请求参数组合：白名单校验（防注入）、入快照、深拷贝冻结。"""
+
+    def test_白名单内声明通过且入快照(self, llm_profiles_config_factory):
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["request_options"] = {
+            "thinking": {"type": "disabled"},
+            "reasoning_effort": "low",
+        }
+        profiles, _, _ = load_profiles(config)
+        profile = profiles["deepseek-flash"]
+        assert profile.request_options == {
+            "thinking": {"type": "disabled"},
+            "reasoning_effort": "low",
+        }
+        assert profile.to_snapshot()["request_options"] == profile.request_options
+
+    def test_缺省为空映射(self, llm_profiles_config_factory):
+        profiles, _, _ = load_profiles(llm_profiles_config_factory("single"))
+        assert profiles["deepseek-flash"].request_options == {}
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"model": "x"},  # 白名单外（防注入：不许改模型）
+            {"temperature": 0.7},  # 白名单外（温度由调用方给）
+            {"max_tokens": 99999},  # 白名单外（预算由调用方给）
+            {"thinking": {"type": "maybe"}},  # 取值非法
+            {"thinking": {"type": "enabled", "budget_tokens": 10}},  # 未知子键
+            {"reasoning_effort": "ultra"},  # 取值非法
+            {"thinking": "disabled"},  # 形态非法（应为映射）
+        ],
+    )
+    def test_白名单外或取值非法即拒(self, llm_profiles_config_factory, bad):
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["request_options"] = bad
+        with pytest.raises(ProfileConfigError):
+            load_profiles(config)
+
+    def test_非映射即拒(self, llm_profiles_config_factory):
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["request_options"] = ["thinking"]
+        with pytest.raises(ProfileConfigError, match="必须为映射"):
+            load_profiles(config)
+
+    def test_快照为深拷贝不被后续改动污染(self, llm_profiles_config_factory):
+        config = llm_profiles_config_factory("single")
+        raw = {"thinking": {"type": "disabled"}}
+        config["llm"]["profiles"]["deepseek-flash"]["request_options"] = raw
+        profiles, _, _ = load_profiles(config)
+        snapshot = profiles["deepseek-flash"].to_snapshot()["request_options"]
+        raw["thinking"]["type"] = "enabled"  # 事后改配置源
+        assert snapshot == {"thinking": {"type": "disabled"}}  # 冻结值不变
+
+
+class Test厂商模型名:
+    def test_声明_model_即用厂商名(self, llm_profiles_config_factory):
+        config = llm_profiles_config_factory("single")
+        config["llm"]["profiles"]["deepseek-flash"]["model"] = "vendor-x"
+        profiles, _, _ = load_profiles(config)
+        assert profiles["deepseek-flash"].vendor_model == "vendor-x"
+        assert profiles["deepseek-flash"].to_snapshot()["model"] == "vendor-x"
+
+    def test_缺省_model_回落档案_id(self, llm_profiles_config_factory):
+        profiles, _, _ = load_profiles(llm_profiles_config_factory("single"))
+        assert profiles["deepseek-flash"].vendor_model == "deepseek-flash"

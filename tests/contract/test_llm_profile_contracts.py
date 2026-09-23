@@ -16,7 +16,7 @@ from core.llm_gateway.profiles import (
     load_profiles,
     migrate_legacy,
 )
-from core.llm_gateway.routing import role_values
+from core.llm_gateway.routing import Role, role_values
 
 
 class TestC1档案解析与校验:
@@ -122,11 +122,25 @@ class TestC3旧扁平迁移:
                 (repo_root / "configs" / f"{name}.yaml").read_text(encoding="utf-8")
             )
             loaded = load_or_migrate(payload)
-            assert loaded.source == "llm_section"
-            assert sorted(loaded.profiles) == ["deepseek-flash", "local-qwen"]
-            assert loaded.routing.default_profile == "deepseek-flash"
-            assert loaded.routing.profile_for("dreaming_candidates") == "local-qwen"
             snapshot = loaded.snapshot().to_dict()
+            assert loaded.source == "llm_section"
+            # 档案集合与角色映射**与配置逐项一致**（不硬编码档案名：加档案/改名即跟随）
+            assert sorted(loaded.profiles) == sorted(payload["llm"]["profiles"])
+            assert loaded.routing.default_profile == payload["llm"]["default_profile"]
+            for role, target in payload["llm"]["roles"].items():
+                assert loaded.routing.roles[Role(role)] == target
+            # 角色路由的用途分化：生成与判决必须指向**不同**档案（思考模式 vs 非思考模式）
+            assert loaded.routing.profile_for(Role.GENERATION) != loaded.routing.profile_for(
+                Role.JUDGE
+            )
+            # request_options 随快照冻结（同模型两档：思考模式 / 非思考模式）
+            options = {
+                entry["profile_id"]: entry["request_options"] for entry in snapshot["profiles"]
+            }
+            gen_id = loaded.routing.profile_for(Role.GENERATION)
+            judge_id = loaded.routing.profile_for(Role.JUDGE)
+            assert options[gen_id]["thinking"] == {"type": "enabled"}
+            assert options[judge_id]["thinking"] == {"type": "disabled"}
             assert snapshot["profiles"][0]["prices"]  # 价目随快照冻结
             # 档案声明的凭证变量名与配置逐字一致（同源；改名即跟随，不硬编码具体名）
             for profile_id, raw_profile in payload["llm"]["profiles"].items():

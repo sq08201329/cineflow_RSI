@@ -25,6 +25,12 @@ from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由�
 EVALUATOR_ID = "judge.cinematic"
 
 
+# judge 单票输出的 token 预算（各 judge 共用口径）。为什么不是网关默认 1024：
+# ① 判决输出只需一票（A/B/平局），512 足够；② 判决档是非思考模式（thinking=disabled），
+# 预算不会被思维链吃光——真实故障：思考模式下 judge 的 1024 预算被思维链耗尽、正文为空。
+JUDGE_MAX_TOKENS = 512
+
+
 def _vote_of(response_text: str) -> int:
     """LLM 响应 → 确定性投票位（Mock 后端下逐字节可复现的解析规则）。
 
@@ -74,6 +80,9 @@ class CinematicJudgeEvaluator(Evaluator):
                     model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
                     role=Role.JUDGE,  # 功能 016：LLM judge 委员会角色
                     temperature=0.0,
+                    # 判决输出只需一票：显式给足 512 而不是走网关默认 1024；
+                    # 判决档为非思考模式（thinking=disabled），预算不会再被思维链吃光
+                    max_tokens=JUDGE_MAX_TOKENS,
                 )
                 votes.append(_vote_of(result.text))
                 usage["llm_calls"] += 1

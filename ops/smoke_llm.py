@@ -260,24 +260,27 @@ def rewrite_config(
     config_path: str | Path,
     target_path: str | Path,
     *,
-    profile_id: str,
+    profile_id: str | None = None,
     llm_backend: str,
     minimal: bool = True,
 ) -> Path:
     """复制形态配置到 target_path 并**定点改写**（`core.yaml_edit`，注释逐字保留）。
 
-    改写三项（功能 016：路由只在配置，**不再散落改写模型名**）：
-    ① `llm.roles`：四个角色全部指向 `profile_id`（角色映射是唯一路由入口）；
+    改写（功能 016：路由只在配置，**不再散落改写模型名**）：
+    ① `llm.roles`：**仅当显式指定 `profile_id`** 时把四个角色全指向它（单档冒烟）；
+       未指定时**保留配置声明的角色分化**（生成档走思考模式、判决档走非思考模式——
+       `--round` 的真实单轮就是要跑配置声明的角色路由）；
     ② （`minimal`）规模与预算压到最小；
     ③ `pilot.llm_backend` → `llm_backend`（让临时配置如实声明本次实际后端）。
     """
     source = Path(config_path).read_text(encoding="utf-8")
     text = source
-    assert profile_id in load_profile_set(config_path).profiles, profile_id
-    text = upsert_section_entries(
-        text, ("llm", "roles"), {str(role): profile_id for role in _ALL_ROLES}
-    )
-    text = upsert_section_entries(text, ("llm",), {"default_profile": profile_id})
+    if profile_id is not None:
+        assert profile_id in load_profile_set(config_path).profiles, profile_id
+        text = upsert_section_entries(
+            text, ("llm", "roles"), {str(role): profile_id for role in _ALL_ROLES}
+        )
+        text = upsert_section_entries(text, ("llm",), {"default_profile": profile_id})
     if minimal:
         payload = yaml.safe_load(source)
         for path, updates in minimal_scale_entries(payload):
@@ -310,7 +313,7 @@ def run_round_smoke(
     temp_config = rewrite_config(
         config_path,
         work / "configs" / f"{Path(config_path).stem}-smoke.yaml",
-        profile_id=profile.profile_id,
+        profile_id=profile_id,  # 显式指定才改角色映射；否则保留配置的角色分化
         llm_backend=llm_backend,
     )
     form = str(yaml.safe_load(temp_config.read_text(encoding="utf-8")).get("form", "shortdrama"))
@@ -331,7 +334,7 @@ def run_round_smoke(
     )
     return {
         "mode": "round",
-        "profile_id": profile.profile_id,
+        "profile_id": profile.profile_id,  # 默认档（未显式指定时为配置的 default_profile）
         "llm_backend": llm_backend,
         "temp_config": str(temp_config),
         "work_dir": str(work),

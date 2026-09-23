@@ -401,7 +401,8 @@ web:
 # （generation/judge/dreaming_candidates/copywriting，见 core/llm_gateway/routing.py 的调用点盘点）。
 llm:
   profiles:
-    deepseek-flash: # 云端厂商（OpenAI 兼容）：价目迁自 screenplay.model_prices（015 登记值）
+    deepseek-flash: # 云端厂商（OpenAI 兼容）：**生成档**——思考模式（质量优先）
+      model: deepseek-flash # 厂商模型名（档案 id 只是本仓路由键；曾误把 id 当模型名发出被 400 拒）
       base_url: https://api.deepseek.com
       api_key_env: DEEPSEEK_API_KEY # 中立厂商名（端点/密钥按档案声明读取；环境里其它变量不参与判定）
       legacy_env: false
@@ -409,7 +410,20 @@ llm:
       price_note: "峰时缓存未命中上限（保守高估；缓存命中与错峰更低；记账 ≠ 厂商账单）"
       # 单请求超时：推理模型的思维链+正文常超过默认 30s（实测 30s 即 timeout），故放宽
       timeout_seconds: 120
+      # 请求参数（白名单 thinking/reasoning_effort）：**生成档用思考模式**（质量优先；
+      # 厂商默认即 enabled+effort=high，显式声明以便审计与快照冻结）
+      request_options: {thinking: {type: enabled}, reasoning_effort: high}
+    deepseek-flash-fast: # **判决档**：同模型非思考模式（速度/成本优先；判决只要一票）
+      model: deepseek-flash # 与生成档**同模型**（差异只在 request_options）
+      base_url: https://api.deepseek.com
+      api_key_env: DEEPSEEK_API_KEY
+      legacy_env: false
+      prices: {prompt_per_1k: 0.0003, completion_per_1k: 0.0012} # 同模型同价（与生成档一致）
+      price_note: "同 deepseek-flash（峰时缓存未命中上限，保守高估）"
+      timeout_seconds: 60 # 非思考模式：无思维链，响应快
+      request_options: {thinking: {type: disabled}}
     local-qwen: # 本地/自建示例：零边际成本（仍非免费：机器/电/运维成本不在本表）
+      model: local-qwen # 示例：自建服务上的模型 id（按部署实际填写）
       base_url_env: LOCAL_LLM_BASE_URL
       api_key_env: LOCAL_LLM_API_KEY
       prices: {prompt_per_1k: 0.0, completion_per_1k: 0.0}
@@ -417,10 +431,10 @@ llm:
       price_note: "自建推理：零边际成本（机器/电/运维成本不在本表）"
       timeout_seconds: 60 # 本地推理：单请求超时（按部署规模可调）
   roles: # 角色 → 档案（单层；未映射的枚举内角色回落 default_profile）
-    generation: deepseek-flash
-    judge: deepseek-flash
-    copywriting: deepseek-flash
-    dreaming_candidates: local-qwen
+    generation: deepseek-flash # 剧本正文：质量优先 → 思考模式
+    judge: deepseek-flash-fast # 判决：只要一票 → 非思考模式（思维链不再吃光预算）
+    copywriting: deepseek-flash-fast # 宣发文案：短文本，非思考模式够用
+    dreaming_candidates: deepseek-flash-fast # 策略代码生成：先非思考，质量不足再调（改本行即可）
   default_profile: deepseek-flash # 多档案必须显式声明（单档案才可省略并自动认定）
 
 pilot:

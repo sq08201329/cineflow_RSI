@@ -844,7 +844,10 @@ def build_material_briefs(
             gen_params["duration_seconds"] = spec["duration_ms"] / 1000.0
         briefs.append(
             {
-                "prompt": f"写一条{material['kind']}宣发物料：{materials.reel_ref}",
+                # 提示词必须**带上配置声明的硬约束**（最大字数 + 敏感词库）：真实 LLM 不会猜
+                # 我们的合规门禁——真实单轮实测：无约束提示词产出 636/1288/1528 字且含"最/第一"，
+                # 被 rule.material_compliance 判 0（门禁没错，是提示词没把规则交底）。
+                "prompt": _material_prompt(material, materials.reel_ref, runtime.configs.promo),
                 "gen_params": gen_params,
                 "kind": material["kind"],
                 "tags": ["试水", material["kind"]],
@@ -853,6 +856,28 @@ def build_material_briefs(
             }
         )
     return tuple(briefs)
+
+
+def _material_prompt(material: Mapping, reel_ref: str, config) -> str:
+    """物料提示词（由形态配置派生）：把**合规硬约束**写进提示词，让真实模型有据可依。
+
+    约束取自 `promo.material_spec` 与 `promo.sensitive_words`（配置单一事实源）——
+    提示词不交底规则，真实模型就会产出被 `rule.material_compliance` 判 0 的文案
+    （真实单轮实测：636~1528 字 + 命中"最/第一"），那是"门禁对、提示词不对"。
+    """
+    limits: list[str] = []
+    spec = dict(material.get("spec") or {})
+    if "max_copy_chars" in spec:
+        limits.append(f"全文不超过 {int(spec['max_copy_chars'])} 个字")
+    if "poster_size" in spec:
+        limits.append(f"海报尺寸 {spec['poster_size']}")
+    sensitive = [str(word) for word in getattr(config, "sensitive_words", ()) or ()]
+    if sensitive:
+        limits.append("不得出现以下词：" + "、".join(sensitive))
+    limits.append("只输出文案正文，不要标题、引号、说明或换行")
+    return (
+        f"写一条{material['kind']}宣发物料（素材引用 {reel_ref}）；硬性要求：{'；'.join(limits)}。"
+    )
 
 
 # ---------------------------------------------------------------------------

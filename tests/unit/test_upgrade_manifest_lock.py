@@ -102,7 +102,7 @@ class Test配置清单一致:
 
     def test_schema_已递增(self):
         payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        assert payload["schema_version"] == "1.6.0"
+        assert payload["schema_version"] == "1.7.0"
 
 
 class Test改坏即红:

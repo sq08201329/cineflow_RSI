@@ -253,3 +253,123 @@ class Test档案声明的超时:
 
         with pytest.raises(ProfileConfigError, match="timeout_seconds"):
             self._profile(timeout_seconds=0)
+
+
+class Test档案请求参数:
+    """档案 = **模型 + 请求参数组合**：`request_options`（白名单 `thinking` / `reasoning_effort`）
+    合并进请求体；多档案按 model 各用各的；显式入参不被覆盖。"""
+
+    def _load(self, first, second=None):
+        from core.llm_gateway.profiles import load_or_migrate
+
+        profiles = {
+            "reasoner": {
+                "base_url": first.base_url,
+                "api_key_env": "A_KEY",
+                "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                "price_note": "生成档（思考模式）",
+                "request_options": {"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
+            }
+        }
+        if second is not None:
+            profiles["fast"] = {
+                "base_url": second.base_url,
+                "api_key_env": "B_KEY",
+                "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                "price_note": "判决档（非思考模式）",
+                "request_options": {"thinking": {"type": "disabled"}},
+            }
+        return load_or_migrate(
+            {"llm": {"profiles": profiles, "roles": {}, "default_profile": "reasoner"}}
+        )
+
+    def test_单档案请求参数进请求体(self, stub_factory, llm_env):
+        server = stub_factory(chat_provider=_chat_response("ok"))
+        llm_env(A_KEY=server.api_key)
+        backend = HttpBackend.from_profiles(self._load(server))
+        backend.complete("问题", model="reasoner", temperature=0.0, max_tokens=64)
+        body = server.chat_requests()[0]
+        assert body["thinking"] == {"type": "enabled"}
+        assert body["reasoning_effort"] == "high"
+        assert body["temperature"] == 0.0 and body["max_tokens"] == 64  # 显式入参原样
+
+    def test_多档案各用各的请求参数(self, stub_factory, llm_env):
+        first, second = (
+            stub_factory(chat_provider=_chat_response("一")),
+            stub_factory(chat_provider=_chat_response("二")),
+        )
+        llm_env(A_KEY=first.api_key, B_KEY=second.api_key)
+        backend = HttpBackend.from_profiles(self._load(first, second))
+        backend.complete("生成", model="reasoner", temperature=0.0, max_tokens=64)
+        backend.complete("判决", model="fast", temperature=0.0, max_tokens=512)
+        assert first.chat_requests()[0]["thinking"] == {"type": "enabled"}
+        assert second.chat_requests()[0]["thinking"] == {"type": "disabled"}
+        assert "reasoning_effort" not in second.chat_requests()[0]  # 判决档不声明强度
+
+    def test_显式构造的请求参数不被档覆盖(self, stub_factory, llm_env):
+        """显式入参优先：单端点构造时给的选项就是本后端的选项（档案层不参与）。"""
+        server = stub_factory(chat_provider=_chat_response("ok"))
+        backend = HttpBackend(
+            server.base_url, server.api_key, request_options={"reasoning_effort": "low"}
+        )
+        backend.complete("问题", model="m", temperature=0.0, max_tokens=8)
+        assert server.chat_requests()[0]["reasoning_effort"] == "low"
+
+
+class Test厂商模型名:
+    """真实故障：档案 id（`deepseek-flash-fast`）被当成模型名发给厂商 → HTTP 400
+    `The supported API model names are deepseek-flash, deepseek-v4-pro`。
+    修法：档案可声明 `model`（厂商模型名），`model` 参数仍是**档案 id**（分派键）。"""
+
+    def _load(self, server):
+        from core.llm_gateway.profiles import load_or_migrate
+
+        return load_or_migrate(
+            {
+                "llm": {
+                    "profiles": {
+                        "gen": {
+                            "model": "vendor-model-x",
+                            "base_url": server.base_url,
+                            "api_key_env": "A_KEY",
+                            "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                            "price_note": "生成档",
+                        },
+                        "judge-fast": {
+                            "model": "vendor-model-x",  # 同模型，差异只在 request_options
+                            "base_url": server.base_url,
+                            "api_key_env": "A_KEY",
+                            "prices": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0},
+                            "price_note": "判决档",
+                            "request_options": {"thinking": {"type": "disabled"}},
+                        },
+                    },
+                    "roles": {},
+                    "default_profile": "gen",
+                }
+            }
+        )
+
+    def test_请求体用厂商模型名而非档案_id(self, stub_factory, llm_env):
+        server = stub_factory(chat_provider=_chat_response("ok"))
+        llm_env(A_KEY=server.api_key)
+        backend = HttpBackend.from_profiles(self._load(server))
+        backend.complete("判决", model="judge-fast", temperature=0.0, max_tokens=64)
+        body = server.chat_requests()[0]
+        assert body["model"] == "vendor-model-x"  # 厂商模型名
+        assert body["thinking"] == {"type": "disabled"}  # 该档案的请求参数
+
+    def test_缺省_model_即档案_id_旧形态兼容(self, llm_env):
+        from core.llm_gateway.profiles import load_or_migrate
+
+        loaded = load_or_migrate(
+            {
+                "screenplay": {
+                    "model": "legacy-model",
+                    "model_prices": {
+                        "legacy-model": {"prompt_per_1k": 1.0, "completion_per_1k": 1.0}
+                    },
+                }
+            }
+        )
+        assert loaded.profiles["legacy-model"].vendor_model == "legacy-model"

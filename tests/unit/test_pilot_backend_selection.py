@@ -517,9 +517,9 @@ class Test清单切换口径与代码一致:
         import importlib
 
         data = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        # 1.6.0 = 档案化凭证中立登记（llm_profiles）；1.5.0 = 真实 LLM 冒烟；
-        # 1.4.0 = 全部适配器族协议实现；1.3.0 = 媒体环节协议实现；1.2.0 = 后端选择配置化
-        assert data["schema_version"] == "1.6.0"
+        # 1.7.0 = 档案请求参数与厂商模型名；1.6.0 = 档案化凭证中立登记；
+        # 1.5.0 = 真实 LLM 冒烟；1.4.0 = 全部适配器族协议实现；1.3.0 = 媒体环节；1.2.0 = 后端选择
+        assert data["schema_version"] == "1.7.0"
         module_name, attr = self._mechanism()["assembly_point"].split("::")
         assert callable(getattr(importlib.import_module(module_name), attr))
 
