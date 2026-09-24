@@ -1,18 +1,32 @@
 #!/usr/bin/env python
-"""试水作品 CLI（功能 015 / T1523）：`run` / `resume` / `inspect`。
+"""试水作品 CLI（功能 015 / T1523；功能 018 起为**七环节链**）。
 
-用法（与 quickstart 一致，退出码：0 成功 / 1 运行失败或拒绝 / 2 用法错误）：
+子命令：`run` / `resume` / `inspect` / `precheck`。
 
+七环节 = `dev → script → storyboard → visual → sound → editing → promo`（链首立项、链尾宣发；
+链路与环节不随形态改变，形态差异只在配置）。用法（与 quickstart 一致，退出码：0 成功 /
+1 运行失败或拒绝 / 2 用法错误；`--minutes` 一律取**生效档值**）：
+
+    # 短剧形态（排练档生效值：2.0 分钟 = 120 秒）
     uv run python ops/pilot.py run     --form shortdrama --config configs/shortdrama.yaml \
-        --topic "夜班记录" --minutes 1.0 --characters 林静,陈默 \
+        --topic "夜班记录" --minutes 2.0 --characters 林静,陈默 \
         --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot \
         --run-id demo-run --fixed-clock
-    uv run python ops/pilot.py resume  --form shortdrama --config configs/shortdrama.yaml \
-        --topic "夜班记录" --minutes 1.0 --characters 林静,陈默 \
-        --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id demo-run
-    uv run python ops/pilot.py inspect --data-dir pilot --run-id demo-run [--package]
+    # 电影长片形态（同一套链代码换配置；排练档生效值：0.5 分钟 = 30 秒）
+    uv run python ops/pilot.py run     --form movie --config configs/movie.yaml \
+        --topic "长夜将尽" --minutes 0.5 --characters 林静,陈默 \
+        --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot \
+        --run-id film-run --fixed-clock
+    uv run python ops/pilot.py resume  --form movie --config configs/movie.yaml \
+        --topic "长夜将尽" --minutes 0.5 --characters 林静,陈默 \
+        --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id film-run
+    uv run python ops/pilot.py precheck --form movie --config configs/movie.yaml \
+        --topic "长夜将尽" --minutes 0.5 --characters 林静,陈默 \
+        --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot
+    uv run python ops/pilot.py inspect --data-dir pilot --run-id film-run [--package]
 
-`--minutes`：**浮点分钟**（取生效档值，如 `1.0`；须等于生效成片时长 ÷ 60，否则预检拒绝）。
+`--minutes`：**浮点分钟**（取**生效档值**，如 0.5 = 30 秒演示档；须等于生效成片时长 ÷ 60，
+否则预检拒绝并点名两处实测值）。
 `--genre-bounds` / `--audience`：立项环节（链首）的运行级输入映射，缺项即预检拒绝。
 `--fixed-clock`：全部时间戳取同一常量（两次运行逐字节一致的对照口径）；不给则用墙钟。
 本 CLI 只做参数解析与结果打印，编排全在 `agents/pilot/`（零形态分支：形态只作透传参数）。
@@ -88,6 +102,8 @@ def _run_payload(result) -> dict:
             "loaders": list(result.precheck_report.get("loaders", ())),
             "config_fingerprint": result.precheck_report.get("config_fingerprint"),
             "backend": result.precheck_report.get("pilot_backend"),
+            # 排练档生效体量快照（档位来源 + 生效取值 + `work_kind`）：CLI 输出与预检报告同源
+            "volume": result.precheck_report.get("pilot_volume"),
         },
     }
 

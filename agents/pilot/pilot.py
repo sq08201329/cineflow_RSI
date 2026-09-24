@@ -1,4 +1,4 @@
-"""试水运行编排（功能 015 US3 / T1520，契约 C10 + 功能 018 阶段 1/2）。
+"""试水运行编排（功能 015 US3 / T1520，契约 C10 + 功能 018 阶段 1/2/4）。
 
 一次试水运行 = **启动前预检**（输入下限 / 配置完整性（全部加载器）/ 预算与并行度可用 /
 **体量档与时长口径一致**，不合格即拒绝且零成本零落树）→ **七环节按 DAG 执行**
@@ -9,7 +9,9 @@
 `lines_per_scene`/`rehearsal`/`performance` 由 `PilotConfig` **唯一解析**（缺段/缺键即
 `PrecheckError`，**不取码内默认**）——`agents/*/config.py` 不读 `pilot` 段，消费者按注入取值；
 排练档生效（`status=declared` 且 `work_kind=rehearsal`）时只覆盖**体量键**，链路拓扑/交接
-契约/门禁/评估器组合一行不动。
+契约/门禁/评估器组合一行不动。生效体量快照经 `effective_volume` 落预检报告的 `pilot_volume`
+段（与包面 `manifest.work_kind`/`state.volume` 同一取值来源）；`unstandardized`（未标定）与
+`work_kind=real_work`（真实作品）都**不覆盖**形态原值，并如实标注（不发明数字）。
 
 **时长口径一致性**（功能 018 / SC-012①）：`screenplay.target_duration_min × 60`、
 `editing.target_duration_s`、`pilot.rehearsal.scale.target_duration_s` 与运行级
@@ -463,6 +465,11 @@ def precheck(
     ② 两处时长口径一致（`screenplay.target_duration_min × 60` == 生效 `editing.target_duration_s`，
     含排练档覆盖后的生效值与形态原值两处，见 `_require_duration_consistency`）；
     ③ 运行级 `target_duration_min × 60` == 生效成片时长。
+
+    报告含两个档位视图（确定性段，包面与报告同源）：
+    `pilot_volume` = **生效体量快照**（`effective_volume`：档位来源 + 覆盖后的生效取值 +
+    `work_kind`，与阶段 6 的 `manifest.work_kind` 同一取值来源）；`pilot_scale` =
+    `PilotConfig.annotations()`（档位声明与性能阈值面的如实登记）。
     """
     if not isinstance(inputs, PilotInputs):
         raise PrecheckError(f"试水输入必须为 PilotInputs，实际为 {inputs!r}")
@@ -531,6 +538,8 @@ def precheck(
         "loaders": list(loaders),
         "budgets": budgets,
         "pilot_backend": _backend_report(selection),
+        # 排练档的**生效体量快照**（确定性段）：档位来源 + 覆盖后的生效取值 + `work_kind`
+        "pilot_volume": effective_volume(raw_configs, configs, pilot_config),
         "pilot_scale": pilot_config.annotations(),
     }
 
@@ -591,6 +600,55 @@ def _require_duration_consistency(
         "生效成片时长",
         effective_film_s,
     )
+
+
+def effective_volume(
+    raw_configs: stages_module.AgentConfigs,
+    configs: stages_module.AgentConfigs,
+    pilot_config: PilotConfig,
+) -> dict:
+    """生效体量快照（确定性段）：档位来源 + 覆盖后的生效取值 + `work_kind`。
+
+    **单一取值来源**（契约 C10）：预检报告的 `pilot_volume` 段与包面（阶段 6 的
+    `manifest.work_kind` / `state.volume`）读**同一份**快照——"排练产物不得被标为真实作品"
+    与"生效体量随配置冻结"因此只有一处口径。
+
+    确定性：只含档位标注与生效取值（无墙钟、无路径、无进程内顺序），故同输入同配置的重跑
+    逐字节一致。`effective.script_target_pages` 是**整页口径**（页数门禁 `rule.page_minutes`
+    的整数页），`effective.script_target_minutes` 是档位声明的**浮点分钟**——两者不是同一量，
+    故并列登记、不互推。
+    """
+    in_force = pilot_config.rehearsal_in_force
+    return {
+        "work_kind": pilot_config.work_kind,
+        "rehearsal_status": pilot_config.rehearsal_status,
+        "scale_in_force": in_force,
+        "source": "declared_scale" if in_force else "form_original",
+        "note": _scale_note(pilot_config),
+        "effective": {
+            "scene_count": int(pilot_config.scene_count),
+            "lines_per_scene": int(pilot_config.lines_per_scene),
+            "lines_per_page": int(configs.screenplay.lines_per_page),
+            "target_duration_s": float(configs.editing.target_duration_s),
+            "script_target_minutes": float(
+                pilot_config.effective_script_target_minutes(
+                    raw_configs.screenplay.target_duration_min
+                )
+            ),
+            "script_target_pages": int(configs.screenplay.target_duration_min),
+            "page_tolerance": int(configs.screenplay.page_tolerance),
+            "clip_duration_seconds": float(configs.visual.clip_spec["duration_seconds"]),
+        },
+    }
+
+
+def _scale_note(pilot_config: PilotConfig) -> str:
+    """档位标注（人读面）：生效来源与"未标定 / 真实作品"的处置口径（不发明数字）。"""
+    if pilot_config.work_kind == "real_work":
+        return "真实作品：用形态原值，排练档不生效（不缩档）"
+    if pilot_config.rehearsal_in_force:
+        return "排练档生效：仅覆盖体量键（链路拓扑/交接契约/门禁/评估器组合一行不动）"
+    return "排练档未标定：不覆盖形态原值（档位数字属运营侧输入，本实现不发明数字）"
 
 
 def _backend_report(selection) -> dict:

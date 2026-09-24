@@ -12,11 +12,19 @@ kind 登记 / 两形态声明"七处集中声明必须同批落地——本文�
 5. **模拟漏同步**（从阶段表删 `dev`）⇒ 一致性断言红（不是"少一环也能跑"）；
 6. `dev` 拒绝路径（`artifact_hash is None`）⇒ 阶段 `failed`、其后环节全 `skipped`、零下游调用。
 
+阶段 4（US1 / T1819）在本文件补**七环节端到端**：全模拟后端 + 固定时钟跑一轮 ⇒ 七环节全
+`done`、五件套齐备且过 `verify_package`、同输入同配置独立工件根逐字节一致、任一环失败不产
+半包、断点续跑零重跑（指纹不一致即拒绝）、`dev` 产物 `slate` 内容寻址可达且策略版本 == 部署
+指针、`cost.json` 的 `by_stage` 键集覆盖七环节。**如实登记（F-08）**：包面**新增字段**
+（`source`/`channels`/`work_kind`/`eval_breakdown`/`volume`）及其子集逐字节一致属阶段 6 的
+产物面（T1829），本阶段只要求五件套本体逐字节一致。
+
 另加四条**常驻静态断言**（不放松）：编排层不新增落树路径、零形态分支、`agents/` 不 import
 `ops/`、`core/` 零形态字面量。
 """
 
 import ast
+import json
 from dataclasses import fields
 from pathlib import Path
 
@@ -25,6 +33,7 @@ import yaml
 
 from agents.pilot import package as package_module
 from agents.pilot import stages as stages_module
+from agents.pilot.pilot import PilotInputs, resume_pilot, run_pilot
 from agents.pilot.stages import (
     PILOT_STAGE_IDS,
     STAGE_CONFIG_SECTION,
@@ -34,9 +43,11 @@ from agents.pilot.stages import (
     build_stage_specs,
 )
 from core.orchestration.dag import build_dag
+from core.orchestration.errors import OrchestrationError, StageFailedError
 from core.orchestration.models import RunStatus, StageStatus
 
 FORM = "shortdrama"
+FIXED_TIMESTAMP = "2026-01-01T00:00:00+00:00"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # 链首插入后的拓扑序（契约 C1 的字面量：本文件独立声明，不复用实现常量）
 SEVEN = ("dev", "script", "storyboard", "visual", "sound", "editing", "promo")
@@ -210,12 +221,204 @@ def _pilot_inputs():
     )
 
 
+def _demo_inputs() -> PilotInputs:
+    """演示档输入（0.5 分钟 = 30 秒，与夹具配置的排练档同口径）。"""
+    return PilotInputs(
+        topic="夜班记录",
+        target_duration_min=0.5,
+        characters=("林静", "陈默"),
+        constraints=("单场景为主",),
+        genre_bounds=("悬疑", "夜戏"),
+        audience="都市女性",
+    )
+
+
+def _fixed_clock():
+    """确定性时钟（全部时间戳同值：两次运行逐字节一致的对照口径）。"""
+    return lambda: FIXED_TIMESTAMP
+
+
+def _run_once(config_path, data_dir, artifacts_root, run_id: str):
+    return run_pilot(
+        form=FORM,
+        config_path=config_path,
+        inputs=_demo_inputs(),
+        data_dir=data_dir,
+        artifacts_root=artifacts_root,
+        run_id=run_id,
+        clock=_fixed_clock(),
+    )
+
+
 def _spec_with(stage_id, **overrides):
     specs = build_stage_specs(None)
     spec = next(item for item in specs if item.stage_id == stage_id)
     fields_ = {field.name: getattr(spec, field.name) for field in fields(type(spec))}
     fields_.update(overrides)
     return stages_module.StageSpec(**fields_)
+
+
+class Test七环节端到端:
+    """US1（T1819）：全模拟后端 + 固定时钟跑一轮——七环节全 `done`、五件套过校验、可复现。
+
+    **如实登记（F-08）**：包面**新增字段**（`source`/`channels`/`work_kind`/`eval_breakdown`/
+    `volume`）与其子集逐字节一致属阶段 6 的产物面（T1829）——本文件只要求**五件套本体**逐字节
+    一致（015 口径不变）。
+    """
+
+    def test_七环节全_done_且五件套过校验(self, pilot_demo_config_path, pilot_dirs, tmp_path):
+        result = _run_once(pilot_demo_config_path, pilot_dirs, tmp_path / "artifacts", "run-seven")
+        assert result.record.status is RunStatus.DONE
+        assert tuple(state.stage_id for state in result.record.stages) == SEVEN
+        assert tuple(state.stage_id for state in result.record.stages) == PILOT_STAGE_IDS
+        assert all(state.status is StageStatus.DONE for state in result.record.stages)
+        assert result.record.completed_stages == SEVEN
+        verified = package_module.verify_package(result.package_dir)
+        assert verified["files"] == list(package_module.PACKAGE_FILES)
+        assert verified["reconciled"] is True
+        # 五件套本体齐备（第六件不存在：画像与报告落报告侧，不进包）
+        assert sorted(path.name for path in result.package_dir.iterdir()) == sorted(
+            package_module.PACKAGE_FILES
+        )
+
+    def test_同输入同配置独立工件根逐字节一致(self, pilot_demo_config_path, tmp_path):
+        first = _run_once(
+            pilot_demo_config_path,
+            tmp_path / "a" / "pilot",
+            tmp_path / "a" / "artifacts",
+            "run-cmp",
+        )
+        second = _run_once(
+            pilot_demo_config_path,
+            tmp_path / "b" / "pilot",
+            tmp_path / "b" / "artifacts",
+            "run-cmp",
+        )
+        for name in package_module.PACKAGE_FILES:
+            assert (first.package_dir / name).read_bytes() == (
+                second.package_dir / name
+            ).read_bytes(), name
+
+    def test_cost_json_by_stage_覆盖七环节(self, pilot_demo_config_path, pilot_dirs, tmp_path):
+        """逐环节成本入账（运行记录 ⨯ 各 Agent 落盘账目）——第三方腿（网关记账）属阶段 6。"""
+        result = _run_once(pilot_demo_config_path, pilot_dirs, tmp_path / "artifacts", "run-cost")
+        cost = json.loads((result.package_dir / "cost.json").read_text(encoding="utf-8"))
+        assert set(cost["by_stage"]) == set(PILOT_STAGE_IDS)
+        assert {line["stage_id"] for line in cost["lines"]} == set(PILOT_STAGE_IDS)
+        for line in cost["lines"]:
+            assert abs(float(line["recorded_usd"]) - float(line["ledger_usd"])) <= 1e-9
+        assert cost["reconciled"] is True
+        assert abs(float(cost["total_usd"]) - sum(cost["by_stage"].values())) <= 1e-9
+        assert abs(float(cost["total_usd"]) - float(result.record.total_cost_usd)) <= 1e-9
+
+    def test_任一环失败即整轮失败且不产半包(
+        self, pilot_demo_config_path, pilot_dirs, tmp_path, monkeypatch
+    ):
+        def _boom(stage_input):
+            del stage_input
+            raise StageFailedError("视觉环节注入失败（下半链零调用）")
+
+        monkeypatch.setattr(stages_module, "_visual_entry", _boom)
+        result = _run_once(pilot_demo_config_path, pilot_dirs, tmp_path / "artifacts", "run-fail")
+        assert result.record.status is RunStatus.FAILED
+        assert result.record.failure_stage == "visual"
+        assert result.record.stage("visual").failure_reason
+        assert result.record.stage("visual").status is StageStatus.FAILED
+        for stage_id in ("sound", "editing", "promo"):
+            assert result.record.stage(stage_id).status is StageStatus.SKIPPED
+        assert result.package_dir is None  # 不装配（零半包）
+        assert not (pilot_dirs / "packages" / "run-fail").exists()
+
+    def test_断点续跑零重跑且指纹不一致即拒绝(self, pilot_demo_config_path, pilot_dirs, tmp_path):
+        run_id = "run-resume"
+        artifacts_root = tmp_path / "artifacts"
+        first = _run_once(pilot_demo_config_path, pilot_dirs, artifacts_root, run_id)
+        resumed = resume_pilot(
+            form=FORM,
+            config_path=pilot_demo_config_path,
+            inputs=_demo_inputs(),
+            data_dir=pilot_dirs,
+            artifacts_root=artifacts_root,
+            run_id=run_id,
+            clock=_fixed_clock(),
+        )
+        assert resumed.record == first.record  # 幂等：零重跑、零重复落盘
+        assert all(state.attempts == 1 for state in resumed.record.stages)
+        # 输入指纹不一致即拒绝（不把旧记录当"幂等成功"返回）
+        with pytest.raises(OrchestrationError):
+            resume_pilot(
+                form=FORM,
+                config_path=pilot_demo_config_path,
+                inputs=PilotInputs(
+                    topic="换一个题材",
+                    target_duration_min=0.5,
+                    characters=("林静", "陈默"),
+                    constraints=(),
+                    genre_bounds=("悬疑",),
+                    audience="都市女性",
+                ),
+                data_dir=pilot_dirs,
+                artifacts_root=artifacts_root,
+                run_id=run_id,
+                clock=_fixed_clock(),
+            )
+
+    def test_dev_产物_slate_可寻址且策略版本等于部署指针(
+        self, pilot_demo_config_path, pilot_dirs, tmp_path
+    ):
+        artifacts_root = tmp_path / "artifacts"
+        result = _run_once(pilot_demo_config_path, pilot_dirs, artifacts_root, "run-slate")
+        state = result.record.stage("dev")
+        product = next(item for item in state.products if item.kind == "slate")
+        assert product.content_hash == state.detail["artifact_hash"]  # 内容寻址（put 返回即哈希）
+        assert len(product.content_hash) == 64
+        assert product.ref == product.content_hash
+        runtime = build_runtime(
+            form=FORM,
+            config_path=pilot_demo_config_path,
+            data_dir=pilot_dirs,
+            artifacts_root=artifacts_root,
+        )
+        slate = json.loads(runtime.artifacts.get(product.content_hash))
+        assert slate["entries"]  # 立项组合非空（可寻址的内容确是立项产物）
+        pointer = yaml.safe_load(pilot_demo_config_path.read_text(encoding="utf-8"))["deployment"][
+            "dev"
+        ]["current_policy_version"]
+        assert state.detail["policy_version"] == pointer  # 版本取部署指针（不回落"最新"）
+        assert state.detail["entry_count"] == len(slate["entries"])
+
+    def test_逐环节评估分量的取数路径可用(
+        self, pilot_demo_config_path, pilot_dirs, tmp_path, monkeypatch
+    ):
+        """七环节轮次树节点逐环节携带非空 `eval_breakdown`（键 = `evaluator_id@version`）。
+
+        **取数路径**（阶段 6 的 T1829 依此入包，本阶段只机检"路径可用"，不动包面）：
+        `STAGE_TREE_PREFIX[stage_id] + "-round-" + f"{run_id}-{stage_id}"` →
+        `runtime.store.nodes_of(tree_id)`（`depth >= 1`）→ 节点原文的 `eval_breakdown`。
+        **不得**以 stage_id 直推树前缀（`script` 实为 `screenplay-round-`）。
+        """
+        captured: dict = {}
+        original = stages_module.build_runtime
+
+        def _capture(**kwargs):
+            runtime = original(**kwargs)
+            captured["runtime"] = runtime
+            return runtime
+
+        monkeypatch.setattr(stages_module, "build_runtime", _capture)
+        run_id = "run-breakdown"
+        _run_once(pilot_demo_config_path, pilot_dirs, tmp_path / "artifacts", run_id)
+        runtime = captured["runtime"]
+        for stage_id in PILOT_STAGE_IDS:
+            tree_id = stages_module.round_tree_id_of(stage_id, f"{run_id}-{stage_id}")
+            nodes = [node for node in runtime.store.nodes_of(tree_id) if node.depth >= 1]
+            assert nodes, f"{stage_id} 轮次树无候选节点（{tree_id}）"
+            for node in nodes:
+                assert node.eval_breakdown, f"{stage_id}:{node.node_id} 分量面为空"
+                for key, value in node.eval_breakdown.items():
+                    assert "@" in key, f"{stage_id} 分量键不是 evaluator_id@version：{key}"
+                    assert "score" in value
+        assert stages_module.round_tree_id_of("script", "r").startswith("screenplay-round-")
 
 
 class Test拒绝语义:
