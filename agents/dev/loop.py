@@ -40,6 +40,12 @@ from agents.dev.artifact import TopicSlate, simulated_signal_sources
 from agents.dev.config import DevConfig
 from agents.dev.db import dev_jobs
 from agents.dev.evaluators import COMPOSITE_POLICY, build_dev_evaluators, evaluate_dev
+from core.billing.budget import (  # 019（C10/C9）：零成本分支 + 快照冻结
+    BudgetRefusedError,
+    gateway_budget_snapshot,
+    refusal_reason,
+    with_budget_tiers,
+)
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.llm_gateway.gateway import GatewayError, LLMGateway
 from core.llm_gateway.profiles import gateway_profile_snapshot, with_llm_profiles
@@ -156,19 +162,6 @@ def generation_cache_key(model: str, prompt: str, temperature: float, max_tokens
 def _aggregate(values: list[str]) -> str:
     """逐调用摘要的规范化汇总（单产出表的 cache_key/response_hash 两列）。"""
     return blake3.blake3(_canonical(values).encode()).hexdigest()
-
-
-def _estimate_cost(prompt: str, price: dict, max_tokens: int) -> float:
-    """预估成本上界（网关价目）：输入 token 估计 + 满额输出 token。
-
-    输出按 max_tokens 满额估算是刻意保守——保证 actual ≤ estimated（schema CHECK），
-    失败调用照计预估成本（原则二）。
-    """
-    prompt_tokens = max(1, len(prompt) // 2)
-    return (
-        prompt_tokens / 1000 * price["prompt_per_1k"]
-        + max_tokens / 1000 * price["completion_per_1k"]
-    )
 
 
 def _string_list(value, field_name: str) -> list[str]:
@@ -527,9 +520,12 @@ def run_dev_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=with_llm_profiles(
-            _config_snapshot(config, assembly),
-            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        config_snapshot=with_budget_tiers(
+            with_llm_profiles(
+                _config_snapshot(config, assembly),
+                gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+            ),
+            gateway_budget_snapshot(gateway),  # 019：额度与峰谷口径随快照冻结
         ),
     )
     plan_summary = {
@@ -586,8 +582,6 @@ def run_dev_round(
     match_key = slate_match_key(
         policy_version=policy_version, inputs=normalized_inputs, config=config
     )
-    # 估算与折算**同源**：都取网关本次调用生效的价目（016 接线形态，两价目不会脱钩）
-    _, price = gateway.prices_for(role=Role.GENERATION, model=config.model)
     prompts = [
         _entry_prompt(
             entry=entry,
@@ -603,7 +597,13 @@ def run_dev_round(
         generation_cache_key(config.model, prompt, TEMPERATURE, config.max_tokens)
         for prompt in prompts
     ]
-    estimated = sum(_estimate_cost(prompt, price, config.max_tokens) for prompt in prompts)
+    # 019（T1921 收敛）：估算走网关的唯一实现（与折算同取 price_cell），本文件不留第二份公式
+    estimated = sum(
+        gateway.estimate_cost(
+            prompt, role=Role.GENERATION, model=config.model, max_tokens=config.max_tokens
+        )
+        for prompt in prompts
+    )
     shared = {
         "round_id": round_id,
         "job_id": job_id,
@@ -629,6 +629,7 @@ def run_dev_round(
                 role=Role.GENERATION,
                 temperature=TEMPERATURE,
                 max_tokens=config.max_tokens,
+                stage="dev",  # 019（C9）：环节 id = budget.tiers 的键（立项论证生成档）
             )
             texts.append(generated.text)
             calls.append(
@@ -642,6 +643,27 @@ def run_dev_round(
                     "cost_usd": float(generated.cost_usd),
                 }
             )
+    except BudgetRefusedError as exc:
+        # 019（C10 调用点分支规则）：拒绝先于通用失败分支捕获。本轮的生成在**逐条目**进行，
+        # 可能前几条已扣费：**已发生**的花费照记（`calls` 里那些），**被拒的那一笔不入账**
+        # （它的贡献全零）——"花了的钱"与"没花的钱"在节点与运营表里可分辨。
+        booked = sum(call["cost_usd"] for call in calls)
+        booked_tokens = sum(call["prompt_tokens"] + call["completion_tokens"] for call in calls)
+        return _fail_round(
+            refusal_reason(exc),
+            **shared,
+            cache_key=_aggregate([call["cache_key"] for call in calls]),
+            response_hash=None,
+            actual=booked,
+            artifact_hash=None,
+            cost=CostRecord(
+                llm_calls=len(calls),
+                llm_tokens=booked_tokens,
+                generation_api_cost_usd=booked,
+            ),
+            observation={"gen_params": match_key, "params_hash": params_hash, "calls": calls},
+            prompt="\n\n".join(prompts),
+        )
     except GatewayError as exc:
         return _fail_round(
             f"网关失败：{exc}",

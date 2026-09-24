@@ -27,7 +27,13 @@ def generate_material(
     """
     start = time.perf_counter()
     # 功能 016：宣发文案角色（接档案后模型/价目由角色路由决定）
-    result = gateway.chat(brief["prompt"], model=model, role=Role.COPYWRITING, temperature=0.0)
+    result = gateway.chat(
+        brief["prompt"],
+        model=model,
+        role=Role.COPYWRITING,
+        temperature=0.0,
+        stage="promo",  # 019（C9）：环节 id = budget.tiers 的键（宣发文案档）
+    )
     gen_params = brief.get("gen_params", {})
     content = {
         "copy": result.text,

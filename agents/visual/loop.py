@@ -31,6 +31,11 @@ from agents.visual.platform.base import (
     VideoGenError,
 )
 from agents.visual.platform.simulated import encode_mp4, render_frames
+from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与崩溃可辨
+    gateway_budget_snapshot,
+    isolation_reason,
+    with_budget_tiers,
+)
 from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, EvalResult
 from core.evaluators.composite import composite_score_versioned
@@ -143,9 +148,12 @@ def run_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=with_llm_profiles(
-            _config_snapshot(config, compliance, proxies, judge),
-            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        config_snapshot=with_budget_tiers(
+            with_llm_profiles(
+                _config_snapshot(config, compliance, proxies, judge),
+                gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+            ),
+            gateway_budget_snapshot(gateway),  # 019：额度与峰谷口径随快照冻结
         ),
     )
     try:
@@ -512,10 +520,14 @@ def _run_clip(
             score=None,
             breakdown={},
             cost=cost,
-            reason=f"评估器崩溃：{exc}",
+            reason=isolation_reason(exc, crash_prefix="评估器崩溃"),
         )
         _mark_ingested(engine, round_id, clip_id, node_id)
-        return {"clip_id": clip_id, "status": "failed", "reason": f"评估器崩溃：{exc}"}
+        return {
+            "clip_id": clip_id,
+            "status": "failed",
+            "reason": isolation_reason(exc, crash_prefix="评估器崩溃"),
+        }
 
 
 def _fragment(result) -> dict:

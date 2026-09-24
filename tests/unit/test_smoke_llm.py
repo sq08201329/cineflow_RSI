@@ -160,8 +160,10 @@ class Test网关级冒烟:
         assert "deepseek-flash" in price and "local-qwen" in price  # 档案即价目来源
         from core.llm_gateway.routing import Role
 
-        first = gateway.chat("同一个提示词", role=Role.GENERATION)
-        second = gateway.chat("同一个提示词", role=Role.GENERATION)
+        # 019（C9）：`build_gateway` 是真实渠道装配点（已接预算门禁），调用点必须声明环节 id——
+        # 本用例延伸一处 `stage=`（断言不变：缓存语义）。
+        first = gateway.chat("同一个提示词", role=Role.GENERATION, stage=smoke_llm.SMOKE_STAGE)
+        second = gateway.chat("同一个提示词", role=Role.GENERATION, stage=smoke_llm.SMOKE_STAGE)
         assert first.cached is False and second.cached is True
         assert second.cost_usd == 0.0 and backend.call_count == 1
 

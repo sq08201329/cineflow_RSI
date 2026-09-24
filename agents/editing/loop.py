@@ -31,6 +31,11 @@ from agents.editing.evaluators.composite import (
 )
 from agents.editing.platform.base import EditRenderAdapter, RenderError
 from agents.editing.shots import SceneStructure, ShotLibrary
+from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与崩溃可辨
+    gateway_budget_snapshot,
+    isolation_reason,
+    with_budget_tiers,
+)
 from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
@@ -190,9 +195,12 @@ def run_editing_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=with_llm_profiles(
-            _config_snapshot(config, evaluators),
-            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        config_snapshot=with_budget_tiers(
+            with_llm_profiles(
+                _config_snapshot(config, evaluators),
+                gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+            ),
+            gateway_budget_snapshot(gateway),  # 019：额度与峰谷口径随快照冻结
         ),
     )
     # ---- 幂等：树锚点已存在 → 直接重建首轮结果返回 ----
@@ -625,13 +633,13 @@ def _run_job(
                 generation_api_calls=1,
                 generation_api_cost_usd=film.actual_cost_usd,
             ),
-            reason=f"评估器崩溃：{exc}",
+            reason=isolation_reason(exc, crash_prefix="评估器崩溃"),
         )
         _mark_inserted(engine, job_id, node_id)
         return {
             "job_id": job_id,
             "status": "failed",
-            "reason": f"评估器崩溃：{exc}",
+            "reason": isolation_reason(exc, crash_prefix="评估器崩溃"),
             "edl_hash": edl_hash,
         }
 

@@ -72,6 +72,7 @@ from agents.storyboard.shotlist import ShotList
 from agents.visual.config import VisualConfig
 from agents.visual.db import create_gen_jobs_schema as create_visual_jobs_schema
 from agents.visual.loop import run_round as run_visual_round
+from core.billing.budget import gateway_budget_snapshot  # 019：档位快照透传
 from core.calibration.drift_config import DriftConfig
 from core.calibration.drift_gate import DriftGate
 from core.evaluators.base import ArtifactRef
@@ -600,6 +601,7 @@ def _sound_entry(stage_input: StageInput) -> StageOutcome:
         engine=runtime.engine,
         config=config,
         llm_profiles=llm_profiles,
+        budget_tiers=gateway_budget_snapshot(runtime.gateway),  # 019：档位随快照冻结
         inputs={"timing_sheet": timing_sheet},
     )
     outcome = _round_candidates(runtime, result.tree_id, expected=len(plans))

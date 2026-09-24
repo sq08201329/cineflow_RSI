@@ -42,6 +42,13 @@ from agents.screenplay.evaluators.composite import (
     composite_screenplay,
     evaluate_screenplay,
 )
+from core.billing.budget import (  # 019（C10/C9）：零成本分支 + 快照冻结
+    BudgetRefusedError,
+    gateway_budget_snapshot,
+    isolation_reason,
+    refusal_reason,
+    with_budget_tiers,
+)
 from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
@@ -276,19 +283,6 @@ def _stage_params(
         # 分阶段输入脉络：上游工件哈希（未产出即 null，不伪造）
         "previous_artifact_hash": None if previous is None else previous.artifact_hash(),
     }
-
-
-def _estimate_cost(prompt: str, price: dict, max_tokens: int) -> float:
-    """预估成本上界（网关价目）：输入 token 估计 + 满额输出 token。
-
-    输出按 max_tokens 满额估算是刻意保守——保证 actual ≤ estimated（schema CHECK），
-    失败调用照计预估成本（原则二）。
-    """
-    prompt_tokens = max(1, len(prompt) // 2)
-    return (
-        prompt_tokens / 1000 * price["prompt_per_1k"]
-        + max_tokens / 1000 * price["completion_per_1k"]
-    )
 
 
 def _score(
@@ -548,9 +542,12 @@ def run_screenplay_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=with_llm_profiles(
-            _config_snapshot(config, evaluators),
-            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        config_snapshot=with_budget_tiers(
+            with_llm_profiles(
+                _config_snapshot(config, evaluators),
+                gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+            ),
+            gateway_budget_snapshot(gateway),  # 019：额度与峰谷口径随快照冻结
         ),
     )
     # ---- 幂等：树锚点已存在 → 直接重建首轮结果返回（0 重复生成 0 重复扣费）----
@@ -665,11 +662,14 @@ def _run_stage(
         previous=previous,
     )
     params_hash = blake3.blake3(_canonical(params).encode()).hexdigest()
-    # 功能 016（遗留 1 收敛）：估算与折算**同源**——都取网关本次调用生效的价目
-    # （接档案时来自角色命中的档案价目；未接档案时来自 price_book），两价目不会脱钩
-    call_model, price = gateway.prices_for(role=Role.GENERATION, model=config.model)
+    # 功能 016（遗留 1 收敛）+ 功能 019（T1921 收敛）：模型名取路由结果（缓存键用），
+    # **估算走网关的唯一实现**（prompt len//2 + 输出满额，两维价目下取未命中格，
+    # 与折算同取 price_cell）——本文件不留第二份估算公式
+    call_model, _ = gateway.prices_for(role=Role.GENERATION, model=config.model)
     cache_key = stage_cache_key(call_model, prompt, TEMPERATURE, config.max_tokens)  # 实际调用模型
-    estimated = _estimate_cost(prompt, price, config.max_tokens)
+    estimated = gateway.estimate_cost(
+        prompt, role=Role.GENERATION, model=config.model, max_tokens=config.max_tokens
+    )
     match_key = stage_match_key(
         stage,
         policy_version=policy_version,
@@ -694,6 +694,33 @@ def _run_stage(
             role=Role.GENERATION,  # 功能 016：剧本生成角色
             temperature=TEMPERATURE,
             max_tokens=config.max_tokens,  # 生成输出预算来自形态配置
+            stage="screenplay",  # 019（C9）：环节 id = budget.tiers 的键（预算按环节分档）
+        )
+    except BudgetRefusedError as exc:
+        # 019（C10 调用点分支规则）：预算拒绝**先于**通用失败分支捕获——被拒的那一笔不入账：
+        # 该笔 llm_calls/llm_tokens/generation_api_cost_usd **全零**（拒绝时花费未发生），
+        # 节点与运营表照写 FAILED（审计需要），原因点名"预算拒绝 + 剩余/所需额度"。
+        # 禁止把它并入下方的"失败照计预估成本"（那会把没花的钱记成花了）。
+        return _fail_stage(
+            refusal_reason(exc),
+            stage=stage,
+            job_id=job_id,
+            round_id=round_id,
+            tree_id=tree_id,
+            root_id=root_id,
+            policy_version=policy_version,
+            params=params,
+            params_hash=params_hash,
+            cache_key=cache_key,
+            response_hash=None,
+            estimated=estimated,
+            actual=0.0,  # 拒绝：花费未发生 ⇒ 不入账
+            artifact_hash=None,
+            cost=CostRecord(),
+            observation=observation,
+            prompt=prompt,
+            store=store,
+            engine=engine,
         )
     except GatewayError as exc:
         return _fail_stage(
@@ -786,7 +813,7 @@ def _run_stage(
     except Exception as exc:  # noqa: BLE001 - 崩溃隔离：FAILED 成本入账轮次继续
         _mark_inserted(engine, job_id)
         return _fail_stage(
-            f"评估器崩溃：{exc}",
+            isolation_reason(exc, crash_prefix="评估器崩溃"),
             stage=stage,
             job_id=job_id,
             round_id=round_id,

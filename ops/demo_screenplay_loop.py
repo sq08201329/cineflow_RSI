@@ -268,7 +268,12 @@ def main() -> int:
         store = create_tree_store(engine)
         artifacts = LocalArtifactStore(root / "artifacts")
         backend = _CountingBackend()
-        gateway = LLMGateway(backend, price_book=config.model_prices, sleep=lambda _: None)
+        gateway = LLMGateway(
+            backend,
+            price_book=config.model_prices,
+            sleep=lambda _: None,
+            spend_guard=None,  # 019：离线装配（测试桩后端）显式声明不接门禁
+        )
 
         # ---- 步骤 1：分阶段产出（三阶段落树 + 成本入账 + 对账）----
         result = run_screenplay_round(

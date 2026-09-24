@@ -120,6 +120,7 @@ class DramaticTensionJudgeEvaluator(Evaluator):
                     role=Role.JUDGE,  # 功能 016：LLM judge 委员会角色
                     temperature=0.0,
                     max_tokens=self._max_tokens,  # 输出预算来自形态配置
+                    stage="screenplay_judge",  # 019（C9）：环节 id = budget.tiers 的键
                 )
                 votes.append(_vote_of(result.text))
                 usage["llm_calls"] += 1

@@ -790,7 +790,12 @@ def main() -> int:
         create_jobs_schema(engine)
         store = create_tree_store(engine)
         artifacts = LocalArtifactStore(root / "artifacts")
-        gateway = LLMGateway(MockBackend(), price_book=config.model_prices, sleep=lambda _: None)
+        gateway = LLMGateway(
+            MockBackend(),
+            price_book=config.model_prices,
+            sleep=lambda _: None,
+            spend_guard=None,  # 019：离线装配显式声明不接门禁（行为零变化）
+        )
         report["policy_history"] = {
             "version": policy.policy_version,
             "policy_dir": str(HISTORY_ROOT / "dev"),

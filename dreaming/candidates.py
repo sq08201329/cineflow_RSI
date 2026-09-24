@@ -81,6 +81,7 @@ class LLMGenerator:
             model=self._model,  # 旧路径兼容；接档案后模型由角色路由决定
             role=Role.DREAMING_CANDIDATES,  # 功能 016：做梦层候选生成角色
             temperature=0.0,
+            stage="dreaming_candidates",  # 019（C9）：环节 id = budget.tiers 的键
         )
         blocks = self._BLOCK_RE.findall(result.text)
         return [block.strip() + "\n" for block in blocks][:m]

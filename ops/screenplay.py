@@ -33,6 +33,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.billing.budget import (  # noqa: E402 - 019（C10）：归因分支——拒绝可辨
+    BudgetRefusedError,
+    refusal_reason,
+)
+
 POLICY_VERSION_LENGTH = 12  # 版本 = 源码 BLAKE3 前 12 位（FR-009/FR-015 口径）
 AGENT_ID = "screenplay"
 
@@ -139,6 +144,11 @@ def _cmd_produce(args) -> int:
         return _fail(f"形态配置非法：{exc}", 2)
     try:
         backend = _backend(args)
+    except BudgetRefusedError as exc:
+        # 019（C10 调用点分支规则）：预算拒绝与"网关后端不可用"**可辨**（归因分支）。
+        # 装配期今天不产生拒绝（本处注入后端路径当前不可用，见 C10 ③ 的条件义务），
+        # 但分支先就位：一旦该路径变为可用真实装配，拒绝不会被误报成凭证/后端故障。
+        return _fail(refusal_reason(exc), 1)
     except GatewayError as exc:
         return _fail(f"网关后端不可用：{exc}", 2)
     inputs = {
@@ -164,7 +174,15 @@ def _cmd_produce(args) -> int:
     # PG：schema 由 Alembic 迁移管理，CLI 不隐式改 schema（先 `alembic upgrade head`）
     store = create_tree_store(engine)
     artifacts = _artifact_store(data_dir)
-    gateway = LLMGateway(backend, price_book=config.model_prices)
+    gateway = LLMGateway(
+        backend,
+        price_book=config.model_prices,
+        # 019（C10 ③ 条件义务）：本处注入后端路径当前不可用（`--backend http` 走裸构造
+        # `HttpBackend()` 恒抛），故显式登记为不接门禁；一旦改为可用真实装配（如
+        # `HttpBackend.from_profile`），`test_billing_core_purity.py` 的保证性断言即红，
+        # 必须连同非 None 守卫一起改（不得只补 None 了事）
+        spend_guard=None,
+    )
 
     try:
         evaluators = build_screenplay_evaluators(config, gateway)

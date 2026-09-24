@@ -83,19 +83,23 @@ class Test零厂商字面量:
         )
 
 
+def _chat_calls() -> list[tuple[pathlib.Path, ast.Call]]:
+    """扫描域内的全部 `.chat(` 调用点（019 起：调用点计数钉死 8 处）。"""
+    calls: list[tuple[pathlib.Path, ast.Call]] = []
+    for path in _scanned_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "chat"
+            ):
+                calls.append((path, node))
+    return calls
+
+
 class Test调用点必传角色:
-    def _chat_calls(self) -> list[tuple[pathlib.Path, ast.Call]]:
-        calls: list[tuple[pathlib.Path, ast.Call]] = []
-        for path in _scanned_files():
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "chat"
-                ):
-                    calls.append((path, node))
-        return calls
+    _chat_calls = staticmethod(_chat_calls)
 
     def test_全部调用点传_role(self):
         # 017 起 8 处：剧本生成 / 开发立项论证生成 / 四家 judge / 做梦候选 / 宣发文案
@@ -136,3 +140,38 @@ class Test调用点必传角色:
         assert len(per_role["judge"]) == 4  # 四家 judge（剧本/分镜/视觉/剪辑）
         assert per_role["copywriting"] == {"material.py"}
         assert per_role["dreaming_candidates"] == {"candidates.py"}
+
+
+class Test调用点声明环节:
+    """功能 019 / T1927：每个 `.chat(` 调用点声明 `stage=`（环节 id）且取值 ∈ 两形态档位键集。
+
+    环节归属由**调用点**声明（网关只有 4 个 `role`，`judge` 一个角色覆盖四个环节，
+    `role → tier` 表达不了"按环节分档"）；扫描域 = 本文件的扫描域（`core/` 除网关 / `agents/`
+    / `dreaming/`）——故**含** `dreaming/candidates.py`、**不含** `ops/smoke_llm.py`
+    （后者在 `ops/` 下，属装配面断言）。调用点计数仍为 8（不得新增）。
+    """
+
+    _chat_calls = staticmethod(_chat_calls)
+
+    def test_每个调用点声明_stage_且取值在档位键集内(self):
+        tier_ids: set[str] = set()
+        for form in ("movie", "shortdrama"):
+            payload = yaml.safe_load(
+                (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
+            )
+            tier_ids |= set(payload["budget"]["tiers"])
+        assert len(tier_ids) == 8  # 两形态键集一致（8 处调用点各一档）
+        calls = self._chat_calls()
+        assert len(calls) == 8, f"调用点数量变化（应为 8 处）：{[str(p) for p, _ in calls]}"
+        offenders: list[str] = []
+        for path, call in calls:
+            stage = next((kw for kw in call.keywords if kw.arg == "stage"), None)
+            value = stage.value if stage is not None else None
+            if not (isinstance(value, ast.Constant) and value.value in tier_ids):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{call.lineno}")
+        assert offenders == [], "以下调用点未声明 stage=（或取值不在 budget.tiers 键集内）：" + str(
+            offenders
+        )
+        scanned = {path.relative_to(REPO_ROOT).as_posix() for path, _ in calls}
+        assert "dreaming/candidates.py" in scanned  # 扫描域含做梦层
+        assert not any(name.startswith("ops/") for name in scanned)  # ops/ 不在本扫描域

@@ -109,6 +109,27 @@ class BudgetRefusedError(GatewayError):
         self.estimated_usd = estimated_usd
 
 
+def refusal_reason(exc: BudgetRefusedError) -> str:
+    """调用点失败原因文案（C10 的"三处可辨"之一）：**点名"预算拒绝"** + 剩余/所需额度。
+
+    单一措辞来源：11 处调用面的原因文案必须一致——"花了的钱"与"没花的钱"在报告、节点、
+    运营表里因此可分辨；措辞散落在各调用点必然分叉。
+    """
+    return str(exc)
+
+
+def isolation_reason(exc: BaseException, *, crash_prefix: str) -> str:
+    """崩溃隔离分支（`except Exception`）的失败原因：**预算拒绝与崩溃可辨**。
+
+    设计依据：C10 调用点分支规则要求"拒绝必须与其它网关失败可辨"。这些分支的**落盘体与
+    记账口径完全相同、只有原因文案不同**（被拒的那一笔本就不在已发生花费里），故此处以
+    单点判别替代复制整段隔离逻辑——与"显式前置 `except BudgetRefusedError`"语义等价
+    （Python 子类优先匹配）。记账口径真正不同的分支（生成计费路径）**必须**写成显式前置分支。
+    """
+    prefix = "预算拒绝" if isinstance(exc, BudgetRefusedError) else crash_prefix
+    return f"{prefix}：{exc}"
+
+
 class SpendRequest(Protocol):
     """门禁请求的**结构化**口径（字段由网关侧的请求对象提供，本包不 import 它）。
 
@@ -333,6 +354,113 @@ def peak_windows_snapshot(cfg: BudgetConfig) -> dict:
     return cfg.peak_windows.to_snapshot()
 
 
+def sole_channel(cfg: BudgetConfig) -> ChannelSpec:
+    """本特性唯实例化一个渠道：**声明多个即拒绝装配**（不猜用哪个档位/账本，避免打错额度）。"""
+    if len(cfg.channels) != 1:
+        raise BudgetConfigError(
+            f"budget.channels 必须恰好声明一个渠道，实际 {sorted(cfg.channels)}："
+            "装配面不猜用哪个（多渠道需先补齐按渠道分派的装配口径）"
+        )
+    return next(iter(cfg.channels.values()))
+
+
+def default_window_context(cfg: BudgetConfig, *, moment: datetime | None = None) -> dict:
+    """缺省窗口实例（C11 的 `run` / `period` 实例）：装配面拿不到运行标识/账单周期时的**保守缺省**。
+
+    取**渠道本地日期**：`period` = 本地月（账单周期的最小可判定粒度）、`run` = 本地日
+    （同一天内的多轮共享同一窗口 ⇒ 额度按日收敛，宁可保守、不放开）。调用方可显式传入
+    真实运行标识/账单周期覆盖（`assemble_guard(window_context=...)`）。
+    """
+    date = cfg.local_date(moment or _now())
+    return {"period": date[:7], "run": date}
+
+
+def with_budget_tiers(snapshot: Mapping, budget_tiers: Mapping | None) -> dict:
+    """把**生效档位定义 + 峰谷快照 + 渠道 id + 账本 revision**并入 `config_snapshot`。
+
+    键名 `budget_tiers`；**未接入门禁时不落键**（镜像 `with_llm_profiles` 口径）——既有
+    装配形态的节点快照逐字不变。冻结的是"当时的额度与峰谷口径"：改额度只影响此后新装配，
+    历史节点永不重写（原则一）。**空映射同样视为未接入**：不写空/占位快照。
+    """
+    merged = dict(snapshot)
+    if budget_tiers:
+        merged["budget_tiers"] = dict(budget_tiers)
+    return merged
+
+
+def gateway_budget_snapshot(gateway: object) -> dict | None:
+    """从网关取档位快照（结构式接入：守卫提供 `snapshot()` 才有值）。
+
+    镜像 `core.llm_gateway.profiles.gateway_profile_snapshot` 的口径：网关未接门禁（或桩网关
+    没有该能力）⇒ `None` ⇒ 调用方**不落** `budget_tiers` 键（既有形态零变化）。
+    """
+    guard = getattr(gateway, "spend_guard", None)
+    provider = getattr(guard, "snapshot", None)
+    return dict(provider()) if callable(provider) else None
+
+
+# ---------------------------------------------------------------------------
+# 装配面：一次装配出一个门禁（两个真实装配点共用，不各写一份）
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GuardAssembly:
+    """真实渠道装配面的一组件：门禁 + 渠道 id + 渠道日历 + 账本/告警（C10 的唯一装配口径）。"""
+
+    cfg: BudgetConfig
+    channel_id: str
+    guard: SpendGuard
+    ledger: FileLedger
+    alerts: AlertLog
+    peak_windows: PeakWindows
+    root: Path
+
+
+def assemble_guard(
+    config_path: str | Path,
+    *,
+    window_context: Mapping[str, str] | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> GuardAssembly:
+    """按形态配置装配门禁（档位 + 渠道 id + 账本 + 告警写手 + 渠道日历）。
+
+    **真实渠道装配点的唯一入口**（链内唯一装配点 = `agents/pilot/backends.py`，最小规模
+    校准入口 = `ops/smoke_llm.py`）：缺 `budget` 段、缺档、缺峰谷声明都在这两处**装配期拒绝**
+    （FR-001：缺额度不得启动）——不是等到第一次调用才炸。
+    """
+    cfg = BudgetConfig.from_yaml(config_path)
+    channel = sole_channel(cfg)
+    root = cfg.ledger_root()
+    ledger = FileLedger(
+        ledger_path(root, channel.channel_id),
+        timeout_seconds=float(cfg.ledger["lock_timeout_seconds"]),
+        clock=clock,
+    )
+    alerts = AlertLog(alerts_path(root, channel.channel_id))
+    guard = SpendGuard(
+        cfg=cfg,
+        channel_id=channel.channel_id,
+        ledger=ledger,
+        alerts=alerts,
+        window_context=(
+            window_context
+            if window_context is not None
+            else default_window_context(cfg, moment=clock() if clock else None)
+        ),
+        clock=clock,
+    )
+    return GuardAssembly(
+        cfg=cfg,
+        channel_id=channel.channel_id,
+        guard=guard,
+        ledger=ledger,
+        alerts=alerts,
+        peak_windows=cfg.peak_windows,
+        root=root,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 路径拼装（C4 单一来源；五模块共用）
 # ---------------------------------------------------------------------------
@@ -503,13 +631,14 @@ def _tier_record(
     tier_id: str,
     window_key: tuple[str, str],
     *,
-    limit_usd: float = 0.0,
+    limit_usd: float | None = None,
     create: bool = False,
 ) -> dict | None:
     """取该档在当前窗口的账本记录；窗口滚动即归零计数（旧窗口记录保留在 `history` 里可审计）。
 
     未结算预留（`pending`）**跨窗口保留**：它们是已发生的事实、不是窗口计数——静默清零
-    等于把"崩溃残留"抹掉。
+    等于把"崩溃残留"抹掉。`limit_usd` 以**配置**为准（每次判定刷新）：改额度（`raise_tier`
+    定点改写配置）在同一窗口内即时生效，账本副本只是镜像。
     """
     tiers = payload.setdefault("tiers", {})
     record = tiers.get(tier_id)
@@ -518,7 +647,7 @@ def _tier_record(
             return None
         record = {
             "window_key": list(window_key),
-            "limit_usd": limit_usd,
+            "limit_usd": float(limit_usd or 0.0),
             "spent_usd": 0.0,
             "reserved_usd": 0.0,
             "refusals": 0,
@@ -536,10 +665,14 @@ def _tier_record(
             }
         )
         record["window_key"] = list(window_key)
-        record["limit_usd"] = limit_usd
+        record["limit_usd"] = float(limit_usd or 0.0)
         record["spent_usd"] = 0.0
         record["refusals"] = 0
         record["last_refusal"] = None
+    elif limit_usd is not None:
+        # **配置为准**：账本里的 limit_usd 是镜像（供审计与窗口归档），每次判定按配置刷新
+        # ——否则 `raise_tier` 定点改写配置后，额度要到窗口滚动才生效（扩量静默失效）
+        record["limit_usd"] = float(limit_usd)
     return record
 
 
@@ -662,17 +795,29 @@ class SpendGuard:
     def period(self) -> str:
         return str(self.window_context.get("period", "") or "")
 
+    def snapshot(self) -> dict:
+        """生效档位快照（C9）：档位定义 + 峰谷快照 + 渠道 id + 账本 `revision`。
+
+        装配时并入 Agent 的 `config_snapshot["budget_tiers"]`——额度与峰谷口径随节点冻结，
+        改额度只影响此后新装配（历史节点永不重写）。未接门禁时不落该键（见 `with_budget_tiers`）。
+        """
+        snapshot = self.cfg.to_snapshot(self.channel_id)
+        snapshot["ledger_revision"] = int(self.ledger.read().get("revision", 0))
+        return snapshot
+
     def window_key(self, tier: BudgetTier, moment: datetime) -> tuple[str, str]:
         """窗口实例：`run` 用运行标识、`day` 用本地日期、`period` 用账单周期。"""
         if tier.window_kind == "day":
             return ("day", self.cfg.local_date(moment))
         instance = str(self.window_context.get(tier.window_kind, "") or "")
         if not instance:
-            raise BudgetRefusedError(
-                f"预算拒绝（window_unresolved）：环节 {tier.tier_id!r} 的窗口类型 "
-                f"{tier.window_kind!r} 缺窗口实例（拒绝调用，不猜窗口）",
+            # 拒绝一律留痕（C10：原因与预估价落 `alerts.jsonl`）——窗口实例缺失同样如此
+            self._refuse(
+                tier=tier,
                 reason="window_unresolved",
-                tier_id=tier.tier_id,
+                moment=moment,
+                estimated_usd=0.0,
+                detail={"window_kind": tier.window_kind},
             )
         return (tier.window_kind, instance)
 

@@ -29,7 +29,8 @@ from core.billing.bill import (
     system_digest,
     write_snapshot,
 )
-from core.billing.budget import BudgetConfig, channel_dir
+from core.billing.budget import AlertLog, BudgetConfig, alerts_path, channel_dir
+from core.yaml_edit import YamlEditError, replace_section_entries, upsert_section_entries
 
 # 渠道校准状态取值域（由最新记录派生）
 CALIBRATION_STATES = ("untested", "pass", "fail", "stale")
@@ -316,3 +317,126 @@ def calibration_status(
     if _is_expired(latest, cfg, moment):
         return "stale"
     return "pass" if latest.get("passed") is True else "fail"
+
+
+# ---------------------------------------------------------------------------
+# 扩量面（C12）：raise_tier = 六条先决 + 定点改写 + 留痕
+# ---------------------------------------------------------------------------
+
+
+def _record(tier_id: str, calibration_id: str, by: str, by_reason: str, at: str, **extra) -> dict:
+    """扩量留痕（追加式字典，由调用方写进 `alerts.jsonl`）。
+
+    操作人的理由记作 `by_reason`（`reason` 留给**事件标签**：
+    `tier_raised` / `uncalibrated_raise`），避免"人的理由"与事件类型同名字段互相覆盖。
+    """
+    return {
+        "tier_id": tier_id,
+        "calibration_id": calibration_id,
+        "by": by,
+        "by_reason": by_reason,
+        "at": at,
+        **extra,
+    }
+
+
+def raise_tier(
+    channel_id: str,
+    tier_id: str,
+    limit_usd: float,
+    *,
+    calibration_id: str,
+    by: str,
+    reason: str,
+    cfg: BudgetConfig,
+    config_path: str | Path,
+    root: str | Path,
+    at: datetime | None = None,
+) -> dict:
+    """扩量：把某环节档的额度定点改写为新值（**必须有合格且未超期的校准记录**）。
+
+    六条拒绝条件（C12，任一命中即拒绝 + `uncalibrated_raise` 留痕 + **配置一字不改**）：
+    ① 无 `calibration_id`；② 记录不存在或不同渠道（或不同环节档）；③ `passed != true`；
+    ④ 样本量 < `min_samples`；⑤ 记录超期（`record_ttl_days`）；⑥ `deviation` 超容差。
+
+    落地动作（合格时）：经 `core/yaml_edit.py` **定点改写**配置额度 + 写 `calibrated_by`
+    （与 017 采纳改部署指针同一范式）+ 追加 `tier_raised` 留痕——升级必须可追溯到记录，
+    且配置的其余段与注释**逐字节不变**（改额度是配置动作，不是改代码）。
+    """
+    if not str(by or "").strip() or not str(reason or "").strip():
+        raise CalibrationRecordError("扩量必须带操作人与理由（留痕不得无归属）")
+    tier = cfg.tier(tier_id)  # 缺档即拒绝（不发明档位）
+    cfg.channel(channel_id)
+    new_limit = _require_amount("limit_usd", limit_usd, positive=True)
+    moment = at or datetime.now(UTC)
+    alerts = AlertLog(alerts_path(root, channel_id))
+    previous = float(tier.limit_usd)
+    if abs(new_limit - previous) < 1e-12:
+        raise CalibrationRecordError(
+            f"新额度与当前额度相同（{previous}）：无需改写（不制造空转留痕）"
+        )
+    try:
+        record = require_calibration(
+            calibration_id,
+            cfg=cfg,
+            channel_id=channel_id,
+            tier_id=tier_id,
+            root=root,
+            at=moment,
+        )
+    except CalibrationRecordError as exc:
+        alerts.record(
+            kind="uncalibrated_raise",
+            at=moment.isoformat(),
+            channel_id=channel_id,
+            detail=_record(
+                tier_id,
+                str(calibration_id),
+                by,
+                reason,
+                moment.isoformat(),
+                attempted_limit_usd=new_limit,
+                previous_limit_usd=previous,
+                refusal=str(exc),
+            ),
+            ref=str(calibration_id),
+        )
+        raise
+    path = Path(config_path)
+    text = path.read_text(encoding="utf-8")
+    try:
+        rewritten = replace_section_entries(
+            text, ("budget", "tiers", tier_id), {"limit_usd": new_limit}
+        )
+    except YamlEditError as exc:
+        raise CalibrationRecordError(
+            f"额度定点改写失败（budget.tiers.{tier_id}.limit_usd 行形态不支持？）：{exc}"
+        ) from exc
+    rewritten = upsert_section_entries(
+        rewritten, ("budget", "tiers", tier_id), {"calibrated_by": str(calibration_id)}
+    )
+    path.write_text(rewritten, encoding="utf-8")
+    detail = _record(
+        tier_id,
+        str(calibration_id),
+        by,
+        reason,
+        moment.isoformat(),
+        previous_limit_usd=previous,
+        limit_usd=new_limit,
+        deviation=float(record.get("deviation", 0.0)),
+        sample_count=int((record.get("measured") or {}).get("sample_count", 0)),
+    )
+    alerts.record(
+        kind="tier_raised",
+        at=moment.isoformat(),
+        channel_id=channel_id,
+        detail=detail,
+        ref=str(calibration_id),
+    )
+    return {
+        **detail,
+        "event": "tier_raised",
+        "channel_id": channel_id,
+        "config_path": str(path),
+    }

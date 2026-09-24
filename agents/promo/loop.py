@@ -27,6 +27,11 @@ from agents.promo.platform.base import (
     RateLimitedError,
     UnavailableError,
 )
+from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与崩溃可辨
+    gateway_budget_snapshot,
+    isolation_reason,
+    with_budget_tiers,
+)
 from core.llm_gateway.gateway import LLMGateway
 from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
     gateway_profile_snapshot,
@@ -133,9 +138,12 @@ def run_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=with_llm_profiles(
-            _config_snapshot(config, compliance, ctr),
-            gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+        config_snapshot=with_budget_tiers(
+            with_llm_profiles(
+                _config_snapshot(config, compliance, ctr),
+                gateway_profile_snapshot(gateway),  # 功能 016：档案与价目随快照冻结
+            ),
+            gateway_budget_snapshot(gateway),  # 019：额度与峰谷口径随快照冻结
         ),
     )
     try:
@@ -329,9 +337,13 @@ def _run_material(
             score=None,
             breakdown={},
             cost=CostRecord(),
-            reason=f"生成失败：{exc}",
+            reason=isolation_reason(exc, crash_prefix="生成失败"),
         )
-        return {"material_id": material_id, "status": "failed", "reason": f"生成失败：{exc}"}
+        return {
+            "material_id": material_id,
+            "status": "failed",
+            "reason": isolation_reason(exc, crash_prefix="生成失败"),
+        }
 
     from core.evaluators.base import ArtifactRef
 

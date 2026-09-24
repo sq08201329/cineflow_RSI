@@ -216,7 +216,12 @@ class _CountingRenderer:
 
 
 def _gateway() -> LLMGateway:
-    return LLMGateway(MockBackend(), price_book=MODEL_PRICES, sleep=lambda _: None)
+    return LLMGateway(
+        MockBackend(),
+        price_book=MODEL_PRICES,
+        sleep=lambda _: None,
+        spend_guard=None,  # 019：离线装配显式声明不接门禁（行为零变化）
+    )
 
 
 def _real_rerun_score(edl, library, structure, config) -> float:

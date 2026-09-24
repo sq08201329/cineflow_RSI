@@ -28,6 +28,7 @@ from agents.sound.evaluators import build_sound_evaluators
 from agents.sound.evaluators.composite import COMPOSITE_POLICY, composite_sound
 from agents.sound.platform.base import SoundGenAdapter, SoundGenError
 from agents.sound.timing import TimingSheet
+from core.billing.budget import with_budget_tiers  # 019：额度与峰谷口径随快照冻结（透传）
 from core.evaluators.base import ArtifactRef, Evaluator
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.profiles import with_llm_profiles  # 功能 016：档案快照接线（声音无 LLM 调用）
@@ -116,6 +117,7 @@ def run_sound_round(
     inputs: dict,
     evaluators: list[Evaluator] | None = None,
     llm_profiles: Mapping | None = None,  # 功能 016：档案与价目口径随快照冻结（声音不消费 LLM）
+    budget_tiers: Mapping | None = None,  # 019：档位与峰谷口径随快照冻结（声音同样透传）
 ) -> SoundRoundResult:
     """执行一轮声音线上探索（全流程幂等）。"""
     # 0) 输入校验先于一切副作用（适配器 0 调用、0 成本、0 落库）
@@ -139,7 +141,10 @@ def run_sound_round(
         policy_version=policy_version,
         root_id=root_id,
         node_ids=[],
-        config_snapshot=with_llm_profiles(_config_snapshot(config, evaluators), llm_profiles),
+        config_snapshot=with_budget_tiers(
+            with_llm_profiles(_config_snapshot(config, evaluators), llm_profiles),
+            budget_tiers,
+        ),
     )
     try:
         store.create_tree(tree)

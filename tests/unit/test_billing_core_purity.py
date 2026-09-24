@@ -224,3 +224,198 @@ class Test零反向依赖:
             if "from agents." in text or "import agents" in text
         ]
         assert offenders == [], f"core/billing 不得 import agents.*：{offenders}"
+
+
+# ---------------------------------------------------------------------------
+# C10 门禁注入两层断言（T1916；承接 T1906）
+# ---------------------------------------------------------------------------
+
+INJECTION_ROOTS = ("core", "agents", "ops")
+GUARD_KWARG = "spend_guard"
+# 真实渠道后端标记：出现即"本构造点走真实渠道"（按规则判定，不用文件白名单）
+REAL_BACKEND_MARKERS = ("HttpBackend", "_llm_backend")
+# 离线装配标记：同函数内构造模拟后端或测试桩
+OFFLINE_BACKEND_MARKERS = ("MockBackend", "_CountingBackend", "StubBackend")
+# ② 保证性清单常驻：真实渠道装配点（**两处**：链内唯一装配点 + 最小规模校准入口）
+REAL_ASSEMBLY_POINTS = ("agents/pilot/backends.py", "ops/smoke_llm.py")
+# ① 离线装配豁免清单常驻：显式 `spend_guard=None`（新增一处即红）
+OFFLINE_ASSEMBLIES = (
+    "ops/demo_dev_loop.py",
+    "ops/demo_editing_loop.py",
+    "ops/demo_promo_loop.py",
+    "ops/demo_screenplay_loop.py",
+    "ops/demo_storyboard_loop.py",
+    "ops/demo_visual_loop.py",
+    "ops/dev.py",
+    "ops/screenplay.py",
+)
+
+
+def _function_node(tree: ast.Module, node: ast.Call):
+    """构造点所在**函数**节点（找不到所属函数 → 整个模块，按"未定"从严归类）。"""
+    for candidate in ast.walk(tree):
+        if not isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if candidate.lineno <= node.lineno <= (candidate.end_lineno or candidate.lineno):
+            return candidate
+    return tree
+
+
+def _scope_names(scope) -> set[str]:
+    """作用域内**代码层面**引用的名字（注释与文档串不算引用——"引用后端"指真调用了它）。"""
+    names: set[str] = set()
+    for child in ast.walk(scope):
+        if isinstance(child, ast.Name):
+            names.add(child.id)
+        elif isinstance(child, ast.Attribute):
+            names.add(child.attr)
+        elif isinstance(child, ast.ImportFrom):
+            names.update(alias.name for alias in child.names)
+        elif isinstance(child, ast.Import):
+            names.update(alias.name.split(".")[-1] for alias in child.names)
+    return names
+
+
+def _gateway_constructions() -> list[dict]:
+    """普查 `LLMGateway(...)` 构造点（core/ agents/ ops/ 全域，含装配脚本与演示）。"""
+    sites: list[dict] = []
+    for root in INJECTION_ROOTS:
+        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+            if "__pycache__" in path.parts or "/tests/" in path.as_posix():
+                continue
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = getattr(func, "id", None) or getattr(func, "attr", None)
+                if name != "LLMGateway":
+                    continue
+                guard = next((kw for kw in node.keywords if kw.arg == GUARD_KWARG), None)
+                names = _scope_names(_function_node(tree, node))
+                sites.append(
+                    {
+                        "path": path.relative_to(REPO_ROOT).as_posix(),
+                        "line": node.lineno,
+                        "has_guard_kwarg": guard is not None,
+                        "guard_is_explicit_none": (
+                            guard is not None
+                            and isinstance(guard.value, ast.Constant)
+                            and guard.value.value is None
+                        ),
+                        "real": bool(names & set(REAL_BACKEND_MARKERS)),
+                    }
+                )
+    return sites
+
+
+class Test门禁注入两层断言:
+    """C10 的覆盖断言：**显式性 + 保证性**，豁免按规则判定（不用文件白名单）。
+
+    阶段 3 结束时本类**故意红**在"真实两处尚未注入非 None 守卫"上——那是 TDD 的预期中间态，
+    由 US1 的 T1928（`agents/pilot/backends.py` 与 `ops/smoke_llm.py` 注入 `FileLedger` +
+    档位配置 + 渠道 id）转绿，泄漏门禁的洞不能靠改断言绕过。
+    """
+
+    def test_构造点普查面有效(self):
+        sites = _gateway_constructions()
+        assert len(sites) == 10, [(site["path"], site["line"]) for site in sites]
+        assert sorted({site["path"] for site in sites}) == sorted(
+            [*REAL_ASSEMBLY_POINTS, *OFFLINE_ASSEMBLIES]
+        )
+
+    def test_之一_显式性_任何构造必须显式传_spend_guard(self):
+        """① 显式性（必要但不充分）：含显式 `None` 也算"传了"——本改造要的是"每处都想清楚"。"""
+        offenders = [
+            f"{site['path']}:{site['line']}"
+            for site in _gateway_constructions()
+            if not site["has_guard_kwarg"]
+        ]
+        assert offenders == [], (
+            "以下 LLMGateway 构造未显式声明 spend_guard=（缺声明即红，含显式 None）：\n"
+            + "\n".join(offenders)
+        )
+
+    def test_之二_保证性_真实渠道装配点必须传非_None_守卫(self):
+        """② 保证性（真正的"必先过门禁"）：按规则判定，清单常驻。"""
+        sites = _gateway_constructions()
+        real = sorted({site["path"] for site in sites if site["real"]})
+        assert real == sorted(REAL_ASSEMBLY_POINTS), (
+            f"真实渠道装配点清单变化：{real}（新增即红——必须连同非 None 守卫一起改）"
+        )
+        offenders = [
+            f"{site['path']}:{site['line']}"
+            for site in sites
+            if site["real"] and not (site["has_guard_kwarg"] and not site["guard_is_explicit_none"])
+        ]
+        assert offenders == [], (
+            "真实渠道装配点必须传**非 None** 的 spend_guard=（真实调用必先过门禁）：\n"
+            + "\n".join(offenders)
+        )
+        # core/ 与 agents/ 下不得出现 `spend_guard=None`（把 None 写在真实链上即是开洞）
+        forbidden = [
+            f"{site['path']}:{site['line']}"
+            for site in sites
+            if site["guard_is_explicit_none"] and site["path"].startswith(("core/", "agents/"))
+        ]
+        assert forbidden == [], f"core/ 与 agents/ 下不得出现 spend_guard=None：{forbidden}"
+
+    def test_之二_离线装配清单常驻(self):
+        sites = _gateway_constructions()
+        offline = sorted({site["path"] for site in sites if not site["real"]})
+        assert offline == sorted(OFFLINE_ASSEMBLIES), (
+            f"离线装配点清单变化：{offline}（新增一处即红：必须显式声明 spend_guard=None）"
+        )
+        offenders = [
+            f"{site['path']}:{site['line']}"
+            for site in sites
+            if not site["real"] and not (site["has_guard_kwarg"] and site["guard_is_explicit_none"])
+        ]
+        assert offenders == [], (
+            "离线装配（模拟后端/测试桩/不可用路径）必须显式 spend_guard=None：\n"
+            + "\n".join(offenders)
+        )
+
+    def test_之三_条件义务_不可用真实路径按规则判定(self):
+        """③ 堵洞：`ops/screenplay.py` / `ops/dev.py` 的注入后端路径**当前不可用**
+        （`--backend http` → `_backend()` 里裸构造 `HttpBackend()` 恒抛 `GatewayError`），
+        故按①显式 `None` 登记；但一旦它们在本函数内变成可用真实装配（如
+        `HttpBackend.from_profile(...)`），规则即把它们归入真实清单 ⇒ 本条与②同时红。
+        """
+        unusable = {"ops/screenplay.py", "ops/dev.py"}
+        sites = _gateway_constructions()
+        for site in sites:
+            if site["path"] in unusable:
+                assert not site["real"], (
+                    f"{site['path']}:{site['line']} 已被改为真实装配路径——必须连同非 None 守卫改"
+                )
+                assert site["guard_is_explicit_none"]
+        # 规则自检（有牙齿）：合成一个"可行真实装配"的构造点 ⇒ 必须被判为真实
+        synthetic = """
+def _backend(args):
+    from core.llm_gateway.backends.http import HttpBackend
+    return HttpBackend.from_profile(args.profile)
+
+def main(args):
+    gateway = LLMGateway(_backend(args), price_book={}, spend_guard=None)
+"""
+        tree = ast.parse(synthetic)
+        call = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "LLMGateway"
+        )
+        scope = _scope_names(_function_node(tree, call))
+        assert not scope & set(REAL_BACKEND_MARKERS)  # 后端来自别处 ⇒ 今日分类为离线
+        # 同一条规则：把真实后端就地内联 ⇒ 命中（此时 spend_guard=None 即红）
+        inlined = synthetic.replace(
+            "LLMGateway(_backend(args),", "LLMGateway(HttpBackend.from_profile(args.profile),"
+        )
+        tree = ast.parse(inlined)
+        call = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "LLMGateway"
+        )
+        assert _scope_names(_function_node(tree, call)) & set(REAL_BACKEND_MARKERS)

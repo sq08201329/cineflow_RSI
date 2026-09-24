@@ -80,6 +80,7 @@ def main() -> int:
         MockBackend(),
         price_book={"mock-copy-v1": {"prompt_per_1k": 0.001, "completion_per_1k": 0.002}},
         sleep=lambda _: None,
+        spend_guard=None,  # 019：离线装配显式声明不接门禁（行为零变化）
     )
     adapter = SimulatedVideoGen(config.simulated_gen)
 

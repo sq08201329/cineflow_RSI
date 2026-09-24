@@ -68,6 +68,34 @@ def _tokens_of(usage: dict, key: str) -> int:
     return value
 
 
+# 厂商 usage 里"命中 prompt 缓存"的**协议字段**路径（只在本文件内随厂商差异调整；
+# **不新增档案配置键**）：OpenAI 兼容写在 prompt_tokens_details.cached_tokens，
+# 另有厂商直接给 prompt_cache_hit_tokens 顶层字段。
+_CACHED_TOKENS_PATHS = (
+    ("prompt_tokens_details", "cached_tokens"),
+    ("prompt_cache_hit_tokens",),
+)
+
+
+def _cached_prompt_tokens_of(usage: dict) -> int | None:
+    """读厂商报告的**命中 prompt token 数**（C7）：缺失/结构不符/非法取值 ⇒ `None`。
+
+    `None` 的语义 = "厂商未报告"：网关据此取 `*_miss` 格并记口径备注「按未命中计」
+    （保守高估，**不按 0 计**）。**不在此处钳制**：读数合法但大于 prompt token 数
+    由网关报错（不静默钳制）。
+    """
+    for path in _CACHED_TOKENS_PATHS:
+        cursor: object = usage
+        for key in path:
+            cursor = cursor.get(key) if isinstance(cursor, dict) else None
+        if cursor is None:
+            continue
+        if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
+            return None  # 读数非法（bool/负数/非整数）⇒ 按"未报告"处理，不猜
+        return cursor
+    return None
+
+
 class HttpBackend:
     """OpenAI 兼容 /chat/completions 端点后端（协议实现；本地 stub 已验证）。
 
@@ -222,6 +250,7 @@ class HttpBackend:
             text=self._content_of(payload, raw),
             prompt_tokens=_tokens_of(usage, "prompt_tokens"),
             completion_tokens=_tokens_of(usage, "completion_tokens"),
+            cached_prompt_tokens=_cached_prompt_tokens_of(usage),  # 未报告 ⇒ None（C7）
         )
 
     # ---- 内部 ----

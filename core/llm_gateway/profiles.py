@@ -50,6 +50,11 @@ _LEGACY_SECTION_ROLES = {"screenplay": Role.GENERATION, "promo": Role.COPYWRITIN
 
 _PRICE_KEYS = ("prompt_per_1k", "completion_per_1k")
 
+# 两维价目的格位（C5）：格位键 = `<峰谷>_<缓存>`；**声明即四格齐备**（缺一即报错）
+MATRIX_CELLS = ("peak_miss", "peak_hit", "off_peak_miss", "off_peak_hit")
+# 声明的维度（进快照，供报告/校准记录标注"这张价目表认哪些维度"）
+DECLARED_DIMENSIONS = ("peak_off_peak", "cache_hit_miss")
+
 
 def host_of_url(url: str) -> str:
     """URL → `scheme://host[:port]`（快照只记 host：不含路径/查询串/密钥）。"""
@@ -58,6 +63,15 @@ def host_of_url(url: str) -> str:
         raise ProfileConfigError(f"档案端点 URL 形态非法（期望 http(s)://host[:port]）：{url!r}")
     port = f":{parts.port}" if parts.port else ""
     return f"{parts.scheme}://{parts.hostname}{port}"
+
+
+def cost_from_prices(
+    prices: Mapping[str, float], *, prompt_tokens: int, completion_tokens: int
+) -> float:
+    """按价目折算金额（**全仓唯一的折算算术**）：网关折算、预算估算与档案折算同取它。"""
+    return prompt_tokens / 1000 * float(prices["prompt_per_1k"]) + completion_tokens / 1000 * float(
+        prices["completion_per_1k"]
+    )
 
 
 @dataclass(frozen=True)
@@ -75,6 +89,7 @@ class ModelProfile:
     legacy_env: bool = False
     timeout_seconds: float | None = None  # 单请求超时（推理模型需更长；None = 用后端默认）
     request_options: Mapping[str, Any] = field(default_factory=dict)  # 请求参数（白名单，见下）
+    price_matrix: Mapping[str, Mapping[str, float]] = field(default_factory=dict)
     notes: tuple[str, ...] = ()
 
     @property
@@ -90,14 +105,26 @@ class ModelProfile:
         return str(self.base_url_env)
 
     def cost_usd(self, *, prompt_tokens: int, completion_tokens: int) -> float:
-        """按档案价目折算（记账口径 = 价目表；**记账 ≠ 厂商账单**）。"""
-        return prompt_tokens / 1000 * float(
-            self.prices["prompt_per_1k"]
-        ) + completion_tokens / 1000 * float(self.prices["completion_per_1k"])
+        """按档案价目折算（记账口径 = 价目表；**记账 ≠ 厂商账单**）。
+
+        **委派 `price_cell` + `cost_from_prices`**：全仓只有一份折算口径（本方法曾是一条独立的
+        硬编码线性式，两维价目一上就会与网关折算脱钩）。未声明 `price_matrix` 的档案取基础两键
+        （四格同价）；矩阵档案的格位取决于调用时刻与缓存命中，本方法拿不到这两个输入，
+        故对矩阵档案报错并指向 `price_cell`——**声明矩阵后不回落基础价**。
+        """
+        _, prices = price_cell(self, moment=None, cache_hit=False)
+        return cost_from_prices(
+            prices, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+        )
 
     def to_snapshot(self) -> dict:
-        """档案快照条目（价目 + 备注 + 端点 host/变量名 + 标记；**无密钥**）。"""
-        return {
+        """档案快照条目（价目 + 备注 + 端点 host/变量名 + 标记；**无密钥**）。
+
+        声明了两维价目的档案**追加**（可选）键 `price_matrix` / `declared_dimensions`：
+        旧快照条目无这两个键（原语义 = 四格同价），读取端按**键集**分派、不按版本号猜，
+        且旧快照**永不重写**（改矩阵只影响新节点）。
+        """
+        snapshot = {
             "profile_id": self.profile_id,
             "model": self.vendor_model,
             "endpoint": self.endpoint_ref,
@@ -110,6 +137,55 @@ class ModelProfile:
             "timeout_seconds": self.timeout_seconds,
             "request_options": _deep_copy_options(self.request_options),
         }
+        if self.price_matrix:
+            snapshot["price_matrix"] = {
+                cell: {key: float(self.price_matrix[cell][key]) for key in _PRICE_KEYS}
+                for cell in MATRIX_CELLS
+            }
+            snapshot["declared_dimensions"] = list(DECLARED_DIMENSIONS)
+        return snapshot
+
+
+def price_cell(
+    profile: ModelProfile,
+    *,
+    moment: Any = None,
+    cache_hit: bool = False,
+    is_peak: Any = None,
+) -> tuple[str, dict[str, float]]:
+    """单点取价（C5）：`(cell_key, prices)`——网关折算与预算估算**同取**本函数。
+
+    - 未声明 `price_matrix` ⇒ `("", 基础价目)`：四格同价，口径「未区分峰谷/缓存」；
+    - 声明矩阵 ⇒ 格位键 = `<峰谷>_<缓存>`，峰谷由**注入的渠道日历** `is_peak(moment)` 判定
+      （C8：峰谷时区/窗口/归属随 `config_snapshot["budget_tiers"]` 冻结，**不进档案快照**，
+      故本模块不持有日历，只按注入值判定）；一次调用只取一格（跨切换时刻不拆分）。
+    - 矩阵档案缺 `moment` / 缺日历 ⇒ `ProfileConfigError`：**声明矩阵后不回落基础价**
+      （静默取 `prices` 会让"两维价目"形同虚设）。
+    """
+    if not profile.price_matrix:
+        return "", {key: float(profile.prices[key]) for key in _PRICE_KEYS}
+    if moment is None or not callable(is_peak):
+        raise ProfileConfigError(
+            f"档案 {profile.profile_id!r} 声明了 price_matrix：取价必须给出调用时刻与渠道日历"
+            "（缺则无从判定峰谷——声明矩阵后不回落基础价）"
+        )
+    cell = f"{'peak' if bool(is_peak(moment)) else 'off_peak'}_{'hit' if cache_hit else 'miss'}"
+    return cell, {key: float(profile.price_matrix[cell][key]) for key in _PRICE_KEYS}
+
+
+def snapshot_entry_cells(entry: Mapping) -> dict[str, dict[str, float]]:
+    """**冻结快照条目** → 四格价目视图（读取端的形状分派口径）。
+
+    - 条目**无** `price_matrix` 键 ⇒ 四格皆取基础 `prices`（旧快照原语义：四格同价）；
+    - 条目有 `price_matrix` ⇒ 逐格如实取出（不回落基础价）。
+
+    分派只认**键集**（不按版本号猜），故新旧两形状可同时读取；快照文件本身**永不重写**。
+    """
+    prices = {key: float(entry["prices"][key]) for key in _PRICE_KEYS}
+    matrix = entry.get("price_matrix")
+    if not isinstance(matrix, Mapping):
+        return {cell: dict(prices) for cell in MATRIX_CELLS}
+    return {cell: {key: float(matrix[cell][key]) for key in _PRICE_KEYS} for cell in MATRIX_CELLS}
 
 
 @dataclass(frozen=True)
@@ -230,11 +306,14 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
             "——不隐式读 OPENAI_*（假阳性归零），也不允许无凭证档案"
         )
     model = str(raw.get("model") or profile_id)  # 缺省 = 档案 id（旧形态兼容）
-    prices, zero_marginal, price_notes = _parse_prices(profile_id, raw)
+    price_matrix, matrix_notes = _parse_price_matrix(profile_id, raw)
+    prices, zero_marginal, price_notes = _parse_prices(
+        profile_id, raw, has_matrix=bool(price_matrix)
+    )
     timeout_seconds = _parse_timeout(profile_id, raw)
     request_options = _parse_request_options(profile_id, raw)
     price_note = raw.get("price_note")
-    notes = list(price_notes)
+    notes = [*price_notes, *matrix_notes]
     if not isinstance(price_note, str) or not price_note:
         price_note = ""
         notes.append(f"档案 {profile_id!r} 缺 price_note（价目口径备注）：建议补上以便审计复算")
@@ -251,16 +330,78 @@ def _parse_profile(profile_id: str, raw: Any) -> tuple[ModelProfile, list[str]]:
             legacy_env=bool(raw.get("legacy_env", False)),
             timeout_seconds=timeout_seconds,
             request_options=request_options,
+            price_matrix=price_matrix,
             notes=tuple(notes),
         ),
         notes,
     )
 
 
+def _parse_price_matrix(profile_id: str, raw: Mapping[str, Any]) -> tuple[dict, list[str]]:
+    """两维价目解析（C5）：**声明即四格齐备**（缺格、缺键、多余格一律报错）。
+
+    取值校验沿用 `_parse_prices` 的纪律（≥ 0、非 bool、缺项不回落默认价）；零价目纪律
+    落在**四格**上（四格全 0 仍须 `zero_marginal: true`；**单格为 0 合法**）。
+    """
+    matrix = raw.get("price_matrix")
+    if matrix is None:
+        return {}, []
+    if not isinstance(matrix, Mapping) or not matrix:
+        raise ProfileConfigError(
+            f"档案 {profile_id!r} 的 price_matrix 必须为非空映射（四格：{list(MATRIX_CELLS)}）"
+        )
+    missing = [cell for cell in MATRIX_CELLS if cell not in matrix]
+    unknown = [cell for cell in matrix if cell not in MATRIX_CELLS]
+    if missing or unknown:
+        raise ProfileConfigError(
+            f"档案 {profile_id!r} 的 price_matrix 必须四格齐备（缺 {missing}、多 {unknown}）："
+            f"格位键 = <峰谷>_<缓存>，合法取值 {list(MATRIX_CELLS)}——声明即四格，缺格不回落基础价"
+        )
+    parsed: dict[str, dict[str, float]] = {}
+    for cell in MATRIX_CELLS:
+        cell_raw = matrix[cell]
+        if not isinstance(cell_raw, Mapping):
+            raise ProfileConfigError(
+                f"档案 {profile_id!r} 的 price_matrix.{cell} 必须为映射"
+                f"（{list(_PRICE_KEYS)}），实际 {cell_raw!r}"
+            )
+        parsed[cell] = {}
+        for key in _PRICE_KEYS:
+            value = cell_raw.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                raise ProfileConfigError(
+                    f"档案 {profile_id!r} 的 price_matrix.{cell}.{key} 非合法数值：{value!r}"
+                    "（必须为 ≥ 0 的数值；缺项即报错，不回落基础价）"
+                )
+            parsed[cell][key] = float(value)
+    zero_marginal = bool(raw.get("zero_marginal", False))
+    notes: list[str] = []
+    all_zero = all(value == 0.0 for cell in parsed.values() for value in cell.values())
+    if all_zero and not zero_marginal:
+        raise ProfileConfigError(
+            f"档案 {profile_id!r} 的价目矩阵四格全 0 但未声明 zero_marginal: true"
+            "——零价目必须显式声明（自建/本地推理：零边际成本仍非免费）"
+        )
+    if not all_zero and zero_marginal:
+        raise ProfileConfigError(
+            f"档案 {profile_id!r} 声明了 zero_marginal: true 但价目矩阵含非 0 格位："
+            "零边际成本标记与价目矛盾"
+        )
+    notes.append(
+        f"档案 {profile_id!r} 声明两维价目（{list(DECLARED_DIMENSIONS)}）："
+        f"格位 {list(MATRIX_CELLS)}；峰谷由渠道日历按调用开始时刻判定（随 budget_tiers 快照冻结）"
+    )
+    return parsed, notes
+
+
 def _parse_prices(
-    profile_id: str, raw: Mapping[str, Any]
+    profile_id: str, raw: Mapping[str, Any], *, has_matrix: bool = False
 ) -> tuple[dict[str, float], bool, list[str]]:
-    """价目解析：两值必须齐备；全 0 必须显式 `zero_marginal: true`（不允许"忘了填价目"）。"""
+    """价目解析：两值必须齐备；全 0 必须显式 `zero_marginal: true`（不允许"忘了填价目"）。
+
+    声明 `price_matrix` 时基础两键仍须齐备且为合法数值，但零价目纪律改由**四格**承担
+    （见 `_parse_price_matrix`）——基础键此时不参与折算。
+    """
     prices = raw.get("prices")
     if not isinstance(prices, Mapping):
         raise ProfileConfigError(
@@ -278,6 +419,8 @@ def _parse_prices(
         parsed[key] = float(value)
     zero_marginal = bool(raw.get("zero_marginal", False))
     notes: list[str] = []
+    if has_matrix:
+        return parsed, zero_marginal, notes
     if all(value == 0.0 for value in parsed.values()):
         if not zero_marginal:
             raise ProfileConfigError(

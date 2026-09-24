@@ -39,6 +39,7 @@ from agents.promo.platform.base import UnavailableError as PromoUnavailableError
 from agents.sound.platform.base import UnavailableError as SoundUnavailableError
 from agents.storyboard.platform.base import UnavailableError as StoryboardUnavailableError
 from agents.visual.platform.base import UnavailableError as VisualUnavailableError
+from core.billing.budget import assemble_guard  # 019：真实渠道装配点的门禁装配
 from core.llm_gateway.gateway import GatewayError, LLMGateway
 from core.orchestration.errors import OrchestrationError
 
@@ -203,6 +204,10 @@ def build_backends(
     llm = _guard(
         LLM_SLOT, resolved[LLM_SLOT], lambda: _llm_backend(resolved[LLM_SLOT], llm_profiles)
     )
+    # 019（C10 ①/②）：真实渠道装配点必须接**非 None** 的预算门禁——档位、渠道 id、账本、
+    # 告警写手与渠道日历一次装配（缺 budget 段/缺档/缺峰谷声明在此装配期拒绝，
+    # 不等到第一次调用）；守卫生效后超限调用被拒且**成本零入账**
+    budget = assemble_guard(config_path)
     return PilotBackends(
         selection=selection,
         resolved=resolved,
@@ -212,6 +217,9 @@ def build_backends(
             price_book=configs.screenplay.model_prices,
             sleep=lambda _: None,
             profiles=llm_profiles,  # 功能 016：档案与价目随快照冻结
+            spend_guard=budget.guard,  # 019：前置预算门禁（固定序列第③步）
+            channel_id=budget.channel_id,  # 019：请求的渠道归属（守卫按渠道绑定判定）
+            peak_windows=budget.peak_windows,  # 019：渠道日历（峰谷归属=调用开始时刻）
         ),
         storyboard=_guard(
             "storyboard", resolved["storyboard"], lambda: _storyboard(resolved["storyboard"])

@@ -59,6 +59,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from agents.pilot.pilot import PilotInputs, run_pilot  # noqa: E402
+from core.billing.budget import (  # noqa: E402 - 019：门禁装配与拒绝文案
+    BudgetRefusedError,
+    assemble_guard,
+    refusal_reason,
+)
 from core.llm_gateway.backends.http import HttpBackend  # noqa: E402
 from core.llm_gateway.gateway import GatewayError, LLMGateway  # noqa: E402
 from core.llm_gateway.profiles import (  # noqa: E402
@@ -84,6 +89,9 @@ DEFAULT_ROUND_TOPIC = "雨夜便利店"
 DEFAULT_ROUND_CHARACTERS = "林静,陈默"
 DEFAULT_WORK_DIR = ".smoke-llm"
 DEFAULT_RUN_ID = "smoke-llm"
+# 019（C9）：冒烟探针归属的**环节 id**（须是 `budget.tiers` 的键）。探针不带链上下文（--round
+# 的链内调用各由自己的调用点声明环节），故按生成环节登记；门禁据此按档位判定。
+SMOKE_STAGE = "screenplay"
 RUN_STATUS_DONE = "done"  # 单轮成功态（RunStatus.DONE.value）：退出码与 ok 的判定依据
 CREDENTIAL_HINT = (
     "凭证缺失：请导出 OPENAI_BASE_URL / OPENAI_API_KEY（DeepSeek："
@@ -187,14 +195,22 @@ def load_price_book(config_path: str | Path) -> dict:
 def build_gateway(
     config_path: str | Path, *, backend=None, profile_id: str | None = None, environ=None
 ) -> LLMGateway:
-    """按目标**档案**装配网关（只含该档案的视图；LLM 必须过网关，脚本不直连后端）。"""
+    """按目标**档案**装配网关（只含该档案的视图；LLM 必须过网关，脚本不直连后端）。
+
+    019（C10 ②）：**最小规模真实调用/校准的装配点**同样接非 None 的预算门禁——档位、
+    渠道 id、账本、告警写手与渠道日历一次装配（`assemble_guard` 与链内装配点同一实现）。
+    """
     loaded, profile = resolve_profile(config_path, profile_id)
     scoped = restricted_profile_set(loaded, profile.profile_id)
+    budget = assemble_guard(config_path)
     return LLMGateway(
         backend if backend is not None else HttpBackend.from_profile(profile, environ=environ),
         price_book=scoped.snapshot().price_book(),
         sleep=lambda _: None,
         profiles=scoped,
+        spend_guard=budget.guard,  # 019：前置预算门禁（固定序列第③步）
+        channel_id=budget.channel_id,  # 019：请求的渠道归属
+        peak_windows=budget.peak_windows,  # 019：渠道日历（峰谷归属=调用开始时刻）
     )
 
 
@@ -212,7 +228,9 @@ def run_gateway_smoke(
         # 凭证按**档案声明**注入（不隐式读 OPENAI_*；未声明/未设置即报错）
         backend = HttpBackend.from_profile(profile, environ=environ)
     gateway = build_gateway(config_path, backend=backend, profile_id=profile.profile_id)
-    result = gateway.chat(prompt, role=Role.GENERATION)  # 角色回落唯一档案
+    result = gateway.chat(
+        prompt, role=Role.GENERATION, stage=SMOKE_STAGE
+    )  # 角色回落唯一档案；stage 供门禁按环节分档（C9）
     _, price = gateway.prices_for(role=Role.GENERATION)
     return {
         "mode": "gateway",
@@ -511,6 +529,19 @@ def main(argv: list[str] | None = None) -> int:
                 characters=args.characters,
                 run_id=args.run_id,
             )
+    except BudgetRefusedError as exc:
+        # 019（C10 调用点分支规则）：预算拒绝单列 `reason=budget_refused`——**不与
+        # `smoke_failed` 混**（否则运营与后续 `calibrate` 分不清"没跑成"与"被门禁拒了"），
+        # 文案点名拒绝并含剩余/所需额度
+        print(
+            json.dumps(
+                {"ok": False, "reason": "budget_refused", "error": refusal_reason(exc)},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return EXIT_FAILED
     except (SmokeError, GatewayError, ProfileConfigError) as exc:
         print(
             json.dumps(

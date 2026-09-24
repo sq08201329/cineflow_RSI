@@ -3048,7 +3048,12 @@ def pilot_form_config_path(tmp_path):
             raise ValueError(f"未知形态：{form!r}")
         target = tmp_path / f"configs/{form}.yaml"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_MINIMAL_MOVIE_CONFIG, encoding="utf-8")
+        # 019：夹具形态配置的**账本根**落在 tmp（配置默认根 = 仓库根 `billing/`）——
+        # 测试不得把运行期产物（账本/告警）写进仓库
+        target.write_text(
+            _MINIMAL_MOVIE_CONFIG.replace("root: billing", f"root: {tmp_path / 'billing'}"),
+            encoding="utf-8",
+        )
         return target
 
     return _path
@@ -3068,7 +3073,10 @@ def pilot_demo_config_path(tmp_path):
     target = tmp_path / "configs" / "shortdrama-demo.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        source.replace("target_duration_s: 120", "target_duration_s: 30"), encoding="utf-8"
+        source.replace("target_duration_s: 120", "target_duration_s: 30")
+        # 019：账本根落 tmp（同 pilot_form_config_path 的口径）
+        .replace("root: billing", f"root: {tmp_path / 'billing'}"),
+        encoding="utf-8",
     )
     return target
 

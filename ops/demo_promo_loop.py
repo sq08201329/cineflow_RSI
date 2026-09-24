@@ -93,7 +93,12 @@ def main() -> int:
     create_schema(engine)
     create_campaigns_schema(engine)
     store = create_tree_store(engine)
-    gateway = LLMGateway(MockBackend(), price_book=config.model_prices, sleep=lambda _: None)
+    gateway = LLMGateway(
+        MockBackend(),
+        price_book=config.model_prices,
+        sleep=lambda _: None,
+        spend_guard=None,  # 019：离线装配显式声明不接门禁（行为零变化）
+    )
     adapter = SimulatedPlatform(config.simulated_platform)
 
     report: dict = {"steps": {}}
