@@ -3,6 +3,7 @@
 # **只读既有产物**：`billing/{channel}/reports/*.json` 的未解释项与超阈值告警 + `alerts.jsonl` 留痕
 # —— 零真实调用、零凭证、零外部网络；报告尚未产出（冷启动）时放行（has_alerts=false）。
 # 判定逻辑全在 core（`ReconciliationReport.has_alerts()`），工作流只跑薄 CLI。
+# `permissions: contents: read`：本任务只读仓库、不写任何东西——把"只读"从注释变成工作流层的硬约束。
 name: billing-alerts
 
 on:
@@ -14,6 +15,8 @@ on:
 jobs:
   billing-alerts:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # 只读产物与配置，不需要任何写权限
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

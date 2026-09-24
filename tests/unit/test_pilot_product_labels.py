@@ -73,8 +73,13 @@ def pilot_run(tmp_path_factory):
     config_path = tmp_path / "configs" / "shortdrama-demo.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     source = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
+    assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
     config_path.write_text(
-        source.replace("target_duration_s: 120", "target_duration_s: 30"), encoding="utf-8"
+        source.replace("target_duration_s: 120", "target_duration_s: 30")
+        # 019：账本根落 tmp（同 tests/conftest.py 的 `pilot_demo_config_path` 口径）——
+        # 本夹具跑**真实试水链路**，网关会落账本与运行记录，不得写进仓库
+        .replace("root: billing", f"root: {tmp_path / 'billing'}"),
+        encoding="utf-8",
     )
     artifacts_root = tmp_path / "artifacts"
     result = run_pilot(

@@ -3035,24 +3035,26 @@ def pilot_materials(
 
 @pytest.fixture()
 def pilot_form_config_path(tmp_path):
-    """形态配置夹具：`movie` 为精简副本（只含加载器必需段 + form），`shortdrama` 为真实配置。
+    """形态配置夹具：两形态都返回**派生副本**（账本根落 tmp），差异只在取哪份真实配置。
 
-    返回工厂 `_path(form)` → Path。精简副本用于证明"同链双形态"不依赖仓库配置的具体取值；
-    短剧侧刻意用真实的 `configs/shortdrama.yaml`（配置完整性由 T1511 另行机检）。
+    返回工厂 `_path(form)` → Path。`movie` 用精简副本（只含加载器必需段 + form），证明"同链
+    双形态"不依赖仓库配置的具体取值；`shortdrama` 用真实的 `configs/shortdrama.yaml` 的派生
+    副本（**内容逐字保留，只改 `budget.ledger.root`**；配置完整性由 T1511 另行机检）——
+    真实试水链路会按配置落账本与运行记录，测试不得把运行期产物写进仓库。
     """
 
     def _path(form: str):
-        if form == "shortdrama":
-            return REPO_ROOT / "configs" / "shortdrama.yaml"
-        if form != "movie":
-            raise ValueError(f"未知形态：{form!r}")
         target = tmp_path / f"configs/{form}.yaml"
         target.parent.mkdir(parents=True, exist_ok=True)
-        # 019：夹具形态配置的**账本根**落在 tmp（配置默认根 = 仓库根 `billing/`）——
-        # 测试不得把运行期产物（账本/告警）写进仓库
+        if form == "shortdrama":
+            source = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
+        elif form == "movie":
+            source = _MINIMAL_MOVIE_CONFIG
+        else:
+            raise ValueError(f"未知形态：{form!r}")
+        assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
         target.write_text(
-            _MINIMAL_MOVIE_CONFIG.replace("root: billing", f"root: {tmp_path / 'billing'}"),
-            encoding="utf-8",
+            source.replace("root: billing", f"root: {tmp_path / 'billing'}"), encoding="utf-8"
         )
         return target
 

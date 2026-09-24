@@ -82,33 +82,30 @@ LLM 真实渠道**连续运行 ≥1 周**（运行记录机检**同时**满足�
 | SC-008 覆盖率 ≥85%（含 web）+ 对抗/无偏性不放松 | `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85`；`uv run pytest tests/adversarial -m adversarial`；`uv run pytest tests/unbiasedness -m unbiasedness` | SC-008 |
 | SC-001 连续运行 ≥1 周 | `ops/billing.py runs --channel llm --window-days 7`（**同时**判覆盖 ≥7 天与连续，散点天数不判通过；运营积累后复核，机制面由 demo 步⑥ 机检） | SC-001 |
 
-## 验证记录（待实现回填；字段标签镜像 `specs/017-dev-agent-degraded/quickstart.md`）
+## 验证记录（2026-09-24 实跑回填；字段标签镜像 `specs/017-dev-agent-degraded/quickstart.md`）
 
-- `uv sync`：（待实现回填）
-- `uv run ruff check .` + `uv run ruff format --check .`：（待实现回填）
-- `uv run pytest tests/unit -k billing`：（待实现回填——逐面：配置缺项/门禁拒绝 0 调用/拒绝零成本分支/账本并发/价目四格/账单导入/对账六类/运行记录缺口/CLI）
-- `uv run pytest tests/contract -k billing`：（待实现回填——C1~C16 逐条）
-- `uv run pytest tests/integration/test_http_real_stub.py -q`：（待实现回填）
-- `uv run pytest tests/unbiasedness -m unbiasedness`：（待实现回填——门禁不放松）
-- `uv run python ops/demo_billing.py`：（待实现回填——退出码 0、六步全 ok、用时）
-- `uv run python ops/billing.py tiers / calibrate / import-bill / reconcile / alert-check / runs / raise-tier`：
-  （待实现回填——各命令退出码与关键输出；`reconcile` 有告警/无告警两态）
-- 全量 `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85`：
-  （待实现回填——通过数、覆盖率）
-- 全量 `uv run pytest tests/contract` 与 `CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q`：
-  （待实现回填）
-- 全量 `uv run pytest tests/adversarial -m adversarial`：（待实现回填）
-- 全量 `uv run pytest tests/integration -m integration`（真实 PG；本特性无迁移）：（待实现回填——既有回归不降）
-- 登记点同步复核（新顶层段 `budget`）：`tests/unit/test_form_switch.py:259-276`（差异集含 `budget`）、
-  `tests/unit/test_config_integrity.py:23-37`/`:43-67`（`CONFIG_CLASSES`/`REQUIRED_PATHS` 含 budget）、
-  `tests/contract/test_pilot_contracts.py:412` 的段差异集（该文件内编号 C13），**外加** `agents/pilot/pilot.py:101`
-  （`config_completeness` 预检清单）与 `tests/conftest.py:3154`（精简 movie 夹具）——**已决：缺额度不得启动；
-  ④⑤必须同批落地**（见 plan.md 缺口 6）：（待实现回填）
-- `tests/unit/test_no_vendor_literals.py` 调用点断言扩展（8 处均声明 `stage=`，取值 ∈ 两形态档位键集）：
-  （待实现回填）
-- 真实渠道最小规模校准（运营侧，需凭证与额度数字）：（待实现回填/待运营）
-- ≥7 天窗口复核 `ops/billing.py runs --channel llm --window-days 7`：（待实现回填/待运营积累）
+- `uv sync`：依赖与 `uv.lock` 一致 ✓（Resolved 35 packages / Checked 30 packages，无变更）
+- `uv run ruff check .` + `uv run ruff format --check .`：**双绿** ✓（`All checks passed!` / 552 files already formatted）
+- `uv run pytest tests/unit -k billing`：**269 过** ✓（配置缺项即报错 / 门禁拒绝 0 调用 / 拒绝零成本分支 / 账本并发与锁超时 / 价目四格与 legacy 形状 / 账单导入与批次幂等 / 对账六类与未解释告警 / 运行记录缺口不插值 / CLI 七子命令 / `core/billing` 纯度）
+- `uv run pytest tests/contract -k billing`：**41 过** ✓（C1~C16 逐条，含本特性对抗面）
+- `uv run pytest tests/integration/test_http_real_stub.py -q`：**54 过** ✓（真实适配器 stub，本地 loopback）
+- `uv run pytest tests/unbiasedness -m unbiasedness`：**40 过** ✓（门禁不放松，SC-008）
+- `uv run python ops/demo_billing.py`：**退出码 0，六步全 ok ✓**（`elapsed_seconds = 3.55`）——① 额度声明与缺项拒绝 ② 最小规模校准记录 ③ 未校准扩量拒绝留痕 ④ 夹具账单导入与对账分类 ⑤ 跨进程账本并发共享额度 ⑥ 两维取价与窗口机检
+- `uv run python ops/billing.py …`：**七子命令齐备** ✓（`--help` 退出码 0）。实测退出码：`tiers` **0**（余量 / 拒绝计数 / 未结算预留）、`runs --window-days 7` **1**（无运行记录 ⇒ 如实报缺口，**不判通过**）、`alert-check` **0**（无报告 ⇒ 冷启动放行，既不假绿也不误红）；阶段 5 另实跑 `import-bill` 0 / 重复批次 **1** / `reconcile` **1**（含未解释项与 `delta_over_threshold`/`unexplained_delta` 告警）/ 无账单批次 **1**（不产"零差异"报告）/ `raise-tier` 未校准 **1** 且**配置未被改写**
+- 全量 `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85`：**3669 过 0 失败，覆盖率 92.65% ≥ 85%** ✓（20 分 21 秒；TOTAL 17043 语句 / 1253 未覆盖）
+- 全量 `uv run pytest tests/contract`：**385 过 + 56 skip** ✓（skip = 真实实现无凭证按用例跳过，CI 同口径）；`CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q`：**441 过** ✓
+- 全量 `uv run pytest tests/adversarial -m adversarial`：**6 过** ✓（本机 Docker 加固容器后端；CI 为 gVisor 权威档）
+- 全量 `uv run pytest tests/integration -m integration`（真实 PG + MinIO）：**96 过 / 54 deselected** ✓（17 分 23 秒；本特性**无 DB 迁移**，此套件为既有回归面）
+- 登记点同步复核（新顶层段 `budget`）：**五处全部落地且全绿** ✓——`tests/unit/test_form_switch.py` 差异集含 `budget`（权重差异循环**不适用**，已注明理由）、`tests/unit/test_config_integrity.py` 的 `CONFIG_CLASSES`/`REQUIRED_PATHS` 含 budget、`tests/contract/test_pilot_contracts.py` 的段差异集（该文件内编号 C13）含 budget、`agents/pilot/pilot.py` 的 `config_completeness` 预检清单含 budget 加载器（并删掉 `budgets[agent]=0.0` 占位、LLM 腿改按**环节 id** 登记声明额度）、`tests/conftest.py` 精简 movie 夹具补段
+- `tests/unit/test_no_vendor_literals.py` 调用点断言扩展：**8 处 `.chat(` 均声明 `stage=` 且取值 ∈ 两形态档位键集** ✓（调用点计数**仍为 8**，未新增；`ops/smoke_llm.py` 那一处**单列**，不在该扫描域）
+- 门禁注入普查：**13 处** ✓（真实 2 处注入非 `None` 守卫 + 离线显式 `None` 8 处 + 离线但注入真守卫 3 处 = `ops/demo_billing.py`），三类清单各自常驻，新增任一点即红
+- **真实渠道最小规模校准**（运营侧，需凭证与额度数字）：**待运营**——机制与离线复现已验证（demo 步②），真实校准需运营侧给出凭证与预算档
+- **≥7 天窗口复核** `ops/billing.py runs --channel llm --window-days 7`：**待运营积累**——机制已机检（覆盖 ∧ 连续双条件 + 断档不插值），真实窗口需墙钟时间
+- 单测不再向仓库写入运行期产物：跑完全量套件后仓库根**无 `billing/` 残留** ✓（`tests/unit/test_smoke_llm.py` 等已改用 tmp 账本根的配置副本）
 
-### 环境复核（待实现回填）
+### 环境复核（2026-09-24）
 
-（待实现回填——本机口径、CI 口径差异、以及任何与 ci.yml 逐字执行不一致处的如实说明）
+- 本机口径与 `ci.yml` **逐字一致**：覆盖率命令、契约两条腿（含 `CINEFLOW_CONTRACT_STUB=1`）、对抗、集成、无偏性、ruff 双绿——**全部实跑、无跳过**（`tests/contract` 的 56 项 skip 是"真实实现无凭证"的按用例跳过，CI 同口径）。
+- 本机 Docker 提供 PostgreSQL + MinIO（`docker compose -f ops/dev.compose.yml up -d --wait postgres minio`），故 `tests/integration -m integration` **真实执行**（96 过）；本特性无迁移，该套件在此为既有回归面。
+- 与 CI 的**唯一差异**：对抗套件本机走 Docker 加固容器后端（CI 的权威档为 gVisor/runsc），断言面不受影响。
+- 口径登记：`alert-check` 在**无任何报告**时退出 0（冷启动放行，避免首日假红）；一旦存在报告，未解释项或超阈值即退出 1——该口径写在 `ops/billing.py` 的 docstring 与 C14 用例里。

@@ -8,6 +8,11 @@ base host 脱敏、网关级冒烟（注入假后端 → 按配置价目表折�
 
 **防网络**：autouse 夹具把 `urllib.request.urlopen` 换成"命中即失败"，
 本文件任何用例都不可能发起真实请求。
+
+**防写仓库**：`build_gateway` 是**真实渠道装配点**（019 起接了预算门禁与运行记录），
+一旦真调用就会按配置的 `budget.ledger.root` 落账本与运行记录；`configs/movie.yaml` 的根是
+相对路径 `billing`（= 仓库根），故网关级用例一律用 `movie_config` 夹具（仅把账本根改到 tmp，
+其余逐字保留的派生副本，与 `tests/conftest.py` 的 `pilot_form_config_path` 同口径）。
 """
 
 import json
@@ -34,6 +39,23 @@ def forbid_network(monkeypatch):
         raise AssertionError("单测禁止真实网络请求")
 
     monkeypatch.setattr("urllib.request.urlopen", _boom)
+
+
+@pytest.fixture()
+def movie_config(tmp_path):
+    """真实 `configs/movie.yaml` 的**派生副本**（仅 `budget.ledger.root` 落 tmp）。
+
+    网关级冒烟会真调用（注入假后端）：真实装配点会写账本与运行记录，故配置根必须离开仓库；
+    价目/档案等内容逐字保留，本文件对真实取值的断言不受影响。
+    """
+    source = MOVIE_CONFIG.read_text(encoding="utf-8")
+    assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
+    target = tmp_path / "configs" / "movie.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        source.replace("root: billing", f"root: {tmp_path / 'billing'}"), encoding="utf-8"
+    )
+    return target
 
 
 class _FakeBackend:
@@ -122,10 +144,10 @@ class Test凭证就位:
 
 
 class Test网关级冒烟:
-    def test_按档案价目折算成本(self):
+    def test_按档案价目折算成本(self, movie_config):
         backend = _FakeBackend(prompt_tokens=1000, completion_tokens=500)
         payload = smoke_llm.run_gateway_smoke(
-            MOVIE_CONFIG, profile_id="deepseek-flash", prompt="打招呼", backend=backend
+            movie_config, profile_id="deepseek-flash", prompt="打招呼", backend=backend
         )
         # deepseek-flash：prompt 0.0003/1k、completion 0.0012/1k（峰时缓存未命中上限）
         assert payload["cost_usd"] == pytest.approx(1000 / 1000 * 0.0003 + 500 / 1000 * 0.0012)
@@ -134,10 +156,10 @@ class Test网关级冒烟:
         assert payload["prompt_tokens"] == 1000 and payload["completion_tokens"] == 500
         assert payload["cached"] is False and payload["gateway_call_count"] == 1
 
-    def test_另一档案的价目(self):
+    def test_另一档案的价目(self, movie_config):
         """配置里没有第二条 deepseek 档案（价目不同）→ 用 local-qwen（零价目）验证按档案取值。"""
         payload = smoke_llm.run_gateway_smoke(
-            MOVIE_CONFIG,
+            movie_config,
             profile_id="local-qwen",
             prompt="打招呼",
             backend=_FakeBackend(prompt_tokens=1000, completion_tokens=1000),
@@ -145,18 +167,18 @@ class Test网关级冒烟:
         assert payload["cost_usd"] == 0.0 and payload["zero_marginal"] is True
         assert payload["prices"] == {"prompt_per_1k": 0.0, "completion_per_1k": 0.0}
 
-    def test_档案不存在即拒并列可用(self):
+    def test_档案不存在即拒并列可用(self, movie_config):
         with pytest.raises(smoke_llm.SmokeError, match="档案不存在"):
             smoke_llm.run_gateway_smoke(
-                MOVIE_CONFIG, profile_id="ghost-profile", backend=_FakeBackend()
+                movie_config, profile_id="ghost-profile", backend=_FakeBackend()
             )
 
-    def test_同提示词二次调用命中缓存(self):
+    def test_同提示词二次调用命中缓存(self, movie_config):
         backend = _FakeBackend()
         gateway = smoke_llm.build_gateway(
-            MOVIE_CONFIG, backend=backend, profile_id="deepseek-flash"
+            movie_config, backend=backend, profile_id="deepseek-flash"
         )
-        price = smoke_llm.load_price_book(MOVIE_CONFIG)
+        price = smoke_llm.load_price_book(movie_config)
         assert "deepseek-flash" in price and "local-qwen" in price  # 档案即价目来源
         from core.llm_gateway.routing import Role
 
@@ -332,21 +354,21 @@ class Test命令行与退出码:
         for name in sorted(declared):
             assert payload["credentials"][name] == {"set": False, "length": 0}
 
-    def test_档案不存在归退出码2(self, monkeypatch, capsys):
+    def test_档案不存在归退出码2(self, monkeypatch, capsys, movie_config):
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-real-key")
-        code = smoke_llm.main(["--config", str(MOVIE_CONFIG), "--profile", "ghost-profile"])
+        code = smoke_llm.main(["--config", str(movie_config), "--profile", "ghost-profile"])
         payload = json.loads(capsys.readouterr().out)
         assert code == smoke_llm.EXIT_FAILED == 2
         assert payload["reason"] == "profile_error" and "档案不存在" in payload["error"]
 
-    def test_网关级成功路径_注入假后端(self, monkeypatch, capsys):
+    def test_网关级成功路径_注入假后端(self, monkeypatch, capsys, movie_config):
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-not-a-real-key")
         monkeypatch.setattr(
             smoke_llm.HttpBackend, "from_profile", classmethod(lambda cls, *a, **k: _FakeBackend())
         )
-        code = smoke_llm.main(["--config", str(MOVIE_CONFIG), "--prompt", "打个招呼"])
+        code = smoke_llm.main(["--config", str(movie_config), "--prompt", "打个招呼"])
         payload = json.loads(capsys.readouterr().out)
         assert code == 0 and payload["ok"] is True
         assert payload["endpoint"] == "https://api.deepseek.com"

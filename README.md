@@ -415,6 +415,102 @@ uv run python ops/dev.py evidence --period 2026-W38   # → calibration/upgrade-
   条件。**这是既定结果，不是缺陷**，不得用伪 judge / 伪锚点补齐（补齐须另立决议，不含本特性）；
 - 冷启动池子不足 → 拒绝出报告；回放未命中的树记 0 分并提示扩大记录（不编造、不放宽匹配）。
 
+## 真实渠道与账单对账（功能 019）
+
+真实渠道不再靠"网关自报"：调用前有**分档预算门禁**（预估额超余量即拒，被拒的那一笔**不入账**），
+调用后落**按时间索引的运行记录**（"连续运行 ≥7 天"从叙述变成可机检事实），**厂商账单**可导入并与
+网关记账**逐项对账**（六类差异 + 不可解释项 100% 告警），**两维价目**（峰谷 × 厂商缓存命中）可表达
+且改价后历史复算**逐字节不变**。判定全在业务无关的 `core/billing/`（五模块：`budget` / `bill` /
+`reconcile` / `calibration` / `runlog`），CLI 与演示只做薄转发（原则五）。
+
+```bash
+# 单元面（配置缺项/门禁拒绝/拒绝零成本分支/账本并发/价目四格/账单导入/对账六类/运行记录/CLI/纯度）
+uv run pytest tests/unit -k billing
+
+# 契约面（C1~C16 聚合 + 本特性的对抗/篡改面）
+uv run pytest tests/contract -k billing
+
+# 离线六步演示（Mock 后端 + 夹具账单；零真实调用、零外部网络、零凭证）
+uv run python ops/demo_billing.py
+
+# 额度台账 / 最小规模校准 / 扩量（raise-tier 定点改写配置额度）
+uv run python ops/billing.py tiers      --channel llm
+uv run python ops/billing.py calibrate  --channel llm --tier screenplay --from-records --measured-usd <实测>
+uv run python ops/billing.py raise-tier --channel llm --tier screenplay --limit-usd <额> \
+    --calibration <id> --by <人> --reason <理由>
+
+# 账单导入与对账（import-bill 不联网：人工上传厂商导出文件）
+uv run python ops/billing.py import-bill --channel llm --file <账单> --bill-id <批次> --period <周期>
+uv run python ops/billing.py reconcile  --channel llm --period <周期> --bill-id <批次> \
+    --gateway-report <网关账目 JSON>       # 退出码：0 无告警 / 1 有告警 / 2 用法或配置错误
+
+# 每日告警门禁（只读既有产物）与连续运行窗口机检
+uv run python ops/billing.py alert-check --channel llm
+uv run python ops/billing.py runs        --channel llm --window-days 7
+```
+
+`--channel llm` 是**示例取值**：渠道 id 由配置 `budget.channels` 声明，命令取值须与配置一致
+（`core/billing/` 零渠道/环节/格式字面量，写死即红）。
+
+### 技术事实与口径
+
+- **产物布局** `billing/{channel}/`：`ledger.json`（跨进程账本：flock + 原子替换 + 单调 `revision`）、
+  `alerts.jsonl`（只增告警留痕，`kind` 取值域六值固定）、`bills/{批次}.json`（一次性快照 + 同批次重产拒绝）、
+  `reports/{周期}.json`（差异报告）、`calibrations/{id}.json`（校准记录）、`runs/{日期}.json`（运行记录）。
+- **分档额度** `budget.tiers` 的**键 = 各 `.chat(` 调用点声明的 `stage=` 环节 id**（静态断言：8 处调用点
+  的取值 ∈ 两形态档位键集，不发明 agent 名 ↔ 环节 id 映射）；缺 `budget` 段 / 缺档 / 缺峰谷声明在
+  **装配期**拒绝启动（不取码内默认，FR-001）。
+- **零成本分支**：预算拒绝走 `BudgetRefusedError` 的**显式前置分支**——被拒的那一笔
+  `llm_calls` / `llm_tokens` / `generation_api_cost_usd` **全零**、后端 **0 次调用**、网关
+  `call_count` / `total_cost_usd` 不变；同轮**已发生**的花费照记（"花了的钱"与"没花的钱"可分辨）。
+- **两维价目** `llm.profiles.*.price_matrix`：四格 `peak_miss` / `peak_hit` / `off_peak_miss` /
+  `off_peak_hit`，**声明即四格齐备**（缺格或某格缺键即装配报错、不回落基础价）；未声明的档案四格同价
+  （既有配置零改动）。峰谷归属 = **调用开始时刻**按 `budget.peak_windows.timezone` 判定，区间口径
+  **闭开 `[start, end)`**（跨峰谷切换不拆分）；归属口径三处可见（账目报告口径备注 / 档位快照 /
+  校准记录 `note`）。
+- **本地网关缓存与厂商缓存正交**：同一提示词二次调用命中网关内内容哈希缓存 ⇒ **零成本、零后端调用、
+  不占额、不进任何格位**；两维价目的"命中"**只**指**厂商** prompt 缓存（来源 = 响应 usage 的命中 token
+  数；未报告 ⇒ 取未命中档 + 登记「厂商未报告命中 token（按未命中计）」，保守高估不按 0 计）。
+- **对账分类**：按（档案 id, 周期）逐项配对，六类固定（计费口径 / 未入账 / 时序错位 / 免费额度与折扣 /
+  币种汇率 / 未结账）；分类**只由账单声明的驱动列**（`line_kind` / `amount_sign`）决定，映射不到即
+  `unclassified` ⇒ 不可解释 ⇒ 告警（不用金额阈值或符号启发式）。报告必带 `bill_refs[]`；**无账单批次
+  拒绝产出**（不产"零差异"报告）；时序错位/未结账**不得**据此判定网关记账有误（留待下期）。
+- **运行记录与窗口机检**：一次真实调用一条 entry，`head_digest` **链式摘要**（改写或删除任一条即报错，
+  不静默取）；`runs --window-days 7` 判**覆盖 ∧ 连续双条件**（`covered_days` **只计 `source=real`**；
+  断档逐段如实列出、**禁止插值补齐**；容差放开时可 `meets=true` 而 `continuous=false`，通过不谎报"连续"）。
+- **改价不漂移 + 定点改写（口径与版本纪律）**：历史节点快照**永不重写**，快照形状按**键集**分派
+  （`price_matrix` 在不在键集中，不按版本号猜），改价后按冻结快照复算逐字节不变；
+  `raise-tier` 经 `core/yaml_edit.py` **定点改写**配置额度（其余段与注释逐字节不变）+ 写 `calibrated_by`
+  + `alerts.jsonl` 留痕，拒绝时配置**一字不改**。
+- **校准先决**：校准记录 append-only（同键重产拒绝，`system_digest` 机检）；`raise-tier` 六条先决
+  （有记录 / 同渠道同环节 / `passed` / 样本量 ≥ `min_samples` / 未超期 / 偏差在容差内）任一不满足即拒绝
+  并留 `uncalibrated_raise`。
+
+### 新增门禁：预算与账单差异告警（每日）
+
+`.github/workflows/billing_alerts.yml`（cron `47 2 * * *` 错峰 + `workflow_dispatch`）跑
+`uv run python ops/billing.py alert-check --channel llm`：报告存在未解释项/超阈值，或 `--since` 之后
+新增门禁类告警 ⇒ **非零退出即告警**（与 `ops/cost_regression.py` 同一定位）。该门禁**只读既有产物、
+零真实调用、零凭证**；报告尚未产出（冷启动）时放行。
+
+### 诚实边界（本特性最核心的工程对象）
+
+- **只做 LLM 渠道**：本特性只实例化一个 LLM 渠道（`budget.channels` 恰好一个，声明多个即拒绝装配）。
+  媒体渠道（分镜渲染 / 视觉 / 声音）与投放侧协议校准整条**结转 G4**，实现不得为它们发明前置条件
+  （账号 / 凭证 / 平台名）；生成侧真实厂商对接属 **G2**。
+- **模拟 vs 真实**：本特性交付**机制**与**离线可复现验证**——单元面、契约面与演示全走 **Mock 后端 +
+  夹具账单**，零真实花费、零外部网络、零凭证。**真实渠道的最小规模校准与 ≥7 天连续运行属"待运营"**：
+  需运营给出凭证与额度档的最终数字，未标定期间按最小规模档运行并在配置 `note` 与报告里如实标注"未标定"。
+- **厂商费率数字不由代码发明**：交付配置**不声明** `price_matrix`（矩阵取值是厂商费率，运营给定前不发明）；
+  四格取价能力由夹具举证，两形态真实配置的 `price_note` 以**文字**写明峰时/缓存口径。
+- **单主机账本**：跨进程账本为**单主机**文件账本；多主机共享额度需换 PostgreSQL，**未做**（登记为边界）。
+- **上界估算仍可能被超**：预估额为保守上界（prompt `len//2` + completion 满额），实际更高则余量可为负，
+  **如实入账 + `over_limit` 告警并拒绝后续调用**（不回滚、不改写）。
+- **账单来源形态**：本特性第一实现 = **导出导入**（`import-bill` 不联网）；API 拉取按同构的 `source=api`
+  表达、**不实现联网拉取**（不引入新凭证面）。
+- **不做**：`Decimal` 金额重构（沿用 float + 容差二分）、自动比价路由与汇率引擎、`CostRecord` 增列
+  角色/档案（走报告层，历史节点不可按角色/档案回溯，如实登记）、web 侧写入与 billing 看板（前端只读）。
+
 ## 做梦层（功能 005）
 
 ```bash

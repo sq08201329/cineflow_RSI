@@ -4,16 +4,35 @@
 → 报错**列出可用档案**；`--model` 为等价别名（两者不一致即拒）；`--round` 改写**角色映射**
 （`llm.roles`）而非散落模型名；缺凭证 → 退出码 1 且指名档案与缺失变量（凭证按档案声明读取）；
 遗留 4 收敛：`base_host` 即 core 的 `host_of_url`（同一实现）。
+
+**防写仓库**：`run_gateway_smoke` / `build_gateway` 是**真实装配点**（019 起接了预算门禁与运行
+记录），真调用会按配置的 `budget.ledger.root` 落账本与运行记录；仓库配置的根是相对路径 `billing`
+（= 仓库根），故真调用一律用 `movie_config` 夹具（仅把账本根改到 tmp 的派生副本），断言取值不变。
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from core.llm_gateway.gateway import BackendResult
 from ops import smoke_llm
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 MOVIE = "configs/movie.yaml"
+
+
+@pytest.fixture()
+def movie_config(tmp_path):
+    """真实 `configs/movie.yaml` 的**派生副本**（仅 `budget.ledger.root` 落 tmp）。"""
+    source = (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
+    assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
+    target = tmp_path / "configs" / "movie.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        source.replace("root: billing", f"root: {tmp_path / 'billing'}"), encoding="utf-8"
+    )
+    return target
 
 
 class _FakeBackend:
@@ -33,10 +52,10 @@ class _FakeBackend:
 
 
 class Test按档案冒烟:
-    def test_指定档案_打印档案与口径(self, llm_credentials):
+    def test_指定档案_打印档案与口径(self, llm_credentials, movie_config):
         llm_credentials.inject()  # 注入假凭证（不再依赖宿主环境）
         payload = smoke_llm.run_gateway_smoke(
-            MOVIE,
+            movie_config,
             profile_id="deepseek-flash",
             prompt="打个招呼",
             backend=_FakeBackend(prompt_tokens=1000, completion_tokens=500),
@@ -50,18 +69,18 @@ class Test按档案冒烟:
         assert payload["cost_usd"] == pytest.approx(0.0003 + 0.0006)
         assert payload["role"] == "generation"
 
-    def test_零边际成本档案(self, llm_credentials):
+    def test_零边际成本档案(self, llm_credentials, movie_config):
         llm_credentials.inject()
         payload = smoke_llm.run_gateway_smoke(
-            MOVIE, profile_id="local-qwen", prompt="打个招呼", backend=_FakeBackend()
+            movie_config, profile_id="local-qwen", prompt="打个招呼", backend=_FakeBackend()
         )
         assert payload["cost_usd"] == 0.0 and payload["zero_marginal"] is True
         assert payload["endpoint"] == "LOCAL_LLM_BASE_URL"  # env 形态记变量名
 
-    def test_档案不存在列出可用(self, llm_credentials):
+    def test_档案不存在列出可用(self, llm_credentials, movie_config):
         llm_credentials.inject()  # 档案解析先于凭证检查；注入以免宿主环境干扰
         with pytest.raises(smoke_llm.SmokeError) as excinfo:
-            smoke_llm.run_gateway_smoke(MOVIE, profile_id="ghost", backend=_FakeBackend())
+            smoke_llm.run_gateway_smoke(movie_config, profile_id="ghost", backend=_FakeBackend())
         message = str(excinfo.value)
         assert "档案不存在" in message and "deepseek-flash" in message and "local-qwen" in message
 
