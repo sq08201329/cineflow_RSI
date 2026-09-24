@@ -74,7 +74,8 @@ def pilot_run(tmp_path_factory):
     """一次真实试水运行（整包校验用例共用，避免重复跑链路）。
 
     缩档只经**形态配置声明的排练档**（功能 018 / C10）：派生副本把 `pilot.rehearsal.scale` 的
-    两处取值改成演示档（成片 30 秒 / 剧本 0.5 分钟），体量键一个字不动。
+    两处取值改成演示档（成片 30 秒 / 剧本 0.5 分钟），体量键一个字不动；并把
+    `dev.production_marks` 的上界收窄为 1（交接契约要求"本轮进入生产"标记**恰好一条**）。
     """
     tmp_path = tmp_path_factory.mktemp("product-labels")
     config_path = tmp_path / "configs" / "shortdrama-demo.yaml"
@@ -85,8 +86,11 @@ def pilot_run(tmp_path_factory):
     for old, new in (
         ("target_duration_s: 120.0", "target_duration_s: 30.0"),
         ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
+        # 交接契约要求组合级"本轮进入生产"标记**恰好一条**（FR-005 / 契约 C5）：短剧形态的
+        # `dev.production_marks` 上界为 2（017 的形态差异面，真实配置不动），副本声明为 1
+        ("production_marks: {min: 1, max: 2}", "production_marks: {min: 1, max: 1}"),
     ):
-        assert text.count(old) == 1, f"排练档取值行缺失或重复（{old}）：配置口径变了即红"
+        assert text.count(old) == 1, f"派生点缺失或重复（{old}）：配置口径变了即红"
         text = text.replace(old, new)
     config_path.write_text(text, encoding="utf-8")
     artifacts_root = tmp_path / "artifacts"

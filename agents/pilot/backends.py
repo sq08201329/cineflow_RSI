@@ -62,6 +62,24 @@ LLM_SLOT = "llm"
 OVERRIDE_KEYS = (LLM_SLOT, *PLATFORM_SLOTS)
 SOUND_TYPES = ("tts", "sfx", "music")
 
+# 单一映射声明（功能 018 / C12）：环节 id → 后端槽位。`dev`/`script` 是 **LLM 腿专属**环节
+# （`PLATFORM_SLOTS` 不含它们），其余五环取同名平台槽位。**不得**按 `resolved` 键名与 stage_id
+# 同名匹配推断（`script`/`dev` 无同名键 ⇒ KeyError 或静默缺标注），**不得**由"是否有凭证"反推。
+STAGE_BACKEND_SLOT = {
+    "dev": LLM_SLOT,
+    "script": LLM_SLOT,
+    "storyboard": "storyboard",
+    "visual": "visual",
+    "sound": "sound",
+    "editing": "editing",
+    "promo": "promo",
+}
+# 来源标注取值域（FR-009 的二值 + 019 的保留值 `fallback` 原样透传，见 `normalize_source`）
+SOURCE_REAL = "real"
+SOURCE_SIMULATED = "simulated"
+SOURCE_FALLBACK = "fallback"
+BACKEND_SOURCES = (SOURCE_REAL, SOURCE_SIMULATED, SOURCE_FALLBACK)
+
 _ALLOWED_PLATFORM_BACKENDS = (SIMULATED, HTTP)
 _ALLOWED_LLM_BACKENDS = (MOCK, HTTP)
 
@@ -149,6 +167,57 @@ class BackendSelection:
         for slot in PLATFORM_SLOTS:
             resolved[slot] = self.overrides.get(slot, self.backend)
         return resolved
+
+
+def normalize_source(value: Any) -> str:
+    """后端取值 → 来源标注（**只做声明归一化**：不推断、不由"是否有凭证"反推）。
+
+    `http` ⇒ `real`；`simulated`/`mock` ⇒ `simulated`；019 的保留值 `fallback` **原样透传**
+    （回落须显式声明，不得折叠进 `real` 或 `simulated`）；域外取值即拒绝。
+    """
+    mapping = {HTTP: SOURCE_REAL, SIMULATED: SOURCE_SIMULATED, MOCK: SOURCE_SIMULATED}
+    if value in mapping:
+        return mapping[value]
+    if value == SOURCE_FALLBACK:
+        return SOURCE_FALLBACK
+    raise BackendAssemblyError(
+        f"来源标注取值域外（{value!r}）：只接受 {list(BACKEND_SOURCES)}"
+        "（`http` ⇒ real；simulated/mock ⇒ simulated；019 保留值 fallback 原样透传）"
+    )
+
+
+def stage_channels(backends: PilotBackends) -> dict[str, dict[str, str]]:
+    """逐环节来源标注（`source` + `channel`）：取值**只来自装配面声明**（不推断、不默认）。
+
+    `channel` = 该环节生效的后端标识/档案引用：平台五环取生效后端取值，`dev`/`script` 取
+    LLM 档案快照引用（`llm_profiles@<指纹前 12 位>`——档案与价目随快照冻结，可追溯）。
+    缺失声明即装配期拒绝（`BackendAssemblyError`），故包内不会出现空标注。
+    """
+    resolved = backends.resolved
+    llm_ref = _llm_profile_ref(backends.gateway)
+    rows: dict[str, dict[str, str]] = {}
+    for stage_id, slot in STAGE_BACKEND_SLOT.items():
+        kind = resolved.get(slot)
+        if kind is None:
+            raise BackendAssemblyError(
+                f"环节 {stage_id} 的后端槽位 {slot!r} 无生效取值：逐环节标注只来自装配面声明"
+            )
+        rows[stage_id] = {
+            "source": normalize_source(kind),
+            "channel": llm_ref if slot == LLM_SLOT else str(kind),
+        }
+    return rows
+
+
+def _llm_profile_ref(gateway: Any) -> str:
+    """LLM 档案快照引用（缺快照即装配期拒绝：标注不得留空）。"""
+    snapshot = getattr(gateway, "profile_snapshot", None)
+    if not callable(snapshot):
+        raise BackendAssemblyError("网关未提供档案快照（profile_snapshot）：逐环节标注无档案引用")
+    reference = str(getattr(snapshot(), "ref", "") or "")
+    if not reference:
+        raise BackendAssemblyError("LLM 档案快照引用为空：逐环节标注不得留空（缺项即拒绝）")
+    return reference
 
 
 def _platform_value(value: Any, key: str) -> str:

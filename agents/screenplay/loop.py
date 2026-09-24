@@ -75,6 +75,12 @@ PLACEHOLDER_HASH = "00" * 32
 PLACEHOLDER_TEXT = "（待生成：仅供执行前校验）"
 _MARKER_KEYS = ("beats", "scenes", "characters", "lines")
 
+# 剧本阶段实际读取的输入键集（功能 018 / 契约 C5：交接声明下游侧的**权威口径**）。
+# 与 `_validate_inputs` 的归一口径**同源导出**（下方断言绑定），并由调用侧
+# （`agents/pilot/stages.py` 的剧本入口）按此键集构造输入——新增输入字段即断言红
+# （"禁止未声明直通"，与 FR-016 的双来源显式声明同一纪律）。
+SCRIPT_INPUT_READS = frozenset({"topic", "target_duration_min", "constraints", "characters"})
+
 _STAGE_INSTRUCTIONS = {
     "outline": "写出三幕结构与关键节拍的大纲正文：开场画面、激励事件、第一幕转折、"
     "中点、灵魂黑夜、第二幕转折、高潮与结局走向。",
@@ -184,7 +190,11 @@ def _string_list(value, field_name: str) -> list[str]:
 
 
 def _validate_inputs(inputs: dict, config: ScreenplayConfig) -> dict:
-    """输入预检先于一切副作用（缺题材/目标时长非法 → 执行前拒绝，0 网关 0 落库）。"""
+    """输入预检先于一切副作用（缺题材/目标时长非法 → 执行前拒绝，0 网关 0 落库）。
+
+    返回值即本环节的**输入视图**：键集恒等于 `SCRIPT_INPUT_READS`（交接声明的下游侧以它
+    为权威口径；此处绑定，故"新增输入字段"必然在声明侧报红——不静默直通）。
+    """
     if not isinstance(inputs, dict):
         raise ScreenplayLoopError(f"inputs 必须为 dict，实际为 {inputs!r}")
     topic = inputs.get("topic")
@@ -195,12 +205,18 @@ def _validate_inputs(inputs: dict, config: ScreenplayConfig) -> dict:
         raise ScreenplayLoopError(
             f"inputs.target_duration_min 必须为正整数分钟，实际为 {minutes!r}"
         )
-    return {
+    normalized = {
         "topic": topic,
         "target_duration_min": minutes,
         "constraints": _string_list(inputs.get("constraints", []), "constraints"),
         "characters": _string_list(inputs.get("characters", []), "characters"),
     }
+    if set(normalized) != set(SCRIPT_INPUT_READS):
+        raise ScreenplayLoopError(
+            f"输入归一口径与 SCRIPT_INPUT_READS 不一致：{sorted(normalized)} != "
+            f"{sorted(SCRIPT_INPUT_READS)}（新增输入字段须同步交接声明）"
+        )
+    return normalized
 
 
 def _stage_plan(plan, stage: str) -> tuple[dict | None, str | None]:

@@ -58,15 +58,23 @@ from sqlalchemy.engine import Engine
 
 from agents.dev.config import DevConfig
 from agents.dev.db import create_jobs_schema as create_dev_jobs_schema
+from agents.dev.export_slate import export_slate
 from agents.dev.loop import run_dev_round
 from agents.editing.config import EditingConfig
 from agents.editing.db import create_render_jobs_schema as create_editing_jobs_schema
 from agents.editing.edl import EditDecisionList
 from agents.editing.loop import run_editing_round
 from agents.editing.shots import ShotLibrary
-from agents.pilot import handoffs
+from agents.pilot import handoffs, run_report
 from agents.pilot import package as package_module
-from agents.pilot.backends import PilotBackends, build_backends
+from agents.pilot.backends import (
+    LLM_SLOT,
+    OVERRIDE_KEYS,
+    PLATFORM_SLOTS,
+    STAGE_BACKEND_SLOT,
+    PilotBackends,
+    build_backends,
+)
 from agents.pilot.scale import derived_shot_count
 from agents.promo.config import PromoConfig
 from agents.promo.db import create_campaigns_schema
@@ -445,6 +453,59 @@ def declaration_mismatches(specs: Sequence[StageSpec], configs: AgentConfigs) ->
                 f"阶段 {stage_id} 的轮次树前缀 {STAGE_TREE_PREFIX.get(stage_id)!r} "
                 f"!= 该 Agent loop 实测 {expected!r}（不得以 stage_id 直推）"
             )
+    mismatches.extend(_evidence_declaration_mismatches())
+    return mismatches
+
+
+def _evidence_declaration_mismatches() -> list[str]:
+    """证据面的集中声明点（功能 018 / C12/C13）：逐环节后端槽位与成本腿分级。
+
+    与"七处清单同步"同一纪律：键域必须覆盖七环节，取值必须落在装配面/结果词的取值域内，
+    且"LLM 腿专属环节"（平台槽位之外的环节）必须与成本腿分级 `llm_only` **逐环节一致**
+    ——漏一处即红（逐环节标注与第三方腿都按这两张表取数）。
+    """
+    mismatches: list[str] = []
+    if set(STAGE_BACKEND_SLOT) != set(PILOT_STAGE_IDS):
+        mismatches.append(
+            f"STAGE_BACKEND_SLOT 键域 {sorted(STAGE_BACKEND_SLOT)} != {sorted(PILOT_STAGE_IDS)}"
+            "（逐环节来源标注无槽位 ⇒ 静默缺标注或 KeyError）"
+        )
+    unknown_slots = sorted(set(STAGE_BACKEND_SLOT.values()) - set(OVERRIDE_KEYS))
+    if unknown_slots:
+        mismatches.append(f"STAGE_BACKEND_SLOT 出现装配面未知槽位 {unknown_slots}")
+    llm_stages = sorted(stage for stage, slot in STAGE_BACKEND_SLOT.items() if slot == LLM_SLOT)
+    expected_llm = sorted(set(PILOT_STAGE_IDS) - set(PLATFORM_SLOTS))
+    if llm_stages != expected_llm:
+        mismatches.append(
+            f"LLM 腿专属环节 {llm_stages} != 平台槽位之外的环节 {expected_llm}"
+            "（dev/script 无平台槽位，来源只能取 LLM 腿口径）"
+        )
+    if run_report.STAGE_COST_LEG.keys() != STAGE_BACKEND_SLOT.keys():
+        mismatches.append(
+            f"STAGE_COST_LEG 键域 {sorted(run_report.STAGE_COST_LEG)} != "
+            f"{sorted(STAGE_BACKEND_SLOT)}（第三方腿可比性分级须覆盖同一批环节）"
+        )
+    unknown_legs = sorted(set(run_report.STAGE_COST_LEG.values()) - set(run_report.COST_LEGS))
+    if unknown_legs:
+        mismatches.append(f"STAGE_COST_LEG 出现未知分级 {unknown_legs}")
+    if run_report.STAGE_GATEWAY_COMPARISON.keys() != STAGE_BACKEND_SLOT.keys():
+        mismatches.append(
+            f"STAGE_GATEWAY_COMPARISON 键域 {sorted(run_report.STAGE_GATEWAY_COMPARISON)} != "
+            f"{sorted(STAGE_BACKEND_SLOT)}（第三腿比较式须逐环节声明，缺项不得静默放过）"
+        )
+    unknown_comparisons = sorted(
+        set(run_report.STAGE_GATEWAY_COMPARISON.values()) - set(run_report.GATEWAY_COMPARISONS)
+    )
+    if unknown_comparisons:
+        mismatches.append(f"STAGE_GATEWAY_COMPARISON 出现未知比较式 {unknown_comparisons}")
+    llm_only = sorted(
+        stage for stage, leg in run_report.STAGE_COST_LEG.items() if leg == "llm_only"
+    )
+    if llm_only != llm_stages:
+        mismatches.append(
+            f"成本腿分级 llm_only {llm_only} != LLM 腿专属环节 {llm_stages}"
+            "（LLM 腿专属环节才可断言逐项相等）"
+        )
     return mismatches
 
 
@@ -741,11 +802,25 @@ def _dev_entry(stage_input: StageInput) -> StageOutcome:
 
 
 def _script_entry(stage_input: StageInput) -> StageOutcome:
-    """剧本阶段：既有 `run_screenplay_round`（三阶段产出，节拍表与页数门禁沿用配置）。"""
+    """剧本阶段：既有 `run_screenplay_round`（三阶段产出，节拍表与页数门禁沿用配置）。
+
+    输入来源按上游**择一且显式声明**（FR-016 / 契约 C5）：上游有 `dev` ⇒ 取"本轮进入生产"
+    标记指向条目的可移交要点（`topic ← genre` 改名承接，`constraints`/`characters` 同名承接）；
+    无 `dev` ⇒ 回落运行级 `pilot_inputs`。生效来源与逐字段取数依据落 `StageState.detail`
+    （随机读可见），**禁止静默择一**——传给剧本 loop 的输入视图**恰为声明读取集**
+    （禁止未声明直通）。
+    """
     runtime = _runtime_of(stage_input)
     config = runtime.configs.screenplay
     round_id = _round_id(runtime, stage_input)
-    inputs = dict(stage_input.shared.get("pilot_inputs") or {})
+    pilot_inputs = dict(stage_input.shared.get("pilot_inputs") or {})
+    dev_detail = stage_input.handoff_input
+    if dev_detail is None:
+        view = handoffs.run_level_script_inputs(pilot_inputs)
+    else:
+        slate = _load_slate(runtime, dev_detail.get("artifact_hash"))
+        view = handoffs.dev_to_script_inputs(export_slate(slate), pilot_inputs)
+    inputs = dict(view.inputs)
     # 运行级分钟（浮点，可表达 30 秒档）→ 剧本环节的**整数分钟**口径：取生效剧本目标
     # （排练档折算后的整页口径，与页数门禁同源）；运行级浮点分钟与生效成片时长的一致性
     # 已在预检硬校验（`precheck` 的 `_require_duration_consistency`）
@@ -790,9 +865,25 @@ def _script_entry(stage_input: StageInput) -> StageOutcome:
             "segment": segment.to_dict(),
             "line_ids": list(segment.line_ids()),
             "key_line_ids": list(segment.key_line_ids()),
+            # 生成成本对账（运营表⨯树节点⨯评估器计费）：第三方腿的桥（judge 计费只进树节点）
+            "cost_reconciliation": dict(result.cost_reconciliation),
+            # 生效输入来源 + 逐字段取数依据（FR-016：两条来源都显式声明，随机读可见）
+            **view.to_detail(),
             "spent_usd": result.spent_usd,
         },
     )
+
+
+def _load_slate(runtime: PilotRuntime, artifact_hash: Any):
+    """按哈希取回链首的立项组合工件（产物缺失即给业务化报错，不抛裸 TypeError）。"""
+    from agents.dev.artifact import TopicSlate
+
+    if not isinstance(artifact_hash, str) or not artifact_hash:
+        raise StageFailedError(
+            f"链首立项产物哈希缺失（artifact_hash={artifact_hash!r}）：交接取数入口不可用，"
+            "按判败处理（不继续下游，也不对 None 做哈希/正则）"
+        )
+    return TopicSlate.from_dict(json.loads(runtime.artifacts.get(artifact_hash)))
 
 
 def _load_script_artifact(runtime: PilotRuntime, artifact_hash: str):
@@ -1378,14 +1469,16 @@ class _PromoPolicy:
 # ---------------------------------------------------------------------------
 
 
-def build_stage_specs(runtime: PilotRuntime) -> list[StageSpec]:
+def build_stage_specs(runtime: PilotRuntime | None) -> list[StageSpec]:
     """七环节定义：依赖顺序 + 执行入口 + 输入契约（交接口径全在 handoffs）。
 
-    链首是 `dev`（立项组合 → 剧本输入），`script` 因此依赖 `dev`（契约 C1）；`runtime` 只作
-    装配签名的一部分，本函数为**静态声明**（形态配置不参与阶段结构）。
+    链首是 `dev`（立项组合 → 剧本输入），`script` 因此依赖 `dev`（契约 C1）；本函数为
+    **静态声明**（形态配置不参与阶段结构）。每环节入口在这里被**只读采样包装装饰一次**
+    （功能 018 / C13：成本第三方腿取逐环节网关记账增量；`run_report.sample_entrypoint` 只读
+    `total_cost_usd`，**不构造网关**，构造点普查仍 13 处）。`runtime=None` 时只做静态声明
+    （一致性机检用，无采样）。
     """
-    del runtime
-    return [
+    specs = [
         StageSpec(
             stage_id="dev",
             entrypoint=_dev_entry,
@@ -1443,26 +1536,50 @@ def build_stage_specs(runtime: PilotRuntime) -> list[StageSpec]:
             output_kind="material",
         ),
     ]
+    if runtime is None:
+        return specs
+    gateway = runtime.gateway
+    return [
+        replace(
+            spec,
+            entrypoint=run_report.sample_entrypoint(
+                spec.stage_id, spec.entrypoint, gateway=gateway
+            ),
+        )
+        for spec in specs
+    ]
 
 
 def _handoff_dev(upstream: Mapping[str, StageOutcome]) -> dict:
-    """链首立项环节的输入由运行级映射产生（`dev_inputs_of`），无上游。
+    """链首立项环节：输入由**显式声明的运行级映射**产生（`dev_inputs_of`），故无上游。
 
-    上游 → 剧本的**字段级交接声明**（`reads`/`renames`/`dropped`/`derived`/`sources` 与
-    守恒等式）归 018 的 US2（`agents/pilot/handoffs.py`），本函数只落最小可运行形态。
+    `dev` → 剧本的**字段级交接声明**（`reads` 三类 + `renames` + 独立 `dropped` + 取数依据
+    `sources` 与 C6 断言 ①~⑥）落在 `agents/pilot/handoffs.py`（契约 C5/C6）；本函数只如实
+    声明"链首无上游"。
     """
     del upstream
     return {}
 
 
-def _handoff_script(upstream: Mapping[str, StageOutcome]) -> dict:
-    """剧本环节输入：交接声明的字段级形状与拒绝逻辑归 US2（T1824），此处保持空映射。
+def _handoff_script(upstream: Mapping[str, StageOutcome]) -> Mapping | None:
+    """剧本阶段的输入契约（契约 C5/C6、FR-016 的**双来源显式声明**）：
 
-    本阶段的实际输入经运行级映射（`shared["pilot_inputs"]`）注入——`dev` 产物的逐字段
-    承接（`topic ← genre` 等）在 US2 落声明后由 `_script_entry` 按 `mode` 取数。
+    - 上游有 `dev`（七环节链）⇒ 交回链首产出的**落地证据**（入库哈希 + 组合级标记 + 条目数），
+      入口据此走 `dev_script_handoff`（取被标记条目的可移交要点，`topic ← genre` 改名承接）；
+    - 上游无 `dev`（既有短剧试水链）⇒ `None`，入口回落运行级 `pilot_inputs`。
+
+    两条来源都显式声明、生效哪一条随机读可见（`StageState.detail["input_source"]`），
+    **禁止静默择一**。
     """
-    del upstream
-    return {}
+    dev = upstream.get("dev")
+    if dev is None:
+        return None
+    return {
+        "artifact_hash": dev.detail.get("artifact_hash"),
+        "production_marks": list(dev.detail.get("production_marks") or ()),
+        "entry_count": int(dev.detail.get("entry_count") or 0),
+        "mode": handoffs.script_input_mode(tuple(upstream)),
+    }
 
 
 def _handoff_storyboard(upstream: Mapping[str, StageOutcome]) -> ScriptSegment:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """试水作品 CLI（功能 015 / T1523；功能 018 起为**七环节链**）。
 
-子命令：`run` / `resume` / `inspect` / `precheck`。
+子命令：`run` / `resume` / `inspect` / `precheck` / `perf`。
 
 七环节 = `dev → script → storyboard → visual → sound → editing → promo`（链首立项、链尾宣发；
 链路与环节不随形态改变，形态差异只在配置）。用法（与 quickstart 一致，退出码：0 成功 /
@@ -24,6 +24,10 @@
         --topic "长夜将尽" --minutes 0.5 --characters 林静,陈默 \
         --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot
     uv run python ops/pilot.py inspect --data-dir pilot --run-id film-run [--package]
+    # 性能画像（报告侧；`--clock` **必填、无默认**——固定时钟恒 not_evaluable 且不产出达标结论。
+    # 退出码：0 达标 / 1 未达标或不可评价 / 2 用法错误）
+    uv run python ops/pilot.py perf --form movie --config configs/movie.yaml \
+        --data-dir pilot --run-id film-run --clock system
 
 `--minutes`：**浮点分钟**（取**生效档值**，如 0.5 = 30 秒演示档；须等于生效成片时长 ÷ 60，
 否则预检拒绝并点名两处实测值）。
@@ -40,6 +44,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from agents.pilot import run_report as run_report_module  # noqa: E402
+from agents.pilot import stages as stages_module  # noqa: E402
 from agents.pilot.package import PACKAGE_FILES, PackageError, load_manifest  # noqa: E402
 from agents.pilot.pilot import (  # noqa: E402
     FileRunStore,
@@ -49,6 +55,7 @@ from agents.pilot.pilot import (  # noqa: E402
     resume_pilot,
     run_pilot,
 )
+from agents.pilot.run_report import ReportError  # noqa: E402
 from core.orchestration.errors import OrchestrationError  # noqa: E402
 
 FIXED_TIMESTAMP = "2026-01-01T00:00:00+00:00"
@@ -209,6 +216,36 @@ def _cmd_precheck(args) -> int:
     return 0
 
 
+def _cmd_perf(args) -> int:
+    """性能画像（报告侧）：退出码 0 = 达标 / 1 = 未达标或不可评价 / 2 = 用法错误。
+
+    时钟口径**必须显式声明**（`--clock system|fixed`，无默认）：固定时钟运行恒
+    `not_evaluable`（不产出达标结论）。画像落 `pilot/profiles/{run_id}.json`，
+    **不入样片包**（墙钟只能在报告侧）。
+    """
+    data_dir = Path(args.data_dir)
+    artifacts_root = (
+        Path(args.artifacts_root) if args.artifacts_root is not None else data_dir / "artifacts"
+    )
+    try:
+        record = FileRunStore(data_dir).load(args.run_id)
+        runtime = stages_module.build_runtime(
+            form=args.form,
+            config_path=args.config,
+            data_dir=data_dir,
+            artifacts_root=artifacts_root,
+            backend=args.backend,
+            llm_backend=args.llm_backend,
+        )
+        profile = run_report_module.build_profile(record, runtime, clock_mode=args.clock)
+        path = run_report_module.write_profile(data_dir, profile)
+    except (PilotError, OrchestrationError, ReportError) as exc:
+        _print({"status": "rejected", "error": str(exc)})
+        return 1
+    _print({"status": profile["verdict"], "profile": str(path), **profile})
+    return 0 if profile["verdict"] == "meets" else 1
+
+
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--form", required=True, help="形态值（如 shortdrama/movie；只作透传）")
     parser.add_argument("--config", required=True, help="形态配置路径")
@@ -269,6 +306,28 @@ def main(argv: list[str] | None = None) -> int:
     precheck_parser = sub.add_parser("precheck", help="只跑启动前预检（零成本零落树）")
     _add_common(precheck_parser)
     precheck_parser.set_defaults(func=_cmd_precheck)
+
+    perf_parser = sub.add_parser(
+        "perf", help="性能画像（报告侧；固定时钟恒 not_evaluable，不产出达标结论）"
+    )
+    perf_parser.add_argument("--form", required=True, help="形态值（只作透传）")
+    perf_parser.add_argument("--config", required=True, help="形态配置路径")
+    perf_parser.add_argument("--data-dir", required=True, help="数据目录（runs/ 与 profiles/ 根）")
+    perf_parser.add_argument(
+        "--run-id", required=True, help="运行标识（画像身份 = (run_id, 时钟口径)）"
+    )
+    perf_parser.add_argument(
+        "--artifacts-root", default=None, help="工件根（默认 <data-dir>/artifacts）"
+    )
+    perf_parser.add_argument(
+        "--clock",
+        required=True,
+        choices=("system", "fixed"),
+        help="时钟口径（**无默认**：fixed ⇒ 恒 not_evaluable）",
+    )
+    perf_parser.add_argument("--backend", choices=("simulated", "http"), default=None)
+    perf_parser.add_argument("--llm-backend", choices=("mock", "http"), default=None)
+    perf_parser.set_defaults(func=_cmd_perf)
 
     args = parser.parse_args(argv)
     return args.func(args)

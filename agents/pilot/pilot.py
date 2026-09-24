@@ -21,8 +21,13 @@
 可复现（SC-001）：注入确定性时钟 + 全模拟链路 + 样片包不含墙钟/路径，同输入同配置
 两次运行逐字节一致。
 
+**证据面**（功能 018 / C11~C13）：样片包在五件套内补**逐环节评估分量**（取自树节点原文）、
+**逐环节真实/模拟标注**与**成本第三方腿**（网关记账增量）；性能画像与账本窗口口径落**报告侧**
+（`run_report.py` 的 `pilot/profiles/{run_id}.json`，墙钟只在此处）。
+
 断点续跑（C10/FR-006）：运行记录落 `pilot/runs/{run_id}.json`（每次阶段落定即保存）；
-续跑前校验输入指纹（素材哈希）与配置指纹，不一致即拒绝；已完成阶段零重跑。
+续跑前校验输入指纹（素材哈希）与配置指纹，不一致即拒绝；已完成阶段零重跑——已完成时
+**复用既有样片包**（复验通过才复用，理由见 `_verified_package`）。
 """
 
 import json
@@ -33,6 +38,8 @@ from typing import Any
 
 import yaml
 
+from agents.pilot import backends as backends_module
+from agents.pilot import handoffs
 from agents.pilot import package as package_module
 from agents.pilot import stages as stages_module
 from agents.pilot.backends import BackendAssemblyError, BackendSelection
@@ -541,6 +548,27 @@ def precheck(
         # 排练档的**生效体量快照**（确定性段）：档位来源 + 覆盖后的生效取值 + `work_kind`
         "pilot_volume": effective_volume(raw_configs, configs, pilot_config),
         "pilot_scale": pilot_config.annotations(),
+        # 剧本阶段生效的**输入来源**（FR-016：两条来源都显式声明，禁止静默择一）
+        "script_input_source": _script_input_source(),
+    }
+
+
+def _script_input_source() -> dict:
+    """剧本阶段输入来源的声明视图（单一判定 = `handoffs.script_input_mode`）。
+
+    本链（七环节）含 `dev` ⇒ 取交接结果；既有短剧试水链无 `dev` ⇒ 回落运行级
+    `pilot_inputs`——两条来源都在声明里，"生效哪一条"由链上是否含 `dev` 决定并在运行记录的
+    `StageState.detail` 随机读复核（`input_source`）。
+    """
+    ids = stages_module.PILOT_STAGE_IDS
+    return {
+        "mode": handoffs.script_input_mode(ids),
+        "source": "stage_table",
+        "chain": list(ids),
+        "note": (
+            "有 dev ⇒ dev_script_handoff（取被标记条目的可移交要点，topic ← genre 改名承接）；"
+            "无 dev ⇒ run_level_pilot_inputs（四键全运行级）——禁止静默择一"
+        ),
     }
 
 
@@ -652,12 +680,22 @@ def _scale_note(pilot_config: PilotConfig) -> str:
 
 
 def _backend_report(selection) -> dict:
-    """预检里的后端声明视图（如实登记取值；凭证面不在本函数职责内）。"""
+    """预检里的后端声明视图（如实登记取值；凭证面不在本函数职责内）。
+
+    功能 018 / C12：新增逐环节来源标注 `stages: {stage_id: source}`——取值走**同一**的
+    `STAGE_BACKEND_SLOT` 声明（不按 `resolved` 键名与 stage_id 同名匹配推断：`script`/`dev`
+    无同名键，同名匹配会 KeyError 或静默缺标注），也**不由"是否有凭证"反推**。
+    """
+    resolved = selection.resolved()
     return {
         "backend": selection.backend,
         "llm_backend": selection.llm_backend,
         "overrides": dict(selection.overrides),
-        "resolved": selection.resolved(),
+        "resolved": resolved,
+        "stages": {
+            stage_id: backends_module.normalize_source(resolved[slot])
+            for stage_id, slot in backends_module.STAGE_BACKEND_SLOT.items()
+        },
         "credentials_checked": False,
         "note": (
             "precheck 只验配置完整性，**不验凭证**：声明 http 而凭证缺失将在装配期"
@@ -728,14 +766,8 @@ def run_pilot(
         store=store,
         clock=clock,
     )
-    package_dir = (
-        package_module.assemble_from_run(
-            record=record,
-            runtime=runtime,
-            package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME,
-        )
-        if record.status is RunStatus.DONE
-        else None  # 未完成不装配（不产半包）；失败原因在运行记录里如实可查
+    package_dir = _assemble_if_done(
+        record=record, runtime=runtime, package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME
     )
     return PilotRun(
         run_id=run_id,
@@ -744,6 +776,33 @@ def run_pilot(
         package_dir=package_dir,
         precheck_report=report,
     )
+
+
+def _assemble_if_done(*, record: RunRecord, runtime: Any, package_root: Path) -> Path | None:
+    """完成后装配样片包；未完成不装配（不产半包），失败原因在运行记录里如实可查。"""
+    if record.status is not RunStatus.DONE:
+        return None
+    return package_module.assemble_from_run(
+        record=record, runtime=runtime, package_root=package_root
+    )
+
+
+def _verified_package(data_dir: str | Path, run_id: str) -> Path:
+    """已落盘的样片包（**复验通过才复用**；缺失或不合规即拒绝）。
+
+    为什么续跑不重装配：逐环节分量面取自**树节点**，而运行时的树库是进程内的（`sqlite`
+    内存库）——跨进程续跑时已完成的环节没有节点可读，"重装配"只会把完好的证据面降级成空
+    分量。按"缺项即拒绝装配"的口径，正确做法是复用既有包（复验通过）或如实拒绝（不产
+    证据面缺项的包、不静默降级）。
+    """
+    package_dir = Path(data_dir) / DEFAULT_PACKAGE_DIRNAME / run_id
+    if not package_dir.is_dir():
+        raise PilotError(
+            f"运行已完成但样片包缺失（{package_dir}）：逐环节分量取自树节点（进程内树库不持久），"
+            "无法从运行记录复算出完整证据面——请同输入同配置重跑（run_id 幂等）或从原件复验"
+        )
+    package_module.verify_package(package_dir)
+    return package_dir
 
 
 def resume_pilot(
@@ -758,10 +817,15 @@ def resume_pilot(
     backend: str | None = None,
     llm_backend: str | None = None,
 ) -> PilotRun:
-    """断点续跑：读运行记录 → 校验指纹 → 续跑未完成阶段 → 重出样片包。
+    """断点续跑：读运行记录 → 校验指纹 → 续跑未完成阶段 → 复用/重出样片包。
 
     后端覆盖口径与 `run_pilot` 一致（缺省取配置）：续跑必须**重装配**同一份后端声明，
     否则"续跑的阶段"与"已完成的阶段"可能出自不同渠道（配置指纹会先一步拒绝这种分叉）。
+
+    样片包口径：**已完成**（幂等续跑）⇒ 复用既有包（`verify_package` 通过才复用）；**部分完成**
+    则续跑后重装配——**登记边界（如实）**：逐环节评估分量取自树节点，而运行时的树库是
+    **进程内**的（`sqlite` 内存库），故跨进程的部分续跑复算不出已完成环节的分量面——
+    该情形按"缺项即拒绝装配"如实拒绝（不产证据面缺项的包），不静默降级。
     """
     report = precheck(
         form=form,
@@ -797,14 +861,14 @@ def resume_pilot(
         store=store,
         clock=clock,
     )
+    # 已完成（幂等续跑）⇒ 复用**既有样片包**（复验通过才复用）：逐环节分量取自树节点，
+    # 而树库是进程内的——重装配会把完好的证据面降级成空分量（"缺项即拒绝装配"，不静默降级）
     package_dir = (
-        package_module.assemble_from_run(
-            record=record,
-            runtime=runtime,
-            package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME,
+        _verified_package(data_dir, run_id)
+        if previous.status is RunStatus.DONE
+        else _assemble_if_done(
+            record=record, runtime=runtime, package_root=Path(data_dir) / DEFAULT_PACKAGE_DIRNAME
         )
-        if record.status is RunStatus.DONE
-        else None  # 未完成不装配（不产半包）
     )
     return PilotRun(
         run_id=run_id,

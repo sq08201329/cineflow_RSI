@@ -1,4 +1,4 @@
-"""四段交接纯映射（功能 015 US2 / T1515，契约 C5~C9）。
+"""五段交接纯映射（功能 015 US2 / T1515，契约 C5~C9 + 功能 018 US2 的 `dev` → 剧本交接）。
 
 四段交接把"上游 Agent 的产物视图"映射为"下游 Agent 的输入视图"：
 剧本 → 分镜段落（复用 009 `export_segment`）、分镜 → 视觉生成参数、视听产物 → 剪辑输入、
@@ -10,19 +10,35 @@
 声明**（不许静默丢）。枚举值（行种类/情绪/景别/机位/运动/侧别）逐条保真，
 数量守恒（镜头数 == 参数数、片段数 == 镜头库条目数）即断言。
 
+**功能 018 的第五段（`dev` → 剧本）另有形状**（契约 C5/C6/C7）：上游是 017 的**选题产出
+导出面**（`export_slate`），下游是剧本阶段的输入视图。该段沿用"丢字段必须声明"的纪律，但
+**多出两类来源**——**运行级**与**改名承接**，故守恒等式扩为
+`下游读取集 == renames(上游 − 丢弃) ∪ 运行级 ∪ 派生`：
+`reads` 是**三类**来源（承接含改名 / 运行级 / 派生，合计且每键恰一类），`dropped` 是与之
+**并列的独立集合**（不是第四类），另有第三类登记项**取数依据**（`entries`/`production_marks`，
+选条入口，既不进 `reads` 也不进 `dropped`）。**承接 ≠ 丢弃**：`genre → topic` 是改名承接、
+登记在 `renames`（`genre` 不进丢弃集）。`FieldParity.consistent()` 的三式**只适用于同名字段
+子集**（原样保留于上游 → 下游的同名映射层）；改名承接/运行级层**不复用**它，另立断言 ①~⑥
+（`DevScriptHandoff.violations()`）——两层断言互不放宽、都须成立。
+
 **形态无关**（宪章原则五）：本模块只从配置读取规格值（片段尺寸、物料规格），
 不做任何形态分支；上游未产出的东西如实标注（如无音轨 → `has_audio=False`），
 不伪造输入。
 """
 
+import ast
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any
 
+from agents.dev import artifact as dev_artifact
+from agents.dev import export_slate as export_slate_module
 from agents.editing.shots import Scene, SceneStructure, ShotEntry, ShotLibrary
 from agents.screenplay.artifact import ScriptArtifact
 from agents.screenplay.export_segment import export_segment
+from agents.screenplay.loop import SCRIPT_INPUT_READS
 from agents.storyboard.script import ScriptSegment, validate_script
 from agents.storyboard.shotlist import ShotList
 from core.tree.errors import ValidationError
@@ -466,8 +482,459 @@ def _material_spec(config: Any) -> Mapping:
 
 
 # ---------------------------------------------------------------------------
-# 共用校验
+# C5/C6/C7 链首 `dev` → 剧本的字段级交接（功能 018 US2）
 # ---------------------------------------------------------------------------
+
+# 生效来源（FR-016 二值，无第三值；禁止静默择一）
+HANDOFF_MODE_DEV = "dev_script_handoff"
+HANDOFF_MODE_RUN_LEVEL = "run_level_pilot_inputs"
+HANDOFF_MODES = (HANDOFF_MODE_DEV, HANDOFF_MODE_RUN_LEVEL)
+# `reads` 的三类来源（`dropped` 是与之**并列的独立集合**，不是同一分类的第四项）
+READ_CLASSES = ("承接", "运行级", "派生")
+# 取数依据（第三类登记项）：选条入口，既不进 `reads`、也不进 `dropped`
+SELECTION_SOURCES = frozenset({"entries", "production_marks"})
+# 上游可移交要点集合（契约 B-01：守恒等式里的"上游"= 可移交要点，不是整张 017 导出面）
+TRANSFERABLE_FIELDS = frozenset({"genre", "constraints", "characters"})
+# 本交接的丢弃项：可移交要点之外、又不进下游的上游字段（要点**不得**进本集）
+DEV_SCRIPT_DROPPED = frozenset(
+    {
+        "direction_id",
+        "rationale",
+        "eval_components",
+        "in_production",
+        "schema_version",
+        "signal_sources",
+    }
+)
+# 改名承接（下游键 → 上游要点字段名；同名承接登记为**恒等映射**，不得漏登）
+DEV_SCRIPT_RENAMES = {"topic": "genre", "constraints": "constraints", "characters": "characters"}
+# 逐键来源类（有 `dev`：三键承接 + 运行级时长）
+DEV_SCRIPT_READS = {
+    "topic": "承接",
+    "constraints": "承接",
+    "characters": "承接",
+    "target_duration_min": "运行级",
+}
+# 逐键来源类（无 `dev`：四键全运行级，回落既有短剧链）
+RUN_LEVEL_READS = {key: "运行级" for key in sorted(SCRIPT_INPUT_READS)}
+# 本侧声明所依据的上游 schema 版本（C7 三处同步之一：上游升版即须同批更新）
+UPSTREAM_SCHEMA_VERSION = "1.0.0"
+# 读取集锁定的源码域（两式 `inputs[...]` / `inputs.get(...)` 逐点扫描）
+READ_SCAN_FILES = ("agents/screenplay/loop.py", "agents/pilot/stages.py")
+
+
+def repo_root() -> Path:
+    """仓库根（本文件位于 `agents/pilot/`）。"""
+    return Path(__file__).resolve().parents[2]
+
+
+def _upstream_face() -> tuple[frozenset[str], frozenset[str]]:
+    """上游导出面的**反解引用**（顶层 / 条目级字段集）：唯一真相是 017 的常量，不得复制。"""
+    return (
+        frozenset(export_slate_module.EXPORT_FIELDS),
+        frozenset(export_slate_module.EXPORT_ENTRY_FIELDS),
+    )
+
+
+def _assert_upstream_synced() -> None:
+    """C7 两侧同步机检：上游导出面增删字段、或 `SCHEMA_VERSION` 升版而未同步本侧声明 ⇒ 报错。"""
+    top, entry = _upstream_face()
+    if dev_artifact.SCHEMA_VERSION != UPSTREAM_SCHEMA_VERSION:
+        raise HandoffError(
+            f"上游 SCHEMA_VERSION 已变（{dev_artifact.SCHEMA_VERSION} != "
+            f"{UPSTREAM_SCHEMA_VERSION}）：本侧交接声明必须同批复核（两侧同步，缺一即红）"
+        )
+    missing_essentials = sorted(TRANSFERABLE_FIELDS - entry)
+    if missing_essentials:
+        raise HandoffError(
+            f"上游导出面缺少可移交要点 {missing_essentials}：本交接的上游界定为可移交要点集合，"
+            "字段消失即两侧不同步"
+        )
+    undeclared = sorted(
+        (top | entry) - (TRANSFERABLE_FIELDS | DEV_SCRIPT_DROPPED | SELECTION_SOURCES)
+    )
+    if undeclared:
+        raise HandoffError(
+            f"上游导出面出现未声明字段 {undeclared}：本侧交接声明必须同批更新"
+            "（标为可移交要点 / 写入丢弃集 / 登记为取数依据；两侧同步，缺一即红）"
+        )
+    missing_basis = sorted(SELECTION_SOURCES - (top | entry))
+    if missing_basis:
+        raise HandoffError(f"取数依据 {missing_basis} 不再是上游导出面字段：本侧取数入口须同批复核")
+    unbacked = sorted(DEV_SCRIPT_DROPPED - (top | entry))
+    if unbacked:
+        raise HandoffError(
+            f"本侧丢弃集声明了导出面上不存在的字段 {unbacked}：上游字段集变更须两侧同步"
+        )
+
+
+@dataclass(frozen=True)
+class DevScriptHandoff:
+    """`dev` → 剧本的字段级交接声明（契约 C5/C6）。
+
+    守恒等式：`下游读取集 == renames(上游 − 丢弃) ∪ 运行级 ∪ 派生`，且
+    `丢弃 ⊆ 上游`、`丢弃 ∩ (承接映射值集 ∪ 运行级键集 ∪ 派生键集) == ∅`、
+    `派生 ∩ (上游 ∪ 运行级 ∪ 承接映射值集) == ∅`。
+    来源分类是 `reads` 的**三类**（承接含改名 / 运行级 / 派生，合计且每键恰一类）；
+    `dropped` 是与之**并列的独立集合**；`sources` 是第三类登记项（取数依据）。
+
+    **两层断言**：同名字段子集层用 `FieldParity.consistent()`；改名承接/运行级层
+    **不复用**它（`renames` 引入后下游键名与上游字段名不再逐一对应，逐式不可能也不应成立），
+    由本类的 `violations()` 给出机检等价的 ①~⑥。
+    """
+
+    mode: str
+    reads: Mapping[str, str]
+    renames: Mapping[str, str]
+    dropped: frozenset[str]
+    derived: frozenset[str]
+    sources: frozenset[str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reads", dict(self.reads))
+        object.__setattr__(self, "renames", dict(self.renames))
+        object.__setattr__(self, "dropped", frozenset(self.dropped))
+        object.__setattr__(self, "derived", frozenset(self.derived))
+        object.__setattr__(self, "sources", frozenset(self.sources))
+
+    def by_class(self, name: str) -> frozenset[str]:
+        """某一来源类下的读取键集（`reads` 三类的切片）。"""
+        return frozenset(key for key, cls in self.reads.items() if cls == name)
+
+    def violations(self) -> list[str]:
+        """承接/运行级层的机检（C6 断言 ①~⑥）：返回违反清单（空列表 = 通过）。"""
+        problems: list[str] = []
+        if self.mode not in HANDOFF_MODES:
+            problems.append(
+                f"mode 取值非法 {self.mode!r}：只接受 {list(HANDOFF_MODES)}（无第三值）"
+            )
+        # ① 读取集：合计（每个读取键都有类）且每键恰一类
+        unknown_classes = sorted(set(self.reads.values()) - set(READ_CLASSES))
+        if unknown_classes:
+            problems.append(
+                f"① reads 出现未声明的来源类 {unknown_classes}：只接受 {list(READ_CLASSES)}"
+            )
+        missing = sorted(set(SCRIPT_INPUT_READS) - set(self.reads))
+        if missing:
+            problems.append(f"① 读取集缺键 {missing}（每个读取输入均须声明来源类）")
+        extra = sorted(set(self.reads) - set(SCRIPT_INPUT_READS))
+        if extra:
+            problems.append(
+                f"① 出现未声明读取键 {extra}（禁止未声明直通：必须登记来源类，出现即拒绝）"
+            )
+        run_level = self.by_class("运行级")
+        derived = frozenset(self.derived)
+        if set(derived) != set(self.by_class("派生")):
+            problems.append(
+                f"派生集 {sorted(derived)} != reads 的派生类键集 {sorted(self.by_class('派生'))}"
+                "（派生键须在 reads 里标为派生，且声明来源）"
+            )
+        renaming_values = frozenset(self.renames.values())
+        # ⑤ 承接类键逐一有映射（同名承接为恒等映射；漏登即改名被错记为"丢弃 + 派生"）
+        if set(self.renames) != set(self.by_class("承接")):
+            problems.append(
+                f"⑤ renames 键集 {sorted(self.renames)} != 承接类键集 "
+                f"{sorted(self.by_class('承接'))}（承接类键逐一登记，不得漏登）"
+            )
+        # ② 守恒等式：下游读取集 == renames(上游 − 丢弃) ∪ 运行级 ∪ 派生
+        renamed = frozenset(
+            key
+            for key, source in self.renames.items()
+            if source in TRANSFERABLE_FIELDS - self.dropped
+        )
+        expected = renamed | run_level | derived
+        if set(self.reads) != set(expected):
+            problems.append(
+                f"② 守恒等式不成立：下游读取集 {sorted(self.reads)} != "
+                f"renames(上游 − 丢弃) ∪ 运行级 ∪ 派生 = {sorted(expected)}"
+            )
+        # ③ 丢弃集：上界 + 与承接/运行级/派生互斥 + 可移交要点不得进丢弃集
+        top, entry = _upstream_face()
+        outside = sorted(self.dropped - (top | entry))
+        if outside:
+            problems.append(f"③ 丢弃集出现上游导出面之外的字段 {outside}（丢弃 ⊆ 上游）")
+        overlap = sorted(self.dropped & (renaming_values | run_level | derived))
+        if overlap:
+            problems.append(f"③ 丢弃集与承接映射值集/运行级/派生相交 {overlap}（承接 ↔ 丢弃互斥）")
+        essentials = sorted(self.dropped & TRANSFERABLE_FIELDS)
+        if essentials:
+            problems.append(
+                f"③ 可移交要点不得进丢弃集 {essentials}"
+                "（承接 ≠ 丢弃：改名承接登记在 renames，`genre` 不进丢弃集）"
+            )
+        # ④ 派生键不得占用上游 / 运行级 / 承接目标的键名
+        collision = sorted(derived & (TRANSFERABLE_FIELDS | run_level | renaming_values))
+        if collision:
+            problems.append(
+                f"④ 派生键占用上游要点/运行级/承接目标键名 {collision}（派生须声明来源）"
+            )
+        # ⑥ 取数依据登记完备，且与 reads/dropped 无交集
+        if self.sources != SELECTION_SOURCES:
+            problems.append(
+                f"⑥ 取数依据登记不完整 {sorted(self.sources)} != {sorted(SELECTION_SOURCES)}"
+            )
+        mixed = sorted(self.sources & (set(self.reads) | self.dropped))
+        if mixed:
+            problems.append(
+                f"⑥ 取数依据与 reads/dropped 混记 {mixed}（选条入口既不进 reads、也不进丢弃集）"
+            )
+        return problems
+
+    def assert_consistent(self) -> None:
+        """一致性断言：任一违反即拒绝（交接不得带缺陷往下走）。"""
+        problems = self.violations()
+        if problems:
+            raise HandoffError(
+                f"dev → 剧本 交接声明不一致（mode={self.mode}）：\n"
+                + "\n".join(f"- {item}" for item in problems)
+            )
+
+    def to_dict(self) -> dict:
+        return {
+            "mode": self.mode,
+            "reads": {key: self.reads[key] for key in sorted(self.reads)},
+            "renames": {key: self.renames[key] for key in sorted(self.renames)},
+            "dropped": sorted(self.dropped),
+            "derived": sorted(self.derived),
+            "sources": sorted(self.sources),
+        }
+
+
+def dev_script_handoff_declaration(mode: str = HANDOFF_MODE_DEV) -> DevScriptHandoff:
+    """本交接的**单一构建点**：逐键标类 + 改名承接 + 独立丢弃集 + 取数依据。
+
+    `mode` 两值：有 `dev` ⇒ `dev_script_handoff`（承接被标记条目的可移交要点）；
+    无 `dev`（既有短剧链）⇒ `run_level_pilot_inputs`（四键全运行级）。
+    构建即做 C7 上游同步机检与 C6 ①~⑥ 断言（不合格即拒绝，不产带缺陷的声明）。
+    """
+    _assert_upstream_synced()
+    if mode == HANDOFF_MODE_DEV:
+        declaration = DevScriptHandoff(
+            mode=mode,
+            reads=dict(DEV_SCRIPT_READS),
+            renames=dict(DEV_SCRIPT_RENAMES),
+            dropped=DEV_SCRIPT_DROPPED,
+            derived=frozenset(),
+            sources=SELECTION_SOURCES,
+        )
+    elif mode == HANDOFF_MODE_RUN_LEVEL:
+        declaration = DevScriptHandoff(
+            mode=mode,
+            reads=dict(RUN_LEVEL_READS),
+            renames={},
+            dropped=frozenset(),
+            derived=frozenset(),
+            sources=SELECTION_SOURCES,
+        )
+    else:
+        raise HandoffError(
+            f"交接 mode 取值非法 {mode!r}：只接受 {list(HANDOFF_MODES)}（FR-016 二值）"
+        )
+    declaration.assert_consistent()
+    return declaration
+
+
+def script_input_mode(upstream_stage_ids: Sequence[str]) -> str:
+    """生效来源的**单一判定**（FR-016，禁止静默择一）：上游有 `dev` ⇒ 交接结果；否则回落运行级。"""
+    return HANDOFF_MODE_DEV if "dev" in set(upstream_stage_ids) else HANDOFF_MODE_RUN_LEVEL
+
+
+def scanned_read_keys(root: str | Path | None = None) -> tuple[str, ...]:
+    """源码扫描式锁定读取集：`inputs[<常量>]` 与 `inputs.get(<常量>)` 两种写法逐点收集。
+
+    读取集**不靠记忆**：实现里新增一个读取点而未登记来源类 ⇒ `read_set_mismatches` 点名该键。
+    """
+    base = Path(root) if root is not None else repo_root()
+    keys: set[str] = set()
+    for relative in READ_SCAN_FILES:
+        path = base / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        keys |= _read_keys_of(tree)
+    return tuple(sorted(keys))
+
+
+def _read_keys_of(tree: ast.AST) -> set[str]:
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "inputs"
+        ):
+            first = node.args[0] if node.args else None
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                keys.add(first.value)
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "inputs"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            keys.add(node.slice.value)
+    return keys
+
+
+def read_set_mismatches(root: str | Path | None = None) -> list[str]:
+    """读取集与声明的**双向绑定**机检：未声明读取键 / 声明了却没人读，任一向即红。"""
+    scanned = set(scanned_read_keys(root))
+    declared = set(SCRIPT_INPUT_READS)
+    problems: list[str] = []
+    if scanned - declared:
+        problems.append(
+            f"源码出现未声明读取键 {sorted(scanned - declared)}：交接声明必须逐键标类"
+            "（禁止未声明直通，出现即拒绝）"
+        )
+    if declared - scanned:
+        problems.append(
+            f"声明了但源码未读取的键 {sorted(declared - scanned)}：读取集须与实现双向绑定"
+        )
+    return problems
+
+
+@dataclass(frozen=True)
+class ScriptInputView:
+    """剧本阶段输入视图：生效来源（`mode`）+ 读取集 + 逐字段可追溯的取数依据。"""
+
+    mode: str
+    inputs: Mapping[str, Any]
+    declaration: DevScriptHandoff
+    trace: Mapping[str, Mapping[str, str]]
+    selected_entry: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "inputs", dict(self.inputs))
+        object.__setattr__(self, "trace", {key: dict(value) for key, value in self.trace.items()})
+
+    def to_detail(self) -> dict:
+        """运行记录 `StageState.detail` 的确定性视图（生效 `mode` 随机读可见，无墙钟/路径）。"""
+        return {
+            "input_source": self.mode,
+            "input_reads": dict(self.declaration.reads),
+            "input_trace": {key: dict(value) for key, value in self.trace.items()},
+            "selected_entry": self.selected_entry,
+        }
+
+
+def dev_to_script_inputs(export: Mapping, pilot_inputs: Mapping) -> ScriptInputView:
+    """有 `dev` 链：取**恰好一条**「本轮进入生产」标记指向条目的可移交要点。
+
+    取数入口（FR-005）：标记**恰好一条**且指向组合内已存在条目方可交接；悬空 / 越界（数量
+    越出"恰好一条"，即指向多条）/ 缺失 ⇒ **下游拒绝启动**并点名（不静默取第一条兜底、不伪装
+    成"选题为空"）。017 的导出面**不因缺陷丢条目**，故拒绝发生在交接侧（显式拒绝，非静默降级）。
+    被标记条目的三个可移交要点任一为空同样拒绝（**承接不解除要点校验**，且必须在承接之前判）。
+    """
+    declaration = dev_script_handoff_declaration(HANDOFF_MODE_DEV)
+    entry = _marked_entry(export)
+    direction_id = str(entry["direction_id"])
+    _require_essentials(entry, direction_id)
+    target_minutes = _run_level_target(pilot_inputs)
+    inputs = {
+        "topic": str(entry["genre"]),  # 改名承接：topic ← genre
+        "constraints": [str(item) for item in entry["constraints"]],
+        "characters": [str(item) for item in entry["characters"]],
+        "target_duration_min": target_minutes,
+    }
+    trace = {
+        "topic": {"class": "承接", "source": "genre", "entry": direction_id},
+        "constraints": {"class": "承接", "source": "constraints", "entry": direction_id},
+        "characters": {"class": "承接", "source": "characters", "entry": direction_id},
+        "target_duration_min": {"class": "运行级", "source": "pilot_inputs.target_duration_min"},
+    }
+    return _view(HANDOFF_MODE_DEV, inputs, declaration, trace, direction_id)
+
+
+def run_level_script_inputs(pilot_inputs: Mapping) -> ScriptInputView:
+    """无 `dev` 链（既有短剧试水链）：四键全取运行级 `PilotInputs`（缺项即拒绝）。
+
+    与 `dev_script_handoff` **并列的第二条来源**：生效哪一条由上游是否含 `dev` 判定
+    （`script_input_mode`）并随机读可见——**禁止静默择一**。
+    """
+    declaration = dev_script_handoff_declaration(HANDOFF_MODE_RUN_LEVEL)
+    topic = str(pilot_inputs.get("topic") or "")
+    if not topic:
+        raise HandoffError("运行级输入缺 topic（题材）：剧本阶段拒绝启动（不静默补默认）")
+    inputs = {
+        "topic": topic,
+        "constraints": [str(item) for item in (pilot_inputs.get("constraints") or ())],
+        "characters": [str(item) for item in (pilot_inputs.get("characters") or ())],
+        "target_duration_min": _run_level_target(pilot_inputs),
+    }
+    trace = {key: {"class": "运行级", "source": f"pilot_inputs.{key}"} for key in sorted(inputs)}
+    return _view(HANDOFF_MODE_RUN_LEVEL, inputs, declaration, trace)
+
+
+def _view(mode, inputs, declaration, trace, selected_entry="") -> ScriptInputView:
+    if set(inputs) != set(SCRIPT_INPUT_READS):
+        raise HandoffError(
+            f"剧本输入视图键集 {sorted(inputs)} != 声明读取集 {sorted(SCRIPT_INPUT_READS)}"
+            "（每个读取输入都必须有来源类）"
+        )
+    if set(trace) != set(inputs):
+        raise HandoffError(f"逐字段可追溯性不足：trace 键集 {sorted(trace)} != 输入键集")
+    view = ScriptInputView(
+        mode=mode,
+        inputs=inputs,
+        declaration=declaration,
+        trace=trace,
+        selected_entry=selected_entry,
+    )
+    if view.declaration.mode != mode:
+        raise HandoffError(f"输入视图 mode {mode!r} 与声明 {view.declaration.mode!r} 不一致")
+    return view
+
+
+def _run_level_target(pilot_inputs: Mapping) -> Any:
+    value = pilot_inputs.get("target_duration_min")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) <= 0:
+        raise HandoffError(
+            f"运行级输入 target_duration_min 缺失或非正（{value!r}）：剧本阶段拒绝启动"
+        )
+    return value
+
+
+def _marked_entry(export: Mapping) -> dict:
+    """取数入口：组合内「本轮进入生产」标记**恰好一条**且指向组内条目（四类违规即拒绝点名）。
+
+    **登记张力（如实）**：交接侧要求"恰好一条"，而形态配置 `dev.production_marks` 是 017 的
+    组合门禁区间（短剧形态上界为 2，"一次可投多部"）——标记 2 条时本条**如实拒绝启动**（不猜、
+    不取第一条）。既有短剧试水链（无 `dev`）不受影响（回落运行级输入）；链路要跑通时，形态的
+    标记区间须声明为「恰好一条」（演示/夹具副本即如此声明，真实配置与 017 的判据区间不动）。
+    """
+    if not isinstance(export, Mapping):
+        raise HandoffError(f"上游交接输入必须为导出面映射，实际为 {export!r}")
+    entries = [entry for entry in (export.get("entries") or ()) if isinstance(entry, Mapping)]
+    if not entries:
+        raise HandoffError("上游导出面无条目（选题为空）：下游拒绝启动（不静默产空剧本）")
+    marks = list(export.get("production_marks") or ())
+    if not marks:
+        raise HandoffError(
+            "取数入口缺失：组合内无「本轮进入生产」标记（不静默取第一条兜底、不伪装成选题为空）"
+        )
+    if len(marks) > 1:
+        raise HandoffError(
+            f"取数入口越界/多条：标记数量越出「恰好一条」——指向多条 {sorted(str(m) for m in marks)}"
+            "（不猜、不静默取第一条）"
+        )
+    mark = marks[0]
+    for entry in entries:
+        if entry.get("direction_id") == mark:
+            return dict(entry)
+    known = sorted(str(entry.get("direction_id")) for entry in entries)
+    raise HandoffError(f"取数入口悬空：标记 {mark!r} 指向组外条目（组内 {known}）——下游拒绝启动")
+
+
+def _require_essentials(entry: Mapping, direction_id: str) -> None:
+    """可移交要点校验（**承接之前**判）：任一为空即拒绝并点名（承接不解除要点校验）。"""
+    missing = [field for field in ("genre", "constraints", "characters") if not entry.get(field)]
+    if missing:
+        raise HandoffError(
+            f"被标记条目 {direction_id!r} 的可移交要点为空 {missing}：下游拒绝启动"
+            "（与 017 的 rule.slate_structure 判 0 口径同源，此处为交接侧的第二道防线）"
+        )
 
 
 def _assert_counts(label: str, upstream: int, downstream: int) -> None:
@@ -486,17 +953,29 @@ __all__ = [
     "CLIP_DERIVED",
     "CLIP_DROPPED",
     "CLIP_FIELDS",
+    "DEV_SCRIPT_DROPPED",
+    "DEV_SCRIPT_READS",
+    "DEV_SCRIPT_RENAMES",
+    "DevScriptHandoff",
     "EditInputs",
     "FieldParity",
     "GEN_PARAMS_DERIVED",
     "GEN_PARAMS_DROPPED",
     "GEN_PARAMS_FIELDS",
+    "HANDOFF_MODE_DEV",
+    "HANDOFF_MODE_RUN_LEVEL",
+    "HANDOFF_MODES",
     "HandoffError",
     "MATERIAL_FIELDS",
     "PromoMaterials",
+    "READ_CLASSES",
+    "READ_SCAN_FILES",
+    "RUN_LEVEL_READS",
     "SEGMENT_LINE_DROPPED",
     "SEGMENT_LINE_FIELDS",
+    "SELECTION_SOURCES",
     "SHOT_LIBRARY_FIELDS",
+    "SCRIPT_INPUT_READS",
     "av_to_edit_inputs",
     "canonical_json",
     "edit_inputs_parity",
