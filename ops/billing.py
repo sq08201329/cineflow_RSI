@@ -2,38 +2,43 @@
 """真实渠道与账单对账 CLI（功能 019）：额度台账 / 最小规模校准 / 扩量。
 
 **判定全在 core**（`core/billing/`），本脚本只做参数解析、调用与 JSON 打印（薄转发）。
-子命令（命名与契约 C16 逐字一致；`runs` 属 US3，随后续阶段落地）：
+子命令（命名与契约 C16 逐字一致，**七条齐备**）：
 
 ```
 uv run python ops/billing.py tiers     --channel <id> [--config configs/*.yaml]
 uv run python ops/billing.py calibrate --channel <id> --tier <环节> --measured-usd <实测> \
-        --sample-count <n> [--profile <档案 id> | --expected-usd <按价目折算>] [--cost-source <源>]
+        [--from-records | --sample-count <n>] [--profile <档案 id> | --expected-usd <按价目折算>] \
+        [--cost-source <源>] [--config configs/*.yaml]
 uv run python ops/billing.py import-bill --channel <id> --file <账单> --bill-id <批次> \
         --period <周期> [--currency USD] [--source export|api] [--config configs/*.yaml]
 uv run python ops/billing.py reconcile --channel <id> --period <周期> \
         --gateway-report <网关账目 JSON> [--config configs/*.yaml]
 uv run python ops/billing.py alert-check --channel <id> [--period <周期>] [--since <YYYY-MM-DD>] \
         [--config configs/*.yaml]
+uv run python ops/billing.py runs      --channel <id> [--window-days 7] [--gap-tolerance 0] \
+        [--end YYYY-MM-DD] [--config configs/*.yaml]
 uv run python ops/billing.py raise-tier --channel <id> --tier <环节> --limit-usd <额> \
         --calibration <单轮校准 id> --by <人> --reason <理由> [--config configs/*.yaml]
 ```
 
 - `tiers`：各档余量 / 拒绝计数 / **未结算预留**（崩溃残留如实列出，不自动清零）；
 - `calibrate`：**只读既有记录、不联网、不构造后端、不新测花费**——"实测花费"由运营从
-  厂商侧读出（`--measured-usd`，口径写在 `--cost-source`），"按价目折算"由档案价目 × token
-  数算出；本阶段以显式输入落记录（US3 接上运行记录/账单侧的自动复述）；
+  厂商侧读出（`--measured-usd`，口径写在 `--cost-source`）；"按价目折算"可由 `--expected-usd`、
+  档案价目 × token 数、或 `--from-records` 复述**既有真实调用记录**（运行记录里 `source=real`
+  的条数为样本量、该档账本记账值为折算额）给出；
 - `import-bill`：账单导入（**不联网**：人工上传厂商导出文件）；格式/列映射由配置声明，
   缺声明即报错、**零落盘**；批次幂等（同批次重复导入拒绝）；
 - `reconcile`：逐项对账并落报告 + 告警留痕；**无账单批次即拒绝产出**（不产"零差异"报告）；
   有告警 ⇒ 退出码 1；
 - `alert-check`：告警门禁**只读入口**（报告的未解释项/告警 + `alerts.jsonl` 留痕证据）；
   有告警 ⇒ 退出码 1——供定时工作流非零退出即告警；
+- `runs`：运行记录窗口机检（**覆盖 + 连续双条件**）；未达标如实报缺口与差值 ⇒ 退出码 1；
 - `raise-tier`：六条先决条件全过才**定点改写**配置额度（`core/yaml_edit.py`，其余段与注释
   逐字节不变）+ 写 `calibrated_by` + `alerts.jsonl` 留痕；任一条件不满足即拒绝并留
   `uncalibrated_raise`（配置一字不改）。
 
-退出码（契约 C16）：`0` 成功（`tiers`/`calibrate` 成功；`raise-tier` 改写成功）｜
-`1` 执行失败或拒绝（预算拒绝、校准未过、扩量被拒）｜`2` 用法或配置错误。
+退出码（契约 C16）：`0` 成功（`tiers`/`calibrate` 成功；`runs` 达标；`raise-tier` 改写成功）｜
+`1` 执行失败或拒绝（预算拒绝、校准未过、扩量被拒、`runs` 未达标）｜`2` 用法或配置错误。
 凭证只报"是否设置 + 长度"，**绝不回显值**（沿用 `ops/smoke_llm.py` 口径）。
 """
 
@@ -59,6 +64,7 @@ from core.billing.budget import (  # noqa: E402 - 019：账本/档位/告警读�
     AlertLog,
     BudgetConfig,
     BudgetConfigError,
+    FileLedger,
     alerts_path,
     channel_dir,
     ledger_path,
@@ -164,22 +170,47 @@ def _cmd_calibrate(args) -> int:
     cfg = _load_config(args.config)
     channel_id = _channel_of(cfg, args.channel)
     cfg.tier(args.tier)  # 缺档即用法/配置错误（不发明档位）
-    if args.expected_usd is None and (args.prompt_tokens is None or args.completion_tokens is None):
+    records = _records_for(cfg, channel_id, args.tier) if args.from_records else None
+    sample_count = int(args.sample_count) if args.sample_count is not None else None
+    if records is not None:
+        # `--from-records`：样本量取自**既有真实调用记录**（运行记录里 `source=real` 的条数）
+        sample_count = records["sample_count"]
+        if sample_count < 1:
+            return _fail(
+                f"既有运行记录里没有该环节的真实调用（source=real）：{args.tier}——"
+                "先跑一次最小规模真实调用（ops/smoke_llm.py --round）再校准",
+                EXIT_FAILED,
+            )
+    if sample_count is None:
         return _fail(
-            "需要给出按价目折算的金额：--expected-usd，或 "
-            "--prompt-tokens/--completion-tokens（+ --profile）",
-            EXIT_USAGE,
+            "需要给出样本量：--sample-count（或用 --from-records 从运行记录取）", EXIT_USAGE
         )
+    if args.expected_usd is None and (args.prompt_tokens is None or args.completion_tokens is None):
+        if records is None:
+            return _fail(
+                "需要给出按价目折算的金额：--expected-usd、--prompt-tokens/--completion-tokens"
+                "（+ --profile），或 --from-records（取账本的记账值）",
+                EXIT_USAGE,
+            )
     if args.measured_usd is None:
         return _fail(
             "需要给出实测花费 --measured-usd（厂商侧读数；本命令不联网取数、不新测花费）",
             EXIT_USAGE,
         )
-    expected = (
-        float(args.expected_usd)
-        if args.expected_usd is not None
-        else _expected_from_tokens_for(args, int(args.prompt_tokens), int(args.completion_tokens))
-    )
+    if args.expected_usd is not None:
+        expected, expected_source = float(args.expected_usd), "declared"
+    elif args.prompt_tokens is not None and args.completion_tokens is not None:
+        expected, expected_source = (
+            _expected_from_tokens_for(args, int(args.prompt_tokens), int(args.completion_tokens)),
+            "price_book_x_tokens",
+        )
+    else:
+        # `--from-records`：按价目折算取自**账本**该档的记账值（上网关账目/账本记录的复述）
+        expected, expected_source = records["spent_usd"], "ledger_gateway_accounting"
+        if expected <= 0:
+            return _fail(
+                f"该档账本记账值为 0（{args.tier}）：无从折算（先跑真实调用再看）", EXIT_FAILED
+            )
     calibration_id = args.calibration_id or f"cal-{channel_id}-{args.tier}-{args.at or 'latest'}"
     try:
         record = record_calibration(
@@ -188,14 +219,20 @@ def _cmd_calibrate(args) -> int:
             channel_id=channel_id,
             tier_id=args.tier,
             prices_snapshot=_prices_snapshot(args),
-            sample_count=int(args.sample_count),
+            sample_count=int(sample_count),
             measured_cost_usd=float(args.measured_usd),
             expected_cost_usd=expected,
             root=cfg.ledger_root(),
             note=(
-                "最小规模校准（口径：实测来源="
-                f"{args.cost_source}；按价目折算由配置价目 × token 数得出）。"
-                f"{args.note or ''}"
+                f"最小规模校准（口径：实测来源={args.cost_source}；"
+                f"按价目折算来源={expected_source}"
+                + (
+                    f"；运行记录 source=real 条数={records['sample_count']}、"
+                    f"日期范围 {records['start']}~{records['end']}"
+                    if records is not None
+                    else ""
+                )
+                + f"）。{args.note or ''}"
             ),
             cost_source=str(args.cost_source),
         )
@@ -220,6 +257,64 @@ def _cmd_calibrate(args) -> int:
         )
     )
     return EXIT_OK
+
+
+def _records_for(cfg: BudgetConfig, channel_id: str, tier_id: str) -> dict:
+    """既有真实调用记录（C12：**只读**，不联网、不新测花费）。
+
+    运行记录（`runs/{date}.json`，C15）给出**该环节真实调用了几次、发生在哪些日子**
+    （`source=real` 才算真实；模拟/回落日不计）；账本给出该档的记账值（按价目折算口径）。
+    厂商侧实测花费不在运行记录里（记录只带 `cost_source` 来源标签），故仍以 `--measured-usd` 给出。
+    """
+    from core.billing.runlog import load_run
+
+    directory = channel_dir(cfg.ledger_root(), channel_id) / "runs"
+    dates = sorted(path.stem for path in directory.glob("*.json")) if directory.is_dir() else []
+    real = 0
+    for date in dates:
+        payload = load_run(date, channel_id=channel_id, root=cfg.ledger_root())
+        real += sum(
+            1
+            for entry in payload.get("entries", [])
+            if entry.get("stage") == tier_id and entry.get("source") == "real"
+        )
+    ledger = FileLedger(
+        ledger_path(cfg.ledger_root(), channel_id),
+        timeout_seconds=float(cfg.ledger["lock_timeout_seconds"]),
+    ).read()
+    record = (ledger.get("tiers") or {}).get(tier_id, {})
+    return {
+        "sample_count": real,
+        "dates": dates,
+        "start": dates[0] if dates else "",
+        "end": dates[-1] if dates else "",
+        "spent_usd": float(record.get("spent_usd", 0.0)),
+        "ledger_revision": int(ledger.get("revision", 0)),
+    }
+
+
+def _cmd_runs(args) -> int:
+    """窗口机检（C15）：`covered_days ≥ min_window_days` **∧** `max_gap_days ≤ 容差`。
+
+    未达标**如实报缺口与差值**（不插值补齐），退出码 1；达标退出码 0。
+    """
+    import datetime as dt
+
+    from core.billing.runlog import window_coverage
+
+    cfg = _load_config(args.config)
+    channel_id = _channel_of(cfg, args.channel)
+    end = args.end or cfg.local_date(dt.datetime.now(dt.UTC))
+    coverage = window_coverage(
+        channel_id,
+        cfg=cfg,
+        root=cfg.ledger_root(),
+        end=end,
+        min_window_days=args.window_days,
+        gap_tolerance_days=args.gap_tolerance,
+    )
+    print(json.dumps(coverage, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK if coverage["meets"] else EXIT_FAILED
 
 
 def _prices_snapshot(args) -> dict:
@@ -496,7 +591,13 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate.add_argument(
         "--profile", default=None, help="档案 id（按价目折算用；缺省取默认档案）"
     )
-    calibrate.add_argument("--sample-count", dest="sample_count", type=int, required=True)
+    calibrate.add_argument("--sample-count", dest="sample_count", type=int, default=None)
+    calibrate.add_argument(
+        "--from-records",
+        dest="from_records",
+        action="store_true",
+        help="从既有运行记录/账本读样本量与按价目折算（只读，不联网）",
+    )
     calibrate.add_argument("--cost-source", dest="cost_source", default="operator_reported")
     calibrate.add_argument("--calibration-id", dest="calibration_id", default=None)
     calibrate.add_argument("--at", default=None, help="记录时刻（缺省=现在）")
@@ -547,6 +648,26 @@ def build_parser() -> argparse.ArgumentParser:
     alert_check.add_argument("--since", default=None, help="只看该时刻之后的告警增量（ISO8601）")
     alert_check.add_argument("--config", default=DEFAULT_CONFIG)
     alert_check.set_defaults(handler=_cmd_alert_check)
+
+    runs = sub.add_parser("runs", help="运行记录窗口机检（覆盖 + 连续双条件；未达标退出码 1）")
+    runs.add_argument("--channel", required=True)
+    runs.add_argument(
+        "--window-days",
+        dest="window_days",
+        type=int,
+        default=None,
+        help="覆盖下限（缺省取 budget.runs.min_window_days）",
+    )
+    runs.add_argument(
+        "--gap-tolerance",
+        dest="gap_tolerance",
+        type=int,
+        default=None,
+        help="断档容差（缺省取 budget.runs.gap_tolerance_days）",
+    )
+    runs.add_argument("--end", default=None, help="窗口终点（缺省 = 渠道本地今天）")
+    runs.add_argument("--config", default=DEFAULT_CONFIG)
+    runs.set_defaults(handler=_cmd_runs)
     return parser
 
 

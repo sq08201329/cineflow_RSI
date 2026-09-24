@@ -313,6 +313,7 @@ class Test门禁绕过尝试被拒:
     def test_不传守卫的真实装配点已被机检钉死(self):
         from tests.unit.test_billing_core_purity import (
             OFFLINE_ASSEMBLIES,
+            OFFLINE_GUARDED_ASSEMBLIES,
             REAL_ASSEMBLY_POINTS,
             _gateway_constructions,
         )
@@ -320,9 +321,14 @@ class Test门禁绕过尝试被拒:
         sites = _gateway_constructions()
         real = sorted({site["path"] for site in sites if site["real"]})
         assert real == sorted(REAL_ASSEMBLY_POINTS)  # 真实装配点必须传非 None 守卫
-        assert sorted({site["path"] for site in sites if not site["real"]}) == sorted(
-            OFFLINE_ASSEMBLIES
-        )
+        offline = [site for site in sites if not site["real"]]
+        # 两类离线装配各自清单常驻（新增一处即红，不能靠"随手传个守卫"混过去）
+        assert sorted(
+            {site["path"] for site in offline if site["guard_is_explicit_none"]}
+        ) == sorted(OFFLINE_ASSEMBLIES)
+        assert sorted(
+            {site["path"] for site in offline if not site["guard_is_explicit_none"]}
+        ) == sorted(OFFLINE_GUARDED_ASSEMBLIES)
 
     def test_伪造_tier_被拒(self, capsys, tmp_path):
         import importlib

@@ -249,6 +249,11 @@ OFFLINE_ASSEMBLIES = (
     "ops/dev.py",
     "ops/screenplay.py",
 )
+# ①' 离线装配但**故意注入真守卫**：019 的离线演示（Mock 后端 + 夹具账单，**零真实调用**）
+#     端到端走一遍预算门禁（拒绝零入账、记账、对账），故它不是"不需要门禁"而是"门禁的演习场"。
+#     这类点与 OFFLINE_ASSEMBLIES **互斥**（同一路径只出现在一侧），且同样**清单常驻**——
+#     新增一处（哪怕是离线）即红，必须在此显式登记。
+OFFLINE_GUARDED_ASSEMBLIES = ("ops/demo_billing.py",)
 
 
 def _function_node(tree: ast.Module, node: ast.Call):
@@ -320,9 +325,9 @@ class Test门禁注入两层断言:
 
     def test_构造点普查面有效(self):
         sites = _gateway_constructions()
-        assert len(sites) == 10, [(site["path"], site["line"]) for site in sites]
+        assert len(sites) == 13, [(site["path"], site["line"]) for site in sites]
         assert sorted({site["path"] for site in sites}) == sorted(
-            [*REAL_ASSEMBLY_POINTS, *OFFLINE_ASSEMBLIES]
+            [*REAL_ASSEMBLY_POINTS, *OFFLINE_ASSEMBLIES, *OFFLINE_GUARDED_ASSEMBLIES]
         )
 
     def test_之一_显式性_任何构造必须显式传_spend_guard(self):
@@ -363,19 +368,27 @@ class Test门禁注入两层断言:
 
     def test_之二_离线装配清单常驻(self):
         sites = _gateway_constructions()
-        offline = sorted({site["path"] for site in sites if not site["real"]})
-        assert offline == sorted(OFFLINE_ASSEMBLIES), (
-            f"离线装配点清单变化：{offline}（新增一处即红：必须显式声明 spend_guard=None）"
+        offline = [site for site in sites if not site["real"]]
+        unguarded = sorted({site["path"] for site in offline if site["guard_is_explicit_none"]})
+        assert unguarded == sorted(OFFLINE_ASSEMBLIES), (
+            f"离线装配（显式 spend_guard=None）清单变化：{unguarded}"
+            "（新增一处即红：必须显式声明 spend_guard=None，或登记进 OFFLINE_GUARDED_ASSEMBLIES）"
+        )
+        guarded = sorted({site["path"] for site in offline if not site["guard_is_explicit_none"]})
+        assert guarded == sorted(OFFLINE_GUARDED_ASSEMBLIES), (
+            f"离线但注入真守卫的装配清单变化：{guarded}（019 的离线演示走真门禁；新增一处即红）"
         )
         offenders = [
-            f"{site['path']}:{site['line']}"
-            for site in sites
-            if not site["real"] and not (site["has_guard_kwarg"] and site["guard_is_explicit_none"])
+            f"{site['path']}:{site['line']}" for site in offline if not site["has_guard_kwarg"]
         ]
         assert offenders == [], (
-            "离线装配（模拟后端/测试桩/不可用路径）必须显式 spend_guard=None：\n"
+            "离线装配（模拟后端/测试桩/不可用路径）必须显式声明 spend_guard=\n"
             + "\n".join(offenders)
         )
+        # 登记在 ①' 的装配点必须传**非 None** 守卫（否则它就该回到 ① 的显式 None 清单）
+        for site in offline:
+            if site["path"] in OFFLINE_GUARDED_ASSEMBLIES:
+                assert not site["guard_is_explicit_none"], f"{site['path']}:{site['line']}"
 
     def test_之三_条件义务_不可用真实路径按规则判定(self):
         """③ 堵洞：`ops/screenplay.py` / `ops/dev.py` 的注入后端路径**当前不可用**
