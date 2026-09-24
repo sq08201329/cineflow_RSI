@@ -15,20 +15,25 @@ PILOT_STAGE_IDS = ("dev", "script", "storyboard", "visual", "sound", "editing", 
 - **链首是 `dev` 不是 `script`**：`dev` 阶段 `depends_on=()`，`script` 改为 `depends_on=("dev",)`；
   拓扑序恰为上式（`core/orchestration/dag.py:27 topological_order`）。
 - **必须同步的集中声明点**（逐处点名的机械清单，任一处漏改即红）：
-  ① `agents/pilot/stages.py:94` 阶段元组；② `:1018` `build_stage_specs` 阶段表（新增 `dev` 项）；
-  ③ `:102-111` `AgentConfigs`（新增 `dev: DevConfig`）；④ `:138-198` `build_runtime` 运行时装配——
+  ① `agents/pilot/stages.py` 阶段元组 `PILOT_STAGE_IDS`（当前 `:94`）；② `build_stage_specs` 阶段表（当前 `:1018`，新增 `dev` 项）；
+  ③ `AgentConfigs`（当前 `:102-111`，新增 `dev: DevConfig`）；④ `build_runtime` 运行时装配（当前 `:138-198`）——
   含 `:173-180` 建表段（新增 `agents/dev/db.py:60 create_jobs_schema`，`dev` 有自己的作业表）；
-  ⑤ `agents/pilot/pilot.py` **四处**：`:114-129` 配置加载器、`:135-140` 权重循环、`:198-205`
-  `AgentConfigs` 构造、`:208-224` 预检预算循环；⑥ `agents/pilot/package.py:173-181` 产物 kind 登记；
+  ⑤ `agents/pilot/pilot.py` **四处**：`config_completeness` 加载器元组（当前 `:117-131`）、权重循环（当前 `:135-140`）、
+  `AgentConfigs` 构造（当前 `:198-205`）、预检预算循环（当前 `:208-224`）；⑥ `agents/pilot/package.py` 产物 kind 登记
+  `_KIND_CONTENT_TYPE`（当前 `:173-181`）；
   ⑦ 形态配置两形态声明；⑧ 测试与夹具侧同类字面量（见"会变红的既有断言"）。
 - **不靠人记得，靠断言**（规格边界情况第 1 条的正解）：三处一致性断言——
   ① `tuple(spec.stage_id for spec in build_stage_specs(runtime)) == PILOT_STAGE_IDS`；
   ② `STAGE_CONFIG_SECTION`（单一映射声明）的值域 == `AgentConfigs` 的字段名集，且键域 == `PILOT_STAGE_IDS`
   ——`script → screenplay`、`dev → dev`，**不得**以 stage_id 直推段名；
   ③ 阶段表 `output_kind` 的**全部取值** ∈ `package._KIND_CONTENT_TYPE`（C4）。
-- 静态断言**方向不得反转**，插链后仍须常驻：`tests/unit/test_pilot_stages.py:127-137`（编排层不新增
-  落树路径、无形态分支）与 `:140-162`（`agents/` 不得 import `ops/`）——故 `dev` 阶段的策略装载只能走
-  `agents/` 侧（C2），**不得**从 `ops/dev.py` 取用。
+- **网关构造面与账目取样面不扩**（E-03）：本特性**不新增 `LLMGateway(` 构造点**——019 的构造点普查
+  仍为 **13 处**（真实 2 + `ops/` 离线显式 `None` 8 + `ops/` 离线注入真守卫 3，见 019 tasks T1916/T1922），
+  聚合断言须**复述该计数**；`agents/pilot/run_report.py`（C13 的画像与成本第三方腿）**只读**
+  `LLMGateway.total_cost_usd`（阶段边界只读采样），**不构造网关、不改网关契约、不进 `cost_breakdown`**。
+- 静态断言**方向不得反转**，插链后仍须常驻：`tests/unit/test_pilot_stages.py` 的不新增落树路径/无形态
+  分支断言（当前 `:127-137`）与 `agents/` 不得 import `ops/` 断言（当前 `:140-162`）——故 `dev` 阶段的
+  策略装载只能走 `agents/` 侧（C2），**不得**从 `ops/dev.py` 取用。
 
 ### 会因此变红的既有断言（必须同步更新，不得为过测试放宽）
 
@@ -53,28 +58,47 @@ PILOT_STAGE_IDS = ("dev", "script", "storyboard", "visual", "sound", "editing", 
 - 入口：`_dev_entry(stage_input)` 只做搬运与判定，**零新增落树路径**——落树/幂等/成本对账全部由
   `run_dev_round` 既有实现承担（节点一次性 INSERT，`FAILED` 同样入账）。
 - **策略装载必须走 `agents/` 侧**：现状 `exec(compile(source…))` + 静态检查 + 版本核验只在
-  `ops/dev.py:81-123 _load_policy`（源码文本通道在 `agents/dev/policy_versions.py:68 load_policy_source`），
-  而 `agents/` 不得 import `ops/` ⇒ **必须**把装载（静态检查 `policies/static_check.check_policy_source`
-  前置 → 版本核验 → 实例化）下沉到 `agents/dev/` 侧单一实现，`ops/dev.py` 改为薄调用（不得留第二份，
-  同 019"两处收敛目标"口径）。装载失败 ⇒ 阶段 `failed` 且原因点名（**不**静默取"最新/第一条"策略）。
-- 版本来源 = 形态配置的部署指针 `deployment.dev.current_policy_version`（`configs/movie.yaml:625`、
-  `configs/shortdrama.yaml:624`；按 `stages.py:205-227` 的直读 YAML 口径读取），缺指针/源码不存在 ⇒
+  `ops/dev.py` 的 `_load_policy`（当前 `:81-123`；源码文本通道在 `agents/dev/policy_versions.py` 的
+  `load_policy_source`，当前 `:68`），而 `agents/` 不得 import `ops/` ⇒ **必须**把装载（静态检查
+  `policies/static_check.check_policy_source` 前置 → 版本核验 → 实例化）下沉到 `agents/dev/` 侧单一实现
+  （`agents/dev/policy_loader.py`），`ops/dev.py` 改为薄调用（不得留第二份，同 019"两处收敛目标"口径）。
+  装载失败 ⇒ 阶段 `failed` 且原因点名（**不**静默取"最新/第一条"策略）。
+- **原则四例外的三项替代约束必须在该下沉路径上落机检**（宪章原则四末条的显式例外；口径镜像 017 契约
+  C14 的"两项落地义务"，编号以本契约为准）——**三项 = ① 静态检查在装载时生效 / ② 策略执行带超时上限 /
+  ③ 策略零环境对象（含不触网关与不持凭证）**，逐项与机检落点：
+  - ① 静态检查前置：未过 `policies/static_check.check_policy_source` ⇒ 拒绝装载、不入历史、0 网关 0 落树；
+  - ② **执行超时**：静态检查不禁循环 ⇒ 装载/执行路径**必须**带超时上限（注入死循环策略 ⇒ 超时判失败
+    而非挂死，镜像 `core/degraded/compare.py` 的 `CompareError` 口径）；
+  - ③ **策略零环境对象 / 不触网关**：策略只被喂 `plan(inputs, config)`（**不**交付 `observed()`/`probe()`
+    等环境对象，也**不**交付对象存储/账本/网关句柄），策略本体**不持有**对象存储凭证、**不经网关**、
+    **不触生成**——网关调用由**宿主** `run_dev_round` 按既有轮次口径发出并受 019 门禁约束，
+    策略拿不到任何句柄。
+  - 机检落点：018 的 `tests/unit/test_dev_policy_loader.py`（先写、确认失败）与
+    `agents/dev/policy_loader.py`（实现）；**未落实即视为原则四未通过**（本特性不放宽例外条件，
+    也不借此把开发环节升级为自动进化）。
+- 版本来源 = 形态配置的部署指针 `deployment.dev.current_policy_version`（`configs/movie.yaml` 当前
+  `:625`、`configs/shortdrama.yaml` 当前 `:624`），按 `agents/pilot/stages.py` 的 `calibration_data_dir`
+  （当前 `:205-227`）那种"**直读 YAML + 相对仓库根解析**"的口径读取，缺指针/源码不存在 ⇒
   **启动前拒绝**（不回落）。
 - 产出：`StageOutcome(products=(ProductRef(kind="slate", ref=<slate_hash>, content_hash=<slate_hash>),),
   cost_usd=result.spent_usd, candidates=<由 result.job 构造：artifact_hash 非空 ⇒ 1.0，否则 0.0 + 理由>,
   detail={artifact_hash, policy_version, entry_count, production_marks, cost_reconciliation, spent_usd})`。
   `kind` 取值与 C4 一致；`detail` 键集是本阶段对下游的**唯一**可见面。
   `content_hash` 的可核性：工件按 `artifacts.put(artifact.canonical_json().encode())` 入对象存储
-  （`agents/dev/loop.py:720`），`put` 返回 BLAKE3 全文哈希（`core/tree/artifacts.py:24-26`）⇒
-  `content_hash == slate_hash()`（`agents/dev/artifact.py:259-261`），两条取数路径同值。
+  （`agents/dev/loop.py` 的轮次实现，当前 `:720`）；`ArtifactStore.put`（协议在
+  `core/tree/artifacts.py`，当前 `:48-49`）返回的正是 `content_hash`（同文件当前 `:24-26`）的
+  BLAKE3 全文哈希 ⇒ `content_hash == slate_hash()`（`agents/dev/artifact.py` 的 `slate_hash`，
+  当前 `:259-261`），两条取数路径同值。
 - 失败语义：`result.job["status"] == "rejected"`（执行前拒绝）与 `failed`（已发生费用照计）都判 `failed`，
-  下游 `script` 如实 `skipped`、零调用（`core/orchestration/models.py:439-457` 已机检"失败点之后必须 skipped"）。
-- **输入来源（判断项）**：`run_dev_round` 的 `_validate_inputs`（`agents/dev/loop.py:176-191`）要求
-  `genre_bounds` + `audience`，而运行级输入是 `PilotInputs(topic, target_duration_min, characters,
-  constraints)`（`agents/pilot/pilot.py:40-58`）——**两套字段名不重合**。规格把字段级映射留给 plan，
+  下游 `script` 如实 `skipped`、零调用（`core/orchestration/models.py` 的"失败点之后必须 skipped"机检，
+  当前 `:439-457`）。
+- **输入来源（判断项）**：`run_dev_round` 的 `_validate_inputs`（`agents/dev/loop.py`，当前 `:176-191`）
+  要求 `genre_bounds` + `audience`，而运行级输入是 `PilotInputs(topic, target_duration_min, characters,
+  constraints)`（`agents/pilot/pilot.py` 当前 `:40-58`）——**两套字段名不重合**。规格把字段级映射留给 plan，
   故本契约只绑定**形状与禁令**：`dev` 输入必须由**显式声明**的运行级映射（或形态配置声明）产生，
   逐字段可追溯；**未声明的直通禁止**；任一 `dev` 实际读取的字段无来源 ⇒ 预检拒绝启动（不静默补默认）。
-  具体键名与映射函数归 plan。
+  具体键名与映射函数归 plan。**时长粒度**：运行级 `target_duration_min` 为浮点分钟（C10/C-01 口径），
+  与生效成片时长的比较容差 `1e-6`。
 
 ### 场景
 

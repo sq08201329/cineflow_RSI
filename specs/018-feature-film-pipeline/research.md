@@ -9,9 +9,11 @@
 ## 决策 1：落点与包边界 = 链与证据面留在 `agents/pilot/`，报告件新增 `run_report.py`
 
 **结论**：七环节链、交接声明、样片包与预检全部改造在 `agents/pilot/{stages,pilot,handoffs,package,backends}.py`；
-新增**一个**模块 `agents/pilot/run_report.py`（性能画像 + 成本第三方腿对账，落报告侧
-`pilot/profiles/{run_id}.json`）；**不**下沉 `core/`、**不**放 `ops/`。位宽参数化落
-`agents/storyboard/`（`config.py` + `board_render.py`），体量键落两形态 `pilot` 段（`pilot.scene_count` /
+新增**两个**模块——`agents/pilot/run_report.py`（性能画像 + 成本第三方腿对账，落报告侧
+`pilot/profiles/{run_id}.json`）与 `agents/pilot/scale.py`（派生镜头数**单一无环持有者**，纯计算叶子）；
+**不**下沉 `core/`、**不**放 `ops/`。索引块网格参数化落
+`agents/storyboard/`（`config.py` + `board_render.py`；`config.py` 只**读** `agents/pilot/scale.py` 的函数），
+体量键落两形态 `pilot` 段（`pilot.scene_count` /
 `lines_per_scene` / `rehearsal`），策略装载落 `agents/dev/policy_loader.py`。
 
 **理由**：`core/orchestration` 是**零业务概念**的通用编排层（`core/orchestration/models.py:14-16`
@@ -34,12 +36,13 @@
 
 ## 决策 2：`dev` 作为链首的插入方式与"清单同步"风险的消解
 
-**结论**：`build_stage_specs`（`agents/pilot/stages.py:1018-1069`）首项插入 `dev` 段
+**结论**：`build_stage_specs`（`agents/pilot/stages.py` 当前 `:1018-1069`）首项插入 `dev` 段
 （`stage_id="dev"`、`depends_on=()`、`entrypoint=_dev_entry`、`handoff=_handoff_dev`、`output_kind="slate"`），
-`script` 的 `depends_on` 由 `()` 改为 `("dev",)`；`PILOT_STAGE_IDS`（`:94`）同步为首位。必须**同批**改动的
+`script` 的 `depends_on` 由 `()` 改为 `("dev",)`；`PILOT_STAGE_IDS`（当前 `:94`）同步为首位。必须**同批**改动的
 七处清单（逐处 file:line 见 plan.md"现状勘查"第 1 条）：阶段元组、阶段表、`AgentConfigs`、
 运行时装配（含 `agents/dev/db.py:60 create_jobs_schema` 建表）、`agents/pilot/pilot.py` 的**四处**
-清单（`:114-129` 加载器 / `:135-140` 权重循环 / `:198-205` `AgentConfigs` 构造 / `:208-224` 预算循环）、
+清单（`config_completeness` 加载器元组当前 `:117-131` / 权重循环当前 `:135-140` /
+`AgentConfigs` 构造当前 `:198-205` / 预算循环当前 `:208-224`）、
 `agents/pilot/package.py:173-181` 的产物 kind 与内容类型、以及两形态配置声明。消解办法不是"记得改"，
 而是**加不变量断言**：`PILOT_STAGE_IDS` == 阶段表顺序 == 权重循环名单 == 加载器名单 == 两形态的
 `evaluator_weights` 键集；`PILOT_STAGE_IDS` 的每一项都必须有产物 kind 登记、后端槽位映射
@@ -60,28 +63,32 @@
 - *让预检跳过 `dev`（少一环也能跑）*：正是 FR-001 禁止的"静默降级"，且 `dev` 的档位缺失会在切真实后端时才炸
   （SC-006 失守）。
 
-## 决策 3：交接声明的形状 = 三类来源（承接含改名 / 运行级 / 派生）+ 逐字段来源 + 两模式化
+## 决策 3：交接声明的形状 = `reads` 三类（承接含改名 / 运行级 / 派生）+ `dropped` 独立集 + 取数依据
 
-**结论**（契约 C5）：在 `agents/pilot/handoffs.py` 新增双来源决策视图（复用 `FieldParity` 承担
-"上游 → 下游"的守恒层，新增部分承担"来源分类"层）：
+**结论**（契约 C5）：在 `agents/pilot/handoffs.py` 新增双来源决策视图（**同名字段子集**的守恒层继续用
+`FieldParity`，新增部分承担"来源分类 + 取数依据"层）：
 
 ```
 DevScriptHandoff(
   mode,                       # "dev_script_handoff" | "run_level_pilot_inputs"（二值，无第三值）
   reads: {下游键: 类 ∈ {承接, 运行级, 派生}},   # 合计且每键恰一类（逐字段来源）
   renames: {下游键: 上游字段名},  # 承接映射：同名承接 = 恒等，改名承接（genre → topic）= 显式登记
-  parity: FieldParity(...),   # 上游 → 下游的守恒声明（丢弃/派生显式；承接映射同上）
+  dropped: frozenset,         # 独立集合（与 reads 并列，不是同一分类的第四项）；承接 ↔ 丢弃互斥
+  derived: frozenset,         # 派生键集合（不得占用上游/运行级/承接目标键名）
+  sources: {"entries", "production_marks"},   # 取数依据（选条入口）：不进 reads、也不进 dropped
 )
+"上游" = 可移交要点集合（genre/constraints/characters），**不是**整张导出面
 SCRIPT_INPUT_READS = {"topic", "target_duration_min", "constraints", "characters"}
 守恒等式（本交接，契约 C5）：下游读取集 == renames(上游 − 丢弃) ∪ 运行级 ∪ 派生
 ```
 
 断言（构造即校验）：① `set(reads) == SCRIPT_INPUT_READS`（**合计且每键恰一类**；出现未声明读取键 ⇒
 拒绝并点名该键）；② 读取集**源码扫描式锁定**（两式 `inputs[` / `inputs.get(` 扫描 + 下游 loop 的输入
-归一口径 `agents/screenplay/loop.py:186-204` **双向绑定**，新增读取点未登记即红）；③ `parity` 三式沿用
-既有 `FieldParity.consistent()`（`handoffs.py:50-56`）：`下游 == (上游 − 丢弃) ∪ 派生`、
-`丢弃 ⊆ 上游`、`派生 ∩ (上游 ∪ 运行级 ∪ 承接映射值集) == ∅`，且**承接与丢弃互斥**
-（同一上游字段不得既承接又丢弃：`genre` 承接为 `topic` ⇒ 丢弃集里不得出现 `genre`）；④ `mode` 两值都必须声明（无 `dev` 的链必落
+归一口径 `agents/screenplay/loop.py:186-204` **双向绑定**，新增读取点未登记即红）；③ **同名字段子集层**沿用
+既有 `FieldParity.consistent()`（`agents/pilot/handoffs.py` 当前 `:50-56`）：同名字段子集成立
+`下游同名键集 == (上游 − 丢弃) ∪ 派生`；**承接/运行级层不复用 `consistent()`，另立断言 ①~⑥**（见契约 C6：
+守恒等式、`renames` 覆盖承接类键、承接与丢弃互斥、派生键约束、取数依据登记）——两层**不互相放宽**；
+④ `mode` 两值都必须声明（无 `dev` 的链必落
 `run_level_pilot_inputs`），生效 `mode` **随机读可见**（`StageState.detail` + 预检报告）。
 
 **本特性已核实的映射**（`上游` = `agents/dev/export_slate.py:26-35` 的 `EXPORT_ENTRY_FIELDS`；
@@ -111,8 +118,9 @@ SCRIPT_INPUT_READS = {"topic", "target_duration_min", "constraints", "characters
 把 `genre` 记进丢弃集（`topic` 取运行级）形式上合规、语义上把选题的题材丢掉了，**已否决**。
 本轮对齐已同步到契约 C5/C6（逐键定案表 + 承接映射）与 [plan.md](plan.md) 缺口 13，**无待裁决项**。
 
-**理由**：规格澄清 Q3 把契约钉在既有先例上（"下游 == (上游 − 丢弃) ∪ 派生"），而 Q8 又要求运行级字段
-"仍生效但必须显式声明、禁止静默择一"。现有 `FieldParity`（`agents/pilot/handoffs.py:35-75`）只有两类，
+**理由**：规格澄清 Q3 把契约钉在既有先例上（**同名字段子集**的"下游同名键集 == (上游 − 丢弃) ∪ 派生"，
+`renames` 引入改名承接后该式**不可能**在新层成立），而 Q8 又要求运行级字段
+"仍生效但必须显式声明、禁止静默择一"。现有 `FieldParity`（`agents/pilot/handoffs.py` 当前 `:35-75`）只有两类，
 若把运行级字段塞进 `derived` 会让"派生"一词失真（它不是从上游派生的），若不加逐字段来源则无法机检
 "未声明透传"；同理，改名承接若只按 frozenset 记（`genre` 进丢弃 + `topic` 进派生），会把"承接"错记成
 "丢弃 + 派生"——故须 `renames` 承担改名。两处都会让 FR-016 的"禁止静默择一"退化为口号。逐字段的
@@ -151,56 +159,64 @@ SCRIPT_INPUT_READS = {"topic", "target_duration_min", "constraints", "characters
   故障定位代价远大于启动期拒绝。
 - *由交接"修正"工件（补齐缺失要点）*：等于编造选题内容（原则六不编造）。
 
-## 决策 5：位宽配置化、下限校验与升版义务（**不取**镜组切分、**不取**限镜数）
+## 决策 5：索引块网格配置化、容量校验与升版义务（**不取**镜组切分、**不取**限镜数）
 
-**结论**（契约 C8/C9）：位宽落 **`storyboard.render.index_bits`（必填，int ≥ 1）**，
-`agents/storyboard/board_render.py` 的模块常量 `INDEX_BITS = 4`（`:38-40`）退役，编（`:137-141`）、
-解（`:144-155`）、绘（`:203-207`）三处**共用同一取值**（从 `render_cfg` 取，经 `_require_render_cfg`
-（`:71-77`）缺项即报错）。**下界校验**：`2**index_bits ≥ 该形态声明的镜头数`（单一派生源
-`stages.py:230-247`：`max(场景数, ceil(成片时长 / 单镜时长))`，序号 `0..n-1` ⇒ `2**bits ≥ n` 恰够；
-`movie` 60 镜 ⇒ **≥ 6 位**：`2**5 = 32 < 60 ≤ 64 = 2**6`）；**上界（解码保真）**：
-`2**index_bits ≤ render.width`（位块宽 `max(1, width // 2**bits)` 在块数超像素数时退化、位间互相吞并）；
-最终守卫是**全量编解码往返断言**（对 `0..镜头数-1` 逐序号 `decode_index_code(render_shot_card(i)) == i`）。
+**结论**（契约 C8/C9）：索引码泛化为 **R 行 × C 列块网格**（容量 `2**(R·C)`），落
+**`storyboard.render.index_grid.{rows, cols}`（必填）**；`agents/storyboard/board_render.py` 的模块常量
+`INDEX_BITS = 4` 与 `_INDEX_ROWS = 2`（当前 `:39-40`）退役，编（当前 `:137-141`）、
+解（当前 `:144-155`）、绘（当前 `:203-208`）三处**共用同一取值**（从 `render_cfg` 取，经 `_require_render_cfg`
+（当前 `:71-77`）缺项即报错）。**容量下界**：`2**(R·C) ≥ 该形态派生镜头数`（派生镜头数是**单一无环持有者**
+`agents/pilot/scale.py` 的 `max(场景数, ceil(成片时长 / 单镜时长))`，序号 `0..n-1` ⇒ `2**(R·C) ≥ n` 恰够；
+`movie` 原值 **2700 镜**（`5400 s / 2.0 s`）⇒ 容量 ≥ **12 位**：`2**11 = 2048 < 2700 ≤ 4096 = 2**12`，
+如 `rows: 2, cols: 8`（16 位））；**量子上界（解码保真）**：
+`2**C ≤ render.width`（块宽 `max(1, width // 2**C)` 在块数超像素数时退化、位间互相吞并；又 `1 ≤ R ≤ height`）；
+最终守卫是**全量编解码往返断言**（对 `0..派生镜头数-1` 逐序号 `decode_index_code(render_shot_card(i)) == i`）。
+**派生镜头数取决于 `clip_spec.duration_seconds`（配置）**：形态要更少镜头就改单镜时长，**不是**放宽容量校验。
 **升版义务（本案为真，不是条件句）**：`frame_function_hash()` = `board_render.py` 文件字节摘要
-（`:233-239`，其 docstring 已明写"含构图/色板/索引条口径"），被 `proxy.emotion_alignment` 版本号拼接
-（`agents/storyboard/evaluators/alignment.py:91-97`）——**位宽一改，该评估器必然升版本**。
+（当前 `:233-239`，其 docstring 已明写"含构图/色板/索引条口径"），被 `proxy.emotion_alignment` 版本号拼接
+（`agents/storyboard/evaluators/alignment.py` 当前 `:88-97`）——**网格参数一改（含仅改配置取值），该评估器必然升版本**。
 既有已落盘工件为内容寻址、**不受影响**；**禁止**任何改写历史节点/工件的路径（无迁移、无重算、无回填）。
 证据三条：① 冻结**旧版本字面量**并断言新版本 ≠ 旧版本（先例 `tests/contract/test_dev_contracts.py:345`
 的 `BOOTSTRAP_VERSION` 冻结法）；② 旧 blob 字节与旧节点得分无写路径（静态断言 + 无迁移脚本）；
-③ 位宽进 `config_snapshot`（`agents/storyboard/loop.py:269` 已冻结 `render` 段）⇒ 改位宽即新快照指纹、
+③ 网格参数进 `config_snapshot`（`agents/storyboard/loop.py` 当前 `:269` 已冻结 `render` 段）⇒ 改网格即新快照指纹、
 新树、新节点。
 
-**理由**：位宽是**渲染参数**，而 `render` 段已经天然流动到所有需要它的地方——`StoryboardConfig.render`
-（`agents/storyboard/config.py:247`）→ 模拟渲染器（`platform/simulated.py:53`）→ 评估器 `render_cfg`
-（`evaluators/__init__.py:37`，`alignment.py:78` 校验 fps/width/height）→ 树 `config_snapshot`
-（`loop.py:269`）。放进 `render` 就**只有一处取值**，不存在"帧产出按 A 位宽、评估器按 B 位宽"的第二来源。
-"每镜一码"（`encode_index_bits` 一条码 = 一个镜头序号）的确定性口径被完整保留，且下界/上界校验把"位宽够不够"
-变成**可机检**（这正是"防同类 bug 再犯"的落点：今天 `shortdrama` 的 16 镜恰在 4 位域上限，是**临界巧合**
-而非余量）。
+**理由**：网格参数是**渲染参数**，而 `render` 段已经天然流动到所有需要它的地方——`StoryboardConfig.render`
+（`agents/storyboard/config.py` 当前 `:247`）→ 模拟渲染器（`platform/simulated.py`）→ 评估器 `render_cfg`
+（`evaluators/__init__.py`，`alignment.py` 校验 fps/width/height）→ 树 `config_snapshot`
+（`loop.py` 当前 `:269`）。放进 `render` 就**只有一处取值**，不存在"帧产出按 A 网格、评估器按 B 网格"的第二来源。
+"每镜一码"（一镜一条码）的确定性口径被完整保留，且容量下界/量子上界校验把"容量够不够"
+变成**可机检**（这正是"防同类 bug 再犯"的落点：今天 `shortdrama` 的 16 镜恰在旧 4 位单行网格上限，是**临界巧合**
+而非余量；`movie` 的 2700 镜才是暴露面）。
 
 **被否决**：
 - *按镜组切分（每 16 镜一组、组内重新编号）*：引入**组间边界语义**（同一物理镜序号在不同组内编码不同），
   解码需知道组划分与组内偏移，帧身份不再自描述；且评估器/覆盖门禁/回放匹配键都要携带组信息——
   为一个编码问题上引入一层新语义，规格已明示不取。
 - *限镜数（把最小可行长片压到 16 镜以内）*：让 G2 的"长片体量"名存实亡（用户故事 1 的第一句即"长片体量项目"）；
-  且"上限"会变成一个**写死的业务数字**（而非配置声明）。
-- *位宽写死在代码里（只把 4 改成 6/7）*：下次形态体量再变即重演同一 bug（且 `movie` 与 `shortdrama` 的
+  且"上限"会变成一个**写死的业务数字**（而非配置声明）。要更少镜头应当**改 `clip_spec.duration_seconds`**。
+- *把容量写死在代码里（只把 4 改成 6/12）*：下次形态体量再变即重演同一 bug（且 `movie` 与 `shortdrama` 的
   需求不同，写在代码里必然会退化成形态分支）。
-- *位宽放 `storyboard` 段顶层而非 `render` 内*：会多出"帧产出与评估器两处取值"的接缝：本仓至少有三个
+- *把容量放 `storyboard` 段顶层而非 `render` 内*：会多出"帧产出与评估器两处取值"的接缝：本仓至少有三个
   调用点取 `render_cfg`，漏传一处即静默回落（比改名成本高得多）。
-- *把位宽并进评估器版本号之外的快照键（如 `alignment` 段）*：位宽是**帧产出**的口径，不是对齐口径；
+- *把网格参数并进评估器版本号之外的快照键（如 `alignment` 段）*：它是**帧产出**的口径，不是对齐口径；
   放错段会让"帧函数哈希已进版本号"的既有防线失效。
 
 ## 决策 6：场景数与每场景行数配置化（码内默认与码内常量一并退役）
 
-**结论**（契约 C10）：新增必填键 `pilot.scene_count` 与 `pilot.lines_per_scene`（二者缺一即报错）；
-`agents/pilot/stages.py:97` 的 `_DEFAULT_SCENE_COUNT` **删除**（不得再作默认值来源），
-`build_runtime` 的 `shot_plan`（`:195`）改读 `pilot.scene_count`；
-`build_screenplay_plan`（`:902-960`）的 `range(4)`（`:918`）与 `range(12)`（`:930`）改读同一对键。
+**结论**（契约 C10）：新增必填键 `pilot.scene_count` 与 `pilot.lines_per_scene`（二者缺一即报错），
+**唯一解析者 = `PilotConfig`**（`pilot` 段的加载器）；`agents/*/config.py`（含 `agents/screenplay/config.py`）
+**不得**读 `pilot` 段，消费侧**经参数注入**取值（C-02）。
+`agents/pilot/stages.py` 的 `_DEFAULT_SCENE_COUNT`（当前 `:97`）**删除**（不得再作默认值来源），
+`build_runtime` 的 `shot_plan`（当前 `:195`）改取注入值；
+`build_screenplay_plan`（当前 `:902-960`）的 `range(4)`（当前 `:918`）与 `range(12)`（当前 `:930`）改取同一对注入值。
 页数一致性纳入档位机检：`场景数 × 每场景行数 ÷ lines_per_page` 必须落在
 `[成片时长 − 页数容差, 成片时长 + 页数容差]`（`rule.page_minutes` 的口径，`page_minutes.py:55-66`）。
+**派生镜头数的持有者**：`agents/pilot/scale.py`（新，叶子模块）给出
+`max(场景数, ceil(成片时长 / 单镜时长))`，`build_shot_plan` 与 `agents/storyboard/config.py` 的容量校验
+**都只读它**（F-04）。
 **键名落点说明**：`scene_count` 落 `pilot` 段（链的装配面，与 `data-model.md` 同口径）；`lines_per_scene`
-是**本计划补齐的键**——契约 C10 已登记该码内常量的存在（`stages.py:930`）但未落键，而页数门禁同时依赖
+是**本计划补齐的键**——契约 C10 已登记该码内常量的存在（当前 `:930`）但未落键，而页数门禁同时依赖
 "场景数 × 每场景行数"，只补场景数仍过不了门禁。
 
 **理由**：规格澄清只点名了场景数（`_DEFAULT_SCENE_COUNT`），但**页数门禁的实际输入是"场景数 × 每场景行数"**
@@ -229,23 +245,31 @@ pilot:
       target_duration_s / script_target_minutes / script_tolerance_minutes / clip_duration_seconds
 ```
 
+**时长粒度（C-01）**：`target_duration_s` 为**秒级浮点**（**可表达 30 秒演示档**），分钟键为**浮点分钟**
+（`0.5` 合法，`ops/pilot.py --minutes` 与运行级 `PilotInputs.target_duration_min` 同步为浮点），
+折算容差 `1e-6`（只吸收浮点表示误差）。
+
 生效值**单点解析**（一处解析、全链消费）：`status=declared` 时 `scale` 覆盖对应体量键
 （`editing.target_duration_s` / `screenplay.target_duration_min` / `screenplay.page_tolerance` /
 `visual.clip_spec.duration_seconds`），链路拓扑、交接契约、门禁与评估器组合**一行不动**；
 `status=unstandardized`（运营未给定数字）时**不覆盖**（形态原值在 force）并如实标注"未标定"。
-**内部一致性机检**：秒 == 分钟 × 60；页数区间 == 分钟 ± 容差；派生镜头数（
-`build_shot_plan`（`:230-247`）+`build_shotlist`（`:503-533`）的实际产出）满足位宽下界（决策 5）；
+**内部一致性机检**：`target_duration_s == script_target_minutes × 60`（容差 `1e-6`）；页数区间 == 分钟 ± 容差；
+派生镜头数（`agents/pilot/scale.py` 唯一持有者；`build_shot_plan` 当前 `:230-248`、
+`build_shotlist` 当前 `:503-533` 的实际产出与之一致）满足**容量下界** `2**(R·C) >= derived_shot_count`（决策 5）；
 页数 == `pilot.scene_count` × `pilot.lines_per_scene` ÷ `lines_per_page` ∈ 页数区间。
+**两处时长一致性机检（SC-012①）**：`screenplay.target_duration_min × 60 == editing.target_duration_s`
+（取排练档覆盖后的生效值），以及运行级 `target_duration_min × 60 == 生效成片时长`——不一致 ⇒
+**拒绝启动并点名两处实测值**。
 `work_kind` 随包落盘（**排练产物不得被标为真实作品**）。档位数字属**运营侧输入**：本计划**不发明**；
 `status`/`scale` 取值由运营给定后只改本段（零代码改动，见 plan.md 缺口 4）。
 
-**理由**：今天"缩档"事实上由**演示脚本**承担（`ops/demo_pilot.py:51-56` 在临时副本里改写
+**理由**：今天"缩档"事实上由**演示脚本**承担（`ops/demo_pilot.py` 当前 `:51-61` 在临时副本里改写
 `editing.target_duration_s` / `screenplay.target_duration_min` / `page_tolerance`），那是"改脚本即改行为"、
 不可机检、也无处登记"未标定"，且它**不覆盖场景数**（场景数仍是码内 4）。而 `movie` 形态的**原值**
 今天根本跑不通（剧本 90 分钟 vs 剧本计划 1.07 页；`editing.target_duration_s: 120` 与
-`screenplay.target_duration_min: 90` 自相矛盾）——所以"形态配置声明的排练档"不是锦上添花，
+`screenplay.target_duration_min: 90` 自相矛盾——**按长片语义应为 5400 秒**）——所以"形态配置声明的排练档"不是锦上添花，
 它是**让长片体量可声明、可切换、可机检**的唯一载体。一致性校验的必要性也由此而来：
-体量几项只要有一项与其余项脱节，链路就会在某个门禁处炸（页数、时长、镜头编码域三处都是）。
+体量几项只要有一项与其余项脱节，链路就会在某个门禁处炸（页数、时长、索引容量三处都是）。
 
 **被否决**：
 - *在演示脚本里继续等值派生*：现状即如此，缺点是"改脚本改行为"、不可机检、"未标定"无登记处，
@@ -381,8 +405,9 @@ LLM 腿口径）与预检报告（`agents/pilot/pilot.py:240-252` 的 `pilot_bac
 （`StageState.cost_usd`）⨯ ② 各 Agent 落盘账目
 （`state.detail["spent_usd"]`，既有 `summarize_cost`，键集 + 1e-9 容差）⨯ ③ **网关/账本记账**。
 第三腿取数方式：**环节边界只读采样**——在阶段执行前后采样网关累计记账
-（`LLMGateway.total_cost_usd`，`core/llm_gateway/gateway.py:167` 自注"网关账本（对账三方之一）"），
-差值即该环节的 LLM 记账增量；采样包装**只读、不改网关、不进树**，装饰在 `build_stage_specs` 一处。
+（`LLMGateway.total_cost_usd`，`core/llm_gateway/gateway.py` 当前 `:167` 自注"网关账本（对账三方之一）"），
+差值即该环节的 LLM 记账增量；采样包装**只读、不改网关、不进树**，装饰在 `build_stage_specs` 一处；
+**不构造 `LLMGateway`（构造点普查仍 13 处）、不改 `cost_breakdown`**（E-03）。
 逐环节增量落 `cost.json`（确定性段：同输入同配置可复现）；**可比性分级**：
 - **LLM 腿专属环节**（`PLATFORM_SLOTS` 不含者：`dev`/`script`，`backends.py:60`）：逐环节**必须相等**；
 - **混合腿环节**（`promo` 等既走网关又有平台侧成本）：只要求"阶段成本 ≥ 该环节 LLM 记账增量"
@@ -396,7 +421,7 @@ LLM 腿口径）与预检报告（`agents/pilot/pilot.py:240-252` 的 `pilot_bac
 按环节采样是唯一不动网关契约的取法：网关构造是**逐 run** 的（`agents/pilot/backends.py:186-229`
 在 `build_runtime` 里装配），故进程内累计天然就是"本次运行"的口径，无需给网关加维度、也不破坏
 "`core/llm_gateway` 对 `core/billing` 零 import"的既有边界。**不得给 019 的运行记录 entry 加字段**：
-`RUN_ENTRY_FIELDS`（`core/billing/runlog.py:31-42`）是 `head_digest` 链式摘要的输入
+`RUN_ENTRY_FIELDS`（`core/billing/runlog.py`，当前 `:32-42`）是 `head_digest` 链式摘要的输入
 （`:81-84`），增删字段会让**既有已封存记录的链校验失败**——那是改写历史证据（原则二）。
 
 **被否决**：
@@ -425,5 +450,5 @@ LLM 腿口径）与预检报告（`agents/pilot/pilot.py:240-252` 的 `pilot_bac
 - **公网服务化与多租户**：本特性仍是内部 CLI + 报告（宪章技术栈约束；web 只读面不动）。
 - **`dev` 环节的自动进化**：策略来源是人、必须过静态检查、必须人工采纳才更新部署指针
   （宪章原则六 + 立项书 §3.2；本特性只把既有轮次入口插进链，不新增任何自动生成/自动部署路径）。
-- **改写历史节点或既有工件**：位宽变更不回溯（决策 5）、无迁移、无回填；运行记录 entry 字段集不动
+- **改写历史节点或既有工件**：索引网格参数变更不回溯（决策 5）、无迁移、无回填；运行记录 entry 字段集不动
   （决策 12）。

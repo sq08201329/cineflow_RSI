@@ -16,13 +16,14 @@
 ```yaml
 pilot:
   scene_count: <int>             # 场景数（FR-014）：缺项即报错，不取码内默认
+  lines_per_scene: <int>         # 每场景行数（FR-014）：同上（页数门禁的另一半输入）
   rehearsal:                     # 排练档（FR-013）：缩档只改这里，链路一行不动
     status: declared             # declared | unstandardized（未标定：只标注、不发明数字）
     work_kind: rehearsal         # rehearsal | real_work（真实作品用形态原值、不缩档）
     scale:                       # status=declared 时逐键齐备（缺一即报错）；取值属运营侧输入
-      target_duration_s: <int>          # → 覆盖 editing.target_duration_s
-      script_target_minutes: <int>      # → 覆盖 screenplay.target_duration_min
-      script_tolerance_minutes: <int>   # → 覆盖 screenplay.page_tolerance
+      target_duration_s: <float>        # 秒级（可表达 30 秒演示档）→ 覆盖 editing.target_duration_s
+      script_target_minutes: <float>    # 浮点分钟（0.5 合法）→ 覆盖 screenplay.target_duration_min
+      script_tolerance_minutes: <float> # 浮点分钟 → 覆盖 screenplay.page_tolerance
       clip_duration_seconds: <float>    # → 覆盖 visual.clip_spec.duration_seconds
   performance:                   # 性能门禁阈值（FR-010）
     status: declared             # declared | unstandardized（未标定 → 不给达标结论）
@@ -33,34 +34,47 @@ pilot:
 
 - 生效值解析**单点**（一处解析、全链消费）：`scale` 只覆盖体量键，链路拓扑/交接契约/门禁/评估器组合
   一行不动（FR-013）；`status=unstandardized` 时**不覆盖**（形态原值在 force）且如实登记"未标定"。
-- 场景数**唯一来源** = `pilot.scene_count`；`agents/pilot/stages.py:97` 的 `_DEFAULT_SCENE_COUNT` **退役**。
-  **判断项（发现的规格缺口）**：场景数还有第二处码内硬编码 `stages.py:918`（`for scene_index in range(4)`），
-  规格只点名 `:97`——两处必须一并入配置，否则"缩档只改配置"不成立；同处 `:930` 的 `range(12)`（每场景行数）
-  属同类体量常量，一并登记。
-- 现状兼容：`pilot` 段现在只有 `backend`/`llm_backend`/`overrides`（`configs/movie.yaml:591-594`、
-  `configs/shortdrama.yaml:593-596`），而 `BackendSelection.from_yaml`（`agents/pilot/backends.py:91-130`）
-  **不拒绝段内未知键** ⇒ 新增键不撞既有解析；但须新增 `pilot` 段加载器并登记（`agents/pilot/pilot.py:114-129`、
-  `tests/unit/test_config_integrity.py:29-43` `CONFIG_CLASSES` / `:59-81` `REQUIRED_PATHS`）。
+  不变量 `target_duration_s == script_target_minutes × 60`（容差 `1e-6`，只吸收浮点表示误差）；
+  运行级 `PilotInputs.target_duration_min` 亦为**浮点分钟**，预检硬校验其 ×60 等于**生效**成片时长。
+- 场景数与每场景行数的**唯一解析者 = `PilotConfig`**（`pilot` 段的加载器）：`build_shot_plan`/
+  `build_screenplay_plan` **经参数注入**取值，`agents/*/config.py`（含 `agents/screenplay/config.py`）
+  **不得**读 `pilot` 段（两处解析即两处漂移）。`agents/pilot/stages.py` 的三处码内体量常量**退役**：
+  `_DEFAULT_SCENE_COUNT`（当前 `:97`）、`build_screenplay_plan`（当前 `:902-960`）内的 `range(4)`
+  （当前 `:918`）与 `range(12)`（当前 `:930`）。
+- **派生镜头数的单一无环持有者**：`derived_shot_count =
+  max(scene_count, ceil(target_duration_s / clip_duration_seconds))` 落 `agents/pilot/scale.py`（新；
+  叶子模块），`build_shot_plan`、`storyboard` 侧容量校验（见下）与排练档一致性机检**都只读该函数**
+  ——**禁止**在两处各写一遍公式。
+- 现状兼容：`pilot` 段现在只有 `backend`/`llm_backend`/`overrides`（`configs/movie.yaml` 当前
+  `:591-594`、`configs/shortdrama.yaml` 当前 `:593-596`），而 `BackendSelection.from_yaml`
+  （`agents/pilot/backends.py`，当前 `:91-130`）**不拒绝段内未知键** ⇒ 新增键不撞既有解析；
+  但须新增 `pilot` 段加载器并登记（`agents/pilot/pilot.py` 的 `config_completeness` 加载器元组，
+  当前 `:117-131`；`tests/unit/test_config_integrity.py` 的 `CONFIG_CLASSES`/`REQUIRED_PATHS`，
+  当前 `:23-37`/`:43-67`）。
 - **登记点条件项**：若两形态 `pilot` 段取值不同（排练档与性能阈值按形态声明，大概率如此），`pilot` 须并入
   `tests/unit/test_form_switch.py:260-281` 与 `tests/contract/test_pilot_contracts.py:423-440` 的
   **顶层差异集**（规格未列此点，本次勘查补登）。
 
-## `storyboard.render.index_bits`（索引编码位宽，FR-015）
+## `storyboard.render.index_grid`（索引块网格与容量，FR-015）
 
 ```yaml
 storyboard:
-  render: {fps: 8, width: 320, height: 240, index_bits: 6, …}   # 缺 index_bits 即装配期报错
+  render: {fps: 8, width: 320, height: 240, index_grid: {rows: 2, cols: 8}, …}   # 缺 index_grid 即装配期报错
 ```
 
-- 单一来源：编码/解码**同取**该键（`board_render.py:137-155` 两位宽函数参数化），码内 `INDEX_BITS = 4`
-  （`board_render.py:39`）不再作取值来源、也不作静默回落值。
-- 下界（防复发点）：`2**index_bits >= 该形态声明的镜头数` = `max(场景数, ceil(成片目标时长 / 单镜时长))`
-  （单一派生源 `stages.py:230-247`，**不新造第二个数字**）；上界（解码保真）：
-  `2**index_bits <= storyboard.render.width`——位块宽 `max(1, width // 2**bits)`（`board_render.py:148`/`:205`）
-  在块数超像素数时退化、位之间互相吞并。
-- 实测：movie `120s / 2.0s = 60 镜`（`configs/movie.yaml:166`/`:113`，render width 320 在 `:234`）
-  ⇒ 位宽 ∈ [6, 8]；shortdrama `16 镜`（`configs/shortdrama.yaml:175`/`:117`，width 144 在 `:244`）
-  ⇒ 位宽 ∈ [4, 7]。两形态取值不同，而 `storyboard` 段**已在**形态差异集内 ⇒ 无新增登记点。
+- 索引条 = **帧顶 `R` 行 × `C` 列块网格**，**容量 = `2**(R·C)`**；现状 `INDEX_BITS = 4` 与
+  `_INDEX_ROWS = 2`（`board_render.py` 当前 `:39-40`）是**当前设置而非口径**，两常量**退役**。
+- 单一来源：编码/解码/绘制**同取**该键（三个函数网格参数化，`board_render.py` 当前
+  `:137-141`/`:144-155`/`:203-208`），不再作取值来源、也不作静默回落值。
+- 容量下界（防复发点）：`2**(R·C) >= 该形态派生镜头数`（持有者见上，**不新造第二个数字**）；
+  量子上界（解码保真）：`2**C <= render.width`——块宽 `max(1, width // 2**C)`
+  （`board_render.py` 当前 `:148`/`:205`）在块数超像素数时退化、位之间互相吞并；又 `1 <= R <= height`。
+- 实测：movie **原值** `5400 s / 2.0 s = 2700 镜`（`editing.target_duration_s` 按长片语义修正为
+  `90 × 60`；`clip_spec.duration_seconds: 2.0`，`configs/movie.yaml` 当前 `:113`，render width 320 在
+  `:234`）⇒ 容量 ≥ **12 位**（如 `rows: 2, cols: 8` = 16 位，`2**8 = 256 ≤ 320`）；
+  shortdrama `120 s / 7.5 s = 16 镜`（当前 `:117`，width 144 在 `:244`）⇒ 容量 ≥ **4 位**
+  （如 `rows: 1, cols: 4`）。**镜头数取决于 `clip_spec.duration_seconds`**：要更少镜头就改单镜时长，
+  **不是**把容量校验放宽。两形态取值不同，而 `storyboard` 段**已在**形态差异集内 ⇒ 无新增登记点。
 
 ## 领域模型
 
@@ -73,8 +87,11 @@ storyboard:
   与 `STAGE_TREE_PREFIX`（stage_id → 轮次树前缀：`script→screenplay`、`dev→dev`…）——一处声明、全链消费；
   **不得**用 `f"{stage_id}-round-"` 式推导（`script` 推出 `script-round-` 即错，实为 `screenplay-round-`，
   `agents/screenplay/loop.py:121-123`）
-- **跨环节交接声明（FieldParity，复用+扩展）**：上游导出字段集 / 下游输入字段集 / 丢弃集 / 派生集
-  （`agents/pilot/handoffs.py:35-75`）+ 新增**运行级集**；等式扩展为"四类**互斥且完备**"
+- **跨环节交接声明（FieldParity 复用 + DevScriptHandoff 扩展）**：上游**可移交要点集合** → 下游读取集，
+  `reads` 为**三类**来源（承接含改名 / 运行级 / 派生），`dropped` 是与之**并列的独立集合**
+  （**不是**同一分类的第四项），另有第三类登记项**取数依据**（`entries`/`production_marks`，选条入口）；
+  声明形状与断言集见 [contracts/dev-script-handoff.md](contracts/dev-script-handoff.md) C5/C6
+  （守恒等式 `下游读取集 == renames(上游 − 丢弃) ∪ 运行级 ∪ 派生`）
 - **选题产出导出面（SlateExport，017 交付）**：`EXPORT_FIELDS` / `EXPORT_ENTRY_FIELDS`
   （`agents/dev/export_slate.py:25-34`）；变更须两侧同步
 - **环节来源标注（StageChannelMarking，新增）**：每环节 `source ∈ real|simulated`（019 保留值 `fallback`
