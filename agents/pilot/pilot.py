@@ -1,9 +1,20 @@
-"""试水运行编排（功能 015 US3 / T1520，契约 C10）：预检 → DAG 执行 → 样片包。
+"""试水运行编排（功能 015 US3 / T1520，契约 C10 + 功能 018 阶段 1/2）。
 
-一次试水运行 = **启动前预检**（输入下限 / 配置完整性（全部加载器）/ 预算与并行度可用，
-不合格即拒绝且零成本零落树）→ **六阶段按 DAG 执行**（`core/orchestration` 执行器，
-各段调用对应 Agent 既有 loop 入口，预算/幂等/落树/评估器版本全部沿用）→
-**样片包装配**（`package.py` 五件套）。
+一次试水运行 = **启动前预检**（输入下限 / 配置完整性（全部加载器）/ 预算与并行度可用 /
+**体量档与时长口径一致**，不合格即拒绝且零成本零落树）→ **七环节按 DAG 执行**
+（`core/orchestration` 执行器，各段调用对应 Agent 既有 loop 入口，预算/幂等/落树/评估器
+版本全部沿用）→ **样片包装配**（`package.py` 五件套）。
+
+**体量档单点解析**（功能 018 / 契约 C10）：形态配置 `pilot` 段的 `scene_count`/
+`lines_per_scene`/`rehearsal`/`performance` 由 `PilotConfig` **唯一解析**（缺段/缺键即
+`PrecheckError`，**不取码内默认**）——`agents/*/config.py` 不读 `pilot` 段，消费者按注入取值；
+排练档生效（`status=declared` 且 `work_kind=rehearsal`）时只覆盖**体量键**，链路拓扑/交接
+契约/门禁/评估器组合一行不动。
+
+**时长口径一致性**（功能 018 / SC-012①）：`screenplay.target_duration_min × 60`、
+`editing.target_duration_s`、`pilot.rehearsal.scale.target_duration_s` 与运行级
+`PilotInputs.target_duration_min × 60` 必须指向同一个成片时长（容差 1e-6）——不一致即
+**拒绝启动并点名两处实测值**（不静默择一、不按其一取值）。
 
 可复现（SC-001）：注入确定性时钟 + 全模拟链路 + 样片包不含墙钟/路径，同输入同配置
 两次运行逐字节一致。
@@ -14,9 +25,11 @@
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from agents.pilot import package as package_module
 from agents.pilot import stages as stages_module
@@ -27,6 +40,12 @@ from core.orchestration.models import RunRecord, RunStatus, fingerprint_of
 
 RUNS_DIRNAME = "runs"
 DEFAULT_PACKAGE_DIRNAME = "packages"
+# 排练档状态与作品种类（配置声明取值域）
+REHEARSAL_STATUSES = ("declared", "unstandardized")
+WORK_KINDS = ("rehearsal", "real_work")
+PERFORMANCE_STATUSES = ("declared", "unstandardized")
+# 时长口径比较容差（只吸收浮点表示误差；分钟键与秒键的折算）
+DURATION_TOLERANCE_S = 1e-6
 
 
 class PilotError(Exception):
@@ -38,20 +57,268 @@ class PrecheckError(PilotError):
 
 
 @dataclass(frozen=True)
-class PilotInputs:
-    """试水运行输入：题材 + 目标时长 + 角色 + 约束（素材面由模拟链路派生）。"""
+class RehearsalScale:
+    """排练档体量声明（`status=declared` 时逐键齐备）：缩档只改这里，链路一行不动。
 
-    topic: str
-    target_duration_min: int
-    characters: tuple[str, ...] = ()
-    constraints: tuple[str, ...] = ()
+    时长粒度（C-01 口径）：`target_duration_s` 为**秒级浮点**（可表达 30 秒演示档），分钟键
+    为**浮点分钟**（`0.5` 合法）；不变量 `target_duration_s == script_target_minutes × 60`
+    （容差 `DURATION_TOLERANCE_S`）。
+    """
+
+    target_duration_s: float
+    script_target_minutes: float
+    script_tolerance_minutes: float
+    clip_duration_seconds: float
 
     def to_dict(self) -> dict:
         return {
+            "target_duration_s": self.target_duration_s,
+            "script_target_minutes": self.script_target_minutes,
+            "script_tolerance_minutes": self.script_tolerance_minutes,
+            "clip_duration_seconds": self.clip_duration_seconds,
+        }
+
+
+@dataclass(frozen=True)
+class PilotConfig:
+    """形态配置 `pilot` 段的**唯一解析者**（功能 018 / 契约 C10）。
+
+    解析范围：体量键（`scene_count`/`lines_per_scene`）、排练档（`rehearsal`）、性能门禁阈值
+    （`performance`）。**缺段/缺键即 `PrecheckError`**（不取码内默认——默认值会让"配置即形态"
+    变成空话，也会让"缩档只改配置"在唯一的机检面上失效）。`backend`/`llm_backend`/`overrides`
+    由 `BackendSelection` 另行解析（键集与语义不同，故不复用）。
+    """
+
+    scene_count: int
+    lines_per_scene: int
+    rehearsal_status: str
+    work_kind: str
+    scale: RehearsalScale | None
+    performance_status: str
+    stage_seconds: Mapping[str, float] = field(default_factory=dict)
+
+    @classmethod
+    def from_yaml(cls, config_path: str | Path) -> "PilotConfig":
+        path = Path(config_path)
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise PrecheckError(f"形态配置文件不可读：{path}（{exc}）") from exc
+        return cls.from_dict(payload, where=str(path))
+
+    @classmethod
+    def from_dict(cls, payload: Any, *, where: str = "<mapping>") -> "PilotConfig":
+        if not isinstance(payload, Mapping):
+            raise PrecheckError(f"形态配置根必须为键值映射：{where}")
+        section = payload.get("pilot")
+        if not isinstance(section, Mapping):
+            raise PrecheckError(f"形态配置缺少 pilot 段（体量档与性能阈值不可用）：{where}")
+        scene_count = _require_positive_int(section.get("scene_count"), "pilot.scene_count", where)
+        lines_per_scene = _require_positive_int(
+            section.get("lines_per_scene"), "pilot.lines_per_scene", where
+        )
+        rehearsal_status, work_kind, scale = _parse_rehearsal(section.get("rehearsal"), where)
+        performance_status, stage_seconds = _parse_performance(section.get("performance"), where)
+        return cls(
+            scene_count=scene_count,
+            lines_per_scene=lines_per_scene,
+            rehearsal_status=rehearsal_status,
+            work_kind=work_kind,
+            scale=scale,
+            performance_status=performance_status,
+            stage_seconds=stage_seconds,
+        )
+
+    @property
+    def rehearsal_in_force(self) -> bool:
+        """排练档是否生效：`declared` 且作品种类为排练（真实作品用形态原值，不缩档）。"""
+        return self.rehearsal_status == "declared" and self.work_kind == "rehearsal"
+
+    def effective_target_duration_s(self, form_value: float) -> float:
+        """生效成片时长（秒）：排练档生效时取档位值，否则取形态原值。"""
+        if self.rehearsal_in_force and self.scale is not None:
+            return float(self.scale.target_duration_s)
+        return float(form_value)
+
+    def effective_script_target_minutes(self, form_value: float) -> float:
+        """生效剧本目标时长（浮点分钟）。"""
+        if self.rehearsal_in_force and self.scale is not None:
+            return float(self.scale.script_target_minutes)
+        return float(form_value)
+
+    def effective_script_tolerance_minutes(self, form_value: float) -> float:
+        """生效页数容差（浮点分钟）。"""
+        if self.rehearsal_in_force and self.scale is not None:
+            return float(self.scale.script_tolerance_minutes)
+        return float(form_value)
+
+    def effective_clip_duration_seconds(self, form_value: float) -> float:
+        """生效单镜时长（秒）。"""
+        if self.rehearsal_in_force and self.scale is not None:
+            return float(self.scale.clip_duration_seconds)
+        return float(form_value)
+
+    def annotations(self) -> dict:
+        """档位标注（预检报告/包面用的确定性视图；未标定即如实标注，不发明数字）。"""
+        return {
+            "rehearsal_status": self.rehearsal_status,
+            "work_kind": self.work_kind,
+            "scale_in_force": self.rehearsal_in_force,
+            "scale": None if self.scale is None else self.scale.to_dict(),
+            "source": "declared_scale" if self.rehearsal_in_force else "form_original",
+            "performance_status": self.performance_status,
+            "stage_seconds": dict(self.stage_seconds),
+        }
+
+
+def _require_positive_int(value: Any, key: str, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise PrecheckError(f"形态配置缺少 {key}（须为 ≥1 的整数）：{where}（实际 {value!r}）")
+    return int(value)
+
+
+def _require_positive_number(value: Any, key: str, where: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) <= 0:
+        raise PrecheckError(f"形态配置缺少 {key}（须为正数）：{where}（实际 {value!r}）")
+    return float(value)
+
+
+def _parse_rehearsal(value: Any, where: str) -> tuple[str, str, RehearsalScale | None]:
+    """排练档：`status`/`work_kind` 必需；`status=declared` 时 `scale` 逐键齐备。"""
+    if not isinstance(value, Mapping):
+        raise PrecheckError(f"形态配置缺少 pilot.rehearsal 段：{where}")
+    status = value.get("status")
+    if status not in REHEARSAL_STATUSES:
+        raise PrecheckError(
+            f"pilot.rehearsal.status 取值非法（{status!r}）：只接受 "
+            f"{' | '.join(REHEARSAL_STATUSES)}（缺项即拒绝启动）"
+        )
+    work_kind = value.get("work_kind")
+    if work_kind not in WORK_KINDS:
+        raise PrecheckError(
+            f"pilot.rehearsal.work_kind 取值非法（{work_kind!r}）：只接受 "
+            f"{' | '.join(WORK_KINDS)}（缺项即拒绝启动）"
+        )
+    raw_scale = value.get("scale")
+    if status == "unstandardized":
+        # 未标定：不覆盖（形态原值在 force）；档位数字属运营侧输入，本特性不发明
+        return status, work_kind, None if raw_scale is None else _parse_scale(raw_scale, where)
+    if not isinstance(raw_scale, Mapping):
+        raise PrecheckError(f"pilot.rehearsal.scale 缺失（status=declared 时逐键齐备）：{where}")
+    return status, work_kind, _parse_scale(raw_scale, where)
+
+
+def _parse_scale(raw_scale: Mapping, where: str) -> RehearsalScale:
+    scale = RehearsalScale(
+        target_duration_s=_require_positive_number(
+            raw_scale.get("target_duration_s"), "pilot.rehearsal.scale.target_duration_s", where
+        ),
+        script_target_minutes=_require_positive_number(
+            raw_scale.get("script_target_minutes"),
+            "pilot.rehearsal.scale.script_target_minutes",
+            where,
+        ),
+        script_tolerance_minutes=_require_positive_number(
+            raw_scale.get("script_tolerance_minutes"),
+            "pilot.rehearsal.scale.script_tolerance_minutes",
+            where,
+        ),
+        clip_duration_seconds=_require_positive_number(
+            raw_scale.get("clip_duration_seconds"),
+            "pilot.rehearsal.scale.clip_duration_seconds",
+            where,
+        ),
+    )
+    # 档位内部一致性：秒键与浮点分钟键必须指向同一时长（缺项/漂移即拒绝启动）
+    _require_same_duration(
+        "pilot.rehearsal.scale.target_duration_s",
+        scale.target_duration_s,
+        "pilot.rehearsal.scale.script_target_minutes × 60",
+        scale.script_target_minutes * 60.0,
+    )
+    return scale
+
+
+def _parse_performance(value: Any, where: str) -> tuple[str, dict[str, float]]:
+    """性能门禁阈值：`status` 必需；`declared` 时七环节逐键齐备（未标定不发明数字）。"""
+    if not isinstance(value, Mapping):
+        raise PrecheckError(f"形态配置缺少 pilot.performance 段：{where}")
+    status = value.get("status")
+    if status not in PERFORMANCE_STATUSES:
+        raise PrecheckError(
+            f"pilot.performance.status 取值非法（{status!r}）：只接受 "
+            f"{' | '.join(PERFORMANCE_STATUSES)}（缺项即拒绝启动）"
+        )
+    raw = value.get("stage_seconds")
+    if not isinstance(raw, Mapping):
+        raise PrecheckError(f"形态配置缺少 pilot.performance.stage_seconds 段：{where}")
+    unknown = sorted(set(raw) - set(stages_module.PILOT_STAGE_IDS))
+    if unknown:
+        raise PrecheckError(
+            f"pilot.performance.stage_seconds 出现未知环节 {unknown}："
+            f"可声明环节为 {list(stages_module.PILOT_STAGE_IDS)}（拼错即拒绝，不静默忽略）"
+        )
+    thresholds = {
+        stage_id: _require_positive_number(
+            raw[stage_id], f"pilot.performance.stage_seconds.{stage_id}", where
+        )
+        for stage_id in raw
+    }
+    if status == "declared":
+        missing = [
+            stage_id for stage_id in stages_module.PILOT_STAGE_IDS if stage_id not in thresholds
+        ]
+        if missing:
+            raise PrecheckError(
+                f"pilot.performance.stage_seconds 缺环节阈值 {missing}"
+                "（status=declared 时七环节逐键齐备）："
+                f"{where}"
+            )
+    return status, thresholds
+
+
+def _require_same_duration(label_a: str, value_a: float, label_b: str, value_b: float) -> None:
+    """两处时长必须一致：不一致即拒绝启动并**点名两处实测值**（不静默择一）。"""
+    if abs(float(value_a) - float(value_b)) > DURATION_TOLERANCE_S:
+        raise PrecheckError(
+            f"成片时长口径不一致：{label_a} = {float(value_a):g} s，"
+            f"{label_b} = {float(value_b):g} s"
+            f"（差额 {abs(float(value_a) - float(value_b)):g} s > 容差 {DURATION_TOLERANCE_S:g}s）"
+            "——两处必须指向同一成片时长，此处拒绝启动（不静默择一）"
+        )
+
+
+@dataclass(frozen=True)
+class PilotInputs:
+    """试水运行输入：题材 + 目标时长（**浮点分钟**）+ 角色 + 约束 + 立项输入。
+
+    素材面由模拟链路派生；立项输入（`genre_bounds`/`audience`）供链首环节使用。
+
+    `target_duration_min` 为浮点分钟（功能 018 / C-01：`0.5` = 30 秒演示档合法），预检硬校验其
+    ×60 等于**生效**成片时长；`genre_bounds`/`audience` 是链首立项环节的输入来源（`run_dev_round`
+    的 `_validate_inputs` 要求），**缺项即预检拒绝**（不静默补默认）。
+
+    **输入指纹口径变更留痕**（功能 018 / plan 缺口 2）：扩展字段后 `to_dict()`/`fingerprint()`
+    随之变化，既有 run_id（由指纹派生）口径因此变更——同输入同配置的重跑仍逐字节一致。
+    """
+
+    topic: str
+    target_duration_min: float
+    characters: tuple[str, ...] = ()
+    constraints: tuple[str, ...] = ()
+    genre_bounds: tuple[str, ...] = ()
+    audience: str = ""
+
+    def to_dict(self) -> dict:
+        # 浮点分钟的确定性格式化：整数分钟写整值（避免 2 与 2.0 生成两个指纹）
+        minutes = float(self.target_duration_min)
+        return {
             "topic": self.topic,
-            "target_duration_min": self.target_duration_min,
+            "target_duration_min": int(minutes) if minutes.is_integer() else minutes,
             "characters": list(self.characters),
             "constraints": list(self.constraints),
+            "genre_bounds": list(self.genre_bounds),
+            "audience": self.audience,
         }
 
     def fingerprint(self) -> str:
@@ -112,6 +379,11 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
     path = Path(config_path)
     checked = []
     for name, loader in (
+        # 链首环节的配置段（功能 018）：`dev` 与其余六段同批登记（漏一处即红）
+        ("dev", lambda: stages_module.DevConfig.from_yaml(path)),
+        # `pilot` 段：体量档与性能阈值（功能 018 / C10：本加载器是 `scene_count`/
+        # `lines_per_scene` 两个体量键的**唯一解析者**）
+        ("pilot", lambda: PilotConfig.from_yaml(path)),
         ("screenplay", lambda: stages_module.ScreenplayConfig.from_yaml(path)),
         ("storyboard", lambda: stages_module.StoryboardConfig.from_yaml(path)),
         ("visual", lambda: stages_module.VisualConfig.from_yaml(path)),
@@ -132,13 +404,21 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
         except Exception as exc:  # noqa: BLE001 - 预检统一收口：缺项即拒绝启动
             raise PrecheckError(f"配置完整性预检失败（{name} 段）：{exc}") from exc
         checked.append(name)
-    for agent in ("screenplay", "storyboard", "visual", "sound", "editing", "promo"):
+    # 七个环节的权重键（环节 → 配置段名走单一映射声明，不得以 stage_id 直推）
+    for agent in _stage_sections():
         try:
             load_evaluator_weights(path, agent)
         except Exception as exc:  # noqa: BLE001
             raise PrecheckError(f"配置完整性预检失败（{agent} 权重）：{exc}") from exc
         checked.append(f"weights:{agent}")
     return tuple(checked)
+
+
+def _stage_sections() -> tuple[str, ...]:
+    """链上环节的配置段名（按阶段顺序；`STAGE_CONFIG_SECTION` 的单一消费口径）。"""
+    return tuple(
+        stages_module.STAGE_CONFIG_SECTION[stage_id] for stage_id in stages_module.PILOT_STAGE_IDS
+    )
 
 
 def _declared_tier_limits(config_path: Path) -> dict[str, float]:
@@ -168,23 +448,34 @@ def precheck(
     backend: str | None = None,
     llm_backend: str | None = None,
 ) -> dict:
-    """启动前预检：输入下限 + 配置完整性 + 预算/并行度可用（不合格即拒绝）。
+    """启动前预检：输入下限 + 配置完整性 + 预算/并行度可用 + **时长口径一致**（不合格即拒绝）。
 
     后端面（`pilot` 段）在此**只做取值校验与如实登记**：取值非法即拒绝（与配置完整性同
     口径），但**不验凭证**——`backend: http` 而凭证缺失由装配期（`build_runtime`）显式失败，
     本报告以 `credentials_checked: false` 明确标注这条边界。
 
     `budgets` 的键口径（019）：平台腿按 **agent 名**登记单轮预算；LLM 腿按**环节 id**登记
-    `budget.tiers` 的声明额度（agent 名与环节 id 不一一对应，故不编造映射）。
+    `budget.tiers` 的声明额度（agent 名与环节 id 不一一对应，故不编造映射）——链首 `dev`
+    环节没有单轮预算（`DevConfig` 只有模型价目），走 LLM 腿档位分支（**不为过预检发明
+    单轮预算**）。
+
+    功能 018 新增三处前置判定：① 调用点声明的环节 id 必须在档位键集内（缺档即拒绝启动）；
+    ② 两处时长口径一致（`screenplay.target_duration_min × 60` == 生效 `editing.target_duration_s`，
+    含排练档覆盖后的生效值与形态原值两处，见 `_require_duration_consistency`）；
+    ③ 运行级 `target_duration_min × 60` == 生效成片时长。
     """
     if not isinstance(inputs, PilotInputs):
         raise PrecheckError(f"试水输入必须为 PilotInputs，实际为 {inputs!r}")
     if not inputs.topic:
         raise PrecheckError("输入不足：缺少题材（topic 不得为空）")
-    if inputs.target_duration_min <= 0:
-        raise PrecheckError("输入不足：目标时长必须为正整数分钟")
+    if float(inputs.target_duration_min) <= 0:
+        raise PrecheckError("输入不足：目标时长必须为正分钟（支持浮点分钟）")
     if not inputs.characters:
         raise PrecheckError("输入不足：至少需要一个角色（角色表缺失即拒绝）")
+    if not inputs.genre_bounds:
+        raise PrecheckError("输入不足：缺少立项题材边界（genre_bounds 不得为空）")
+    if not inputs.audience:
+        raise PrecheckError("输入不足：缺少立项目标受众（audience 不得为空）")
     path = Path(config_path)
     if not path.is_file():
         raise PrecheckError(f"形态配置不存在：{path}")
@@ -195,7 +486,9 @@ def precheck(
         )
     except BackendAssemblyError as exc:
         raise PrecheckError(f"配置完整性预检失败（pilot 后端声明）：{exc}") from exc
-    configs = stages_module.AgentConfigs(
+    pilot_config = PilotConfig.from_yaml(path)
+    raw_configs = stages_module.AgentConfigs(
+        dev=stages_module.DevConfig.from_yaml(path),
         screenplay=stages_module.ScreenplayConfig.from_yaml(path),
         storyboard=stages_module.StoryboardConfig.from_yaml(path),
         visual=stages_module.VisualConfig.from_yaml(path),
@@ -203,10 +496,14 @@ def precheck(
         editing=stages_module.EditingConfig.from_yaml(path),
         promo=stages_module.PromoConfig.from_yaml(path),
     )
+    configs = stages_module.apply_rehearsal_scale(raw_configs, pilot_config)
+    _require_duration_consistency(raw_configs, configs, pilot_config, inputs)
     budgets = {}
     declared_tiers = _declared_tier_limits(path)
-    for agent in ("screenplay", "storyboard", "visual", "sound", "editing", "promo"):
-        # 剧本 Agent 的预算面上限在模型价目表（按 token 计费），其余五段为单轮预算
+    _require_declared_tiers(declared_tiers)
+    for agent in _stage_sections():
+        # 剧本 Agent 的预算面上限在模型价目表（按 token 计费），其余为单轮预算；
+        # 链首 `dev` 环节同为"无单轮预算"的 LLM 腿（档位额度按环节 id 登记）
         config = getattr(configs, agent)
         budget = getattr(config, "exploration_per_round_usd", None)
         if budget is None:
@@ -234,7 +531,66 @@ def precheck(
         "loaders": list(loaders),
         "budgets": budgets,
         "pilot_backend": _backend_report(selection),
+        "pilot_scale": pilot_config.annotations(),
     }
+
+
+def _require_declared_tiers(declared_tiers: Mapping[str, float]) -> None:
+    """调用点声明的环节 id 必须在档位键集内（019 口径不放宽：缺档即拒绝启动）。
+
+    **不发明 agent ↔ 环节映射**：环节 id 由调用点声明（`chat(..., stage=<环节 id>)`），
+    此处按调用点清单**逐个核对**声明额度，未声明即拒绝（`sound` 环节无 LLM 调用，如实不在清单内）。
+    """
+    sites = stages_module.chat_call_sites()
+    missing = sorted(
+        {value for _, value in sites if value is not None and value not in declared_tiers}
+    )
+    undeclared = [f"{location}（未声明 stage=）" for location, value in sites if value is None]
+    if missing or undeclared:
+        raise PrecheckError(
+            "预算不可用：以下调用的环节档位未声明额度（缺档即拒绝启动，"
+            f"现有档位 {sorted(declared_tiers)}）：缺档 {missing}；{undeclared}"
+        )
+
+
+def _require_duration_consistency(
+    raw_configs: stages_module.AgentConfigs,
+    configs: stages_module.AgentConfigs,
+    pilot_config: PilotConfig,
+    inputs: PilotInputs,
+) -> None:
+    """两处时长口径一致（SC-012①）：形态原值、排练档生效值、运行级三处同口径。
+
+    - 形态原值：`screenplay.target_duration_min × 60 == editing.target_duration_s`
+      （movie ⇒ 5400 s）；
+    - 生效值：排练档覆盖后的 `script_target_minutes × 60 == effective_target_duration_s`；
+    - 运行级：`inputs.target_duration_min × 60 == effective_target_duration_s`。
+
+    任一不一致即拒绝启动并**点名两处实测值**（不静默择一、不按其一取值）。生效值一律按
+    **档位声明的浮点分钟**比对（不拿页数门禁折算后的整数页当分钟用）。
+    """
+    _require_same_duration(
+        "screenplay.target_duration_min × 60（形态原值）",
+        float(raw_configs.screenplay.target_duration_min) * 60.0,
+        "editing.target_duration_s（形态原值）",
+        float(raw_configs.editing.target_duration_s),
+    )
+    effective_film_s = pilot_config.effective_target_duration_s(
+        raw_configs.editing.target_duration_s
+    )
+    _require_same_duration(
+        "pilot.rehearsal 生效 screenplay 目标 × 60",
+        pilot_config.effective_script_target_minutes(raw_configs.screenplay.target_duration_min)
+        * 60.0,
+        "生效 editing.target_duration_s",
+        float(configs.editing.target_duration_s),
+    )
+    _require_same_duration(
+        "运行级 target_duration_min × 60",
+        float(inputs.target_duration_min) * 60.0,
+        "生效成片时长",
+        effective_film_s,
+    )
 
 
 def _backend_report(selection) -> dict:
@@ -274,7 +630,7 @@ def run_pilot(
     backend: str | None = None,
     llm_backend: str | None = None,
 ) -> PilotRun:
-    """跑一次试水：预检 → 六阶段 DAG 执行 → 样片包（含运行记录落盘）。
+    """跑一次试水：预检 → 七环节 DAG 执行 → 样片包（含运行记录落盘）。
 
     `backend` / `llm_backend`：运行时后端覆盖（缺省取形态配置 `pilot` 段）；装配在预检
     之后、DAG 之前，声明真实后端而凭证缺失即在此失败（零成本、零落树）。

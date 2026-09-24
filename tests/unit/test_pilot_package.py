@@ -24,9 +24,11 @@ FORM = "shortdrama"
 def _inputs() -> PilotInputs:
     return PilotInputs(
         topic="夜班记录",
-        target_duration_min=2,
+        target_duration_min=0.5,
         characters=("林静", "陈默"),
         constraints=(),
+        genre_bounds=("悬疑",),
+        audience="都市女性",
     )
 
 
@@ -57,6 +59,7 @@ class Test五件套:
         assert manifest["config_fingerprint"]
         assert manifest["products"]
         assert [stage["stage_id"] for stage in manifest["stages"]] == [
+            "dev",
             "script",
             "storyboard",
             "visual",
@@ -70,6 +73,7 @@ class Test五件套:
         products = json.loads((package_dir / "products.json").read_text(encoding="utf-8"))
         assert products["reel"]["content_hash"]
         assert [item["stage_id"] for item in products["by_stage"]] == [
+            "dev",
             "script",
             "storyboard",
             "visual",

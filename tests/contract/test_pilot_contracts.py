@@ -334,7 +334,12 @@ def _pilot_inputs():
     from agents.pilot.pilot import PilotInputs
 
     return PilotInputs(
-        topic="夜班记录", target_duration_min=2, characters=("林静", "陈默"), constraints=()
+        topic="夜班记录",
+        target_duration_min=0.5,
+        characters=("林静", "陈默"),
+        constraints=(),
+        genre_bounds=("悬疑", "夜戏"),
+        audience="都市女性",
     )
 
 
@@ -366,6 +371,7 @@ class TestC10到C13试水运行:
         result = _run_pilot(pilot_demo_config_path, tmp_path)
         assert result.record.status is RunStatus.DONE
         assert result.record.completed_stages == (
+            "dev",
             "script",
             "storyboard",
             "visual",
@@ -419,10 +425,13 @@ class TestC10到C13试水运行:
             (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
         )
         differing = {key for key in set(movie) | set(short) if movie.get(key) != short.get(key)}
-        # 形态差异逐项落在配置上（14 个段；017 起含 dev，019 起含 budget）；形态无关基建段逐字相同
+        # 形态差异逐项落在配置上（15 个段；017 起含 dev，019 起含 budget，018 起含 pilot）；
+        # 形态无关基建段逐字相同
         assert differing == {
             "form",
             "dev",
+            # 018：pilot 段按形态声明体量档（场景数/每场景行数/排练档取值/性能阈值状态）
+            "pilot",
             "evaluator_weights",
             "replay",
             "promo",
@@ -524,7 +533,13 @@ class Test宪章级机检:
         )
         guarded = replace(runtime, store=_GuardedStore(runtime.store))
         stages_module.bind_runtime(guarded)
-        inputs = PilotInputs(topic="夜班记录", target_duration_min=2, characters=("林静",))
+        inputs = PilotInputs(
+            topic="夜班记录",
+            target_duration_min=0.5,
+            characters=("林静",),
+            genre_bounds=("悬疑",),
+            audience="都市女性",
+        )
         record = run_dag(
             stages_module.build_dag_for(guarded),
             ExecutionContext(

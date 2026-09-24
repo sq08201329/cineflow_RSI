@@ -269,6 +269,10 @@ class Test差异逐项可归因:
             "screenplay",
             # 017：开发段的选题约束按形态声明（条目数区间/组合约束/标记数/模拟源参数）
             "dev",
+            # 018：pilot 段按形态声明体量档（场景数/每场景行数/排练档取值/性能阈值状态）——
+            # 权重差异循环（上方 `test_权重与阈值差异`）只遍历 evaluator_weights 的七个 Agent，
+            # pilot 段不属其中，故在此并入顶层差异集
+            "pilot",
             "calibration",
             "dreaming",
             # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）

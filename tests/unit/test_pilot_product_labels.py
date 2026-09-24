@@ -34,6 +34,7 @@ FORM = "shortdrama"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # 期望对照（测试侧独立声明，不复用实现里的表：口径分叉才会被测出来）
 _EXPECTED_CONTENT = {
+    "slate": "json",
     "animatic": "video",
     "clip": "video",
     "reel": "video",
@@ -47,9 +48,11 @@ _EXPECTED_CONTENT = {
 def _inputs() -> PilotInputs:
     return PilotInputs(
         topic="夜班记录",
-        target_duration_min=2,
+        target_duration_min=0.5,
         characters=("林静", "陈默"),
         constraints=("单场景为主",),
+        genre_bounds=("悬疑", "夜戏"),
+        audience="都市女性",
     )
 
 
@@ -68,19 +71,24 @@ def _sniff(content: bytes) -> str:
 
 @pytest.fixture(scope="module")
 def pilot_run(tmp_path_factory):
-    """一次真实试水运行（整包校验用例共用，避免重复跑链路）。"""
+    """一次真实试水运行（整包校验用例共用，避免重复跑链路）。
+
+    缩档只经**形态配置声明的排练档**（功能 018 / C10）：派生副本把 `pilot.rehearsal.scale` 的
+    两处取值改成演示档（成片 30 秒 / 剧本 0.5 分钟），体量键一个字不动。
+    """
     tmp_path = tmp_path_factory.mktemp("product-labels")
     config_path = tmp_path / "configs" / "shortdrama-demo.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     source = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
     assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
-    config_path.write_text(
-        source.replace("target_duration_s: 120", "target_duration_s: 30")
-        # 019：账本根落 tmp（同 tests/conftest.py 的 `pilot_demo_config_path` 口径）——
-        # 本夹具跑**真实试水链路**，网关会落账本与运行记录，不得写进仓库
-        .replace("root: billing", f"root: {tmp_path / 'billing'}"),
-        encoding="utf-8",
-    )
+    text = source.replace("root: billing", f"root: {tmp_path / 'billing'}")
+    for old, new in (
+        ("target_duration_s: 120.0", "target_duration_s: 30.0"),
+        ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
+    ):
+        assert text.count(old) == 1, f"排练档取值行缺失或重复（{old}）：配置口径变了即红"
+        text = text.replace(old, new)
+    config_path.write_text(text, encoding="utf-8")
     artifacts_root = tmp_path / "artifacts"
     result = run_pilot(
         form=FORM,
@@ -124,7 +132,7 @@ def test_整包每个产物_kind_与内容类型一致(pilot_run):
             actual = _sniff((artifacts_root / product.content_hash).read_bytes())
             assert actual == expected, f"{state.stage_id}/{product.kind} 内容类型为 {actual}"
             checked += 1
-    assert checked >= 6  # 六阶段全部有产物（脚本+分镜2+视觉+声音+剪辑+宣发）
+    assert checked >= 7  # 七环节全部有产物（立项1+剧本+分镜2+视觉+声音+剪辑+宣发）
     # 实现自带的整包校验与测试侧口径一致（同一 store 上执行，不重复读字节）
     check_product_kinds(result.record, LocalArtifactStore(artifacts_root))
 

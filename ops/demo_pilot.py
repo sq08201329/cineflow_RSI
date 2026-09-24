@@ -4,16 +4,16 @@
 六步（全模拟链路 + 临时目录 + 确定性时钟，退出码 0 = 六步全过）：
 
 1. **配置完整性**：全部加载器逐个通过（缺项即拒绝启动，零成本零落树）；
-2. **短剧运行**：六阶段按 DAG 执行 → 产出样片包五件套（含"模拟生成"标注）；
+2. **短剧运行**：环节按 DAG 执行 → 产出样片包五件套（含"模拟生成"标注）；
 3. **可复现对照**：同 run_id + 同输入同配置、独立工件根跑两次 → 五件套逐字节一致；
 4. **movie 对照（零代码切换）**：同一套阶段代码换一份形态配置跑通（形态差异全在配置）；
 5. **断点续跑**：全部完成后再续跑 → 原记录原样返回（零重跑、零重复落盘）；
 6. **拒绝语义**：输入不足启动前拒绝；输入变更后拒绝续跑。
 
-**试水档等值派生**：为把演示运行控制在 CI 预算内（并规避本机 ffmpeg 长连编码抖动），
-本脚本把两套形态配置**等值派生**为试水体量（成片 30s / 剧本 2 页）——形态差异
-（权重/阈值/曲线/预算/规格）逐字保留；短剧真实配置的 16 镜上限由单测守护。
-生产档取 `configs/*.yaml` 原值（短剧 120s、电影 120s/90 页）。
+**缩档只经形态配置**（功能 018 / FR-013、FR-014，契约 C10）：本脚本**不再改写体量键**
+（成片时长/剧本目标/页数容差一律不动），短剧的**演示档（30 秒档）以 `pilot.rehearsal` 的
+档位声明**落在配置副本里；形态配置声明的排练档是 `declared` 时按档位取值生效、`unstandardized`
+时形态原值在 force（如实标注"未标定"）。演示档数字属运营侧输入，运营给定后**只改配置**。
 """
 
 import json
@@ -25,12 +25,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-import yaml  # noqa: E402
-
 from agents.pilot.package import PACKAGE_FILES  # noqa: E402
 from agents.pilot.pilot import (  # noqa: E402
     PilotInputs,
     PrecheckError,
+    config_completeness,
+    precheck,
     resume_pilot,
     run_pilot,
 )
@@ -38,9 +38,11 @@ from agents.pilot.pilot import (  # noqa: E402
 FIXED_TIMESTAMP = "2026-01-01T00:00:00+00:00"
 INPUTS = PilotInputs(
     topic="夜班记录",
-    target_duration_min=2,
+    target_duration_min=0.5,
     characters=("林静", "陈默"),
     constraints=("单场景为主",),
+    genre_bounds=("悬疑", "夜戏"),
+    audience="都市女性",
 )
 
 
@@ -48,16 +50,24 @@ def _clock():
     return lambda: FIXED_TIMESTAMP
 
 
-def _derive_pilot_scale(source: Path, target: Path) -> Path:
-    """等值派生：只把**试水体量**（成片时长/剧本目标页数）压到演示档，其余逐字保留。"""
-    payload = yaml.safe_load(source.read_text(encoding="utf-8"))
-    payload["editing"]["target_duration_s"] = 30
-    payload["screenplay"]["target_duration_min"] = 2
-    payload["screenplay"]["page_tolerance"] = 1
+def _demo_config(source: Path, target: Path, *, demo_scale: bool) -> Path:
+    """派生演示配置：账本根落临时目录 + （可选）把**排练档取值**改成演示档。
+
+    **只改排练档声明**（`pilot.rehearsal.scale` 的两处取值），体量键（成片时长/剧本目标/
+    页数容差/单镜时长）一个字不动——"缩档只改配置"因此可机检（口径变了即红）。
+    """
+    text = source.read_text(encoding="utf-8")
+    assert "root: billing" in text, "派生点存在（账本根不得落仓库）"
+    text = text.replace("root: billing", f"root: {target.parent / 'billing'}")
+    if demo_scale:
+        for old, new in (
+            ("target_duration_s: 120.0", "target_duration_s: 30.0"),
+            ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
+        ):
+            assert text.count(old) == 1, f"排练档取值行缺失或重复（{old}）：配置口径变了即红"
+            text = text.replace(old, new)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    target.write_text(text, encoding="utf-8")
     return target
 
 
@@ -66,23 +76,29 @@ def main() -> int:
     report: dict = {"steps": {}, "ok": False}
     with tempfile.TemporaryDirectory(prefix="cineflow-pilot-demo-") as tmp:
         root = Path(tmp)
-        short_cfg = _derive_pilot_scale(
-            REPO_ROOT / "configs/shortdrama.yaml", root / "configs" / "shortdrama-demo.yaml"
+        # 短剧：声明演示档的排练档（缩档只经配置声明）；movie：用其形态配置自带的排练档
+        short_cfg = _demo_config(
+            REPO_ROOT / "configs/shortdrama.yaml",
+            root / "configs" / "shortdrama-demo.yaml",
+            demo_scale=True,
         )
-        movie_cfg = _derive_pilot_scale(
-            REPO_ROOT / "configs" / "movie.yaml", root / "configs" / "movie-demo.yaml"
+        movie_cfg = _demo_config(
+            REPO_ROOT / "configs/movie.yaml",
+            root / "configs" / "movie-demo.yaml",
+            demo_scale=False,
         )
 
         # ---- 步骤 1：配置完整性（全部加载器，缺项即拒绝启动）----
-        from agents.pilot.pilot import precheck
-
         pre = precheck(
             form="shortdrama", config_path=short_cfg, inputs=INPUTS, data_dir=root / "pre"
         )
+        # 断言的是**派生量**：加载器计数随实现派生（13 类配置 + 七环节权重 + `pilot` 段），
+        # 写死字面量即恒假（属既有缺陷）；此处以 `config_completeness` 的实测返回为准
+        loaders = config_completeness(short_cfg)
         report["steps"]["1_配置完整性"] = {
             "loaders": len(pre["loaders"]),
             "config_fingerprint": pre["config_fingerprint"],
-            "ok": len(pre["loaders"]) == 18,  # 12 个配置类 + 6 个 Agent 权重
+            "ok": list(pre["loaders"]) == list(loaders) and len(loaders) > 0,
         }
 
         # ---- 步骤 2：短剧运行出样片包 ----
@@ -185,9 +201,11 @@ def main() -> int:
                 config_path=short_cfg,
                 inputs=PilotInputs(
                     topic="换一个题材",
-                    target_duration_min=2,
+                    target_duration_min=0.5,
                     characters=("林静", "陈默"),
                     constraints=(),
+                    genre_bounds=("悬疑",),
+                    audience="都市女性",
                 ),
                 data_dir=root / "a" / "pilot",
                 artifacts_root=root / "a" / "artifacts",

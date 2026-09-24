@@ -20,9 +20,11 @@
 """
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agents.pilot import backends as backends_module
 from agents.pilot import stages as stages_module
@@ -96,21 +98,34 @@ def fake_credentials(monkeypatch):
 
 
 def _config_with(tmp_path, base: Path, *, name: str, section: str) -> Path:
-    """在 `deployment` 段**之前**插入 `pilot:` 段（不破坏既有定点改写位点）。"""
-    source = base.read_text(encoding="utf-8")
-    marker = "\ndeployment:\n"
-    assert marker in source, "形态配置缺 deployment 段：定点插入位点失效"
+    """把 `pilot` 段的声明**并入**已有 `pilot` 段（形态差异只靠取值，不新增重复段）。
+
+    功能 018 起 `pilot` 段承载体量档与性能阈值（缺键即拒绝启动），故不能再"插一段同名段"；
+    本工厂按 YAML 语义合并（覆盖声明键、保留其余键），配置其余部分逐值不变。
+    """
+    payload = yaml.safe_load(base.read_text(encoding="utf-8"))
+    override = yaml.safe_load(section)
+    assert set(override) == {"pilot"}, f"本工厂只用于覆盖 pilot 段声明：{sorted(override)}"
+    if isinstance(override["pilot"], Mapping):
+        payload.setdefault("pilot", {}).update(override["pilot"])
+    else:
+        payload["pilot"] = override["pilot"]  # 非法形状原样落下（由装配期如实拒绝）
     target = tmp_path / "configs" / f"{name}.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        source.replace(marker, f"\n{section}\ndeployment:\n", 1),
-        encoding="utf-8",
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     return target
 
 
 def _inputs() -> PilotInputs:
-    return PilotInputs(topic="夜班记录", target_duration_min=2, characters=("林静", "陈默"))
+    return PilotInputs(
+        topic="夜班记录",
+        target_duration_min=0.5,
+        characters=("林静", "陈默"),
+        genre_bounds=("悬疑",),
+        audience="都市女性",
+    )
 
 
 def _runtime(config_path: Path, tmp_path: Path, **overrides):
@@ -317,9 +332,13 @@ class TestCLI后端覆盖:
             "--topic",
             "夜班记录",
             "--minutes",
-            "2",
+            "0.5",
             "--characters",
             "林静,陈默",
+            "--genre-bounds",
+            "悬疑,夜戏",
+            "--audience",
+            "都市女性",
             "--data-dir",
             str(data_dir),
             *extra,

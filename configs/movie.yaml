@@ -163,7 +163,10 @@ sound:
 editing:
   exploration_per_round_usd: 400 # 单轮剪辑探索预算上限（预算门禁，按成片时长计价）
   edits_per_round: 3 # 单轮 EDL 组合数
-  target_duration_s: 120 # 成片目标时长（rule.duration_compliance 对照）
+  # 成片目标时长（rule.duration_compliance 对照）：**长片语义 90 分钟 = 5400 秒**
+  # （功能 018 修 bug：此前的 120 秒是从短剧形态抄来的，与 screenplay.target_duration_min: 90
+  #  自相矛盾；两处时长必须同口径，不一致即拒绝启动并点名两处实测值，SC-012①）
+  target_duration_s: 5400
   duration_tolerance_s: 10 # 时长容差：总时长 ∈ [110, 130]s 过 gate
   shot_limits: # 镜头时长限制（rule.shot_distribution 对照）
     min_shot_ms: 500
@@ -236,6 +239,13 @@ storyboard:
     codec: libx264
     encode_threads: 1 # 固定单线程档：消除 x264 多线程编码的非确定性
     price_per_shot_usd: 0.06 # 按镜头数计价；缺价目即报错，不允许静默零成本（原则三）
+    # 索引块网格（功能 018 / FR-015，契约 C8）：帧顶 R 行 × C 列块网格，容量 = 2**(R·C)。
+    # 容量下界 = 该形态**派生镜头数**（`agents/pilot/scale.py` 的唯一公式）：电影态**形态原值**
+    # ceil(5400 s ÷ 2.0 s) = 2700 镜 ⇒ 容量 ≥ 12 位 ⇒ cols ≥ 6（此处 16 位）；
+    # 量子上界（解码保真）2**C ≤ width ⇒ cols ≤ 8（2**8 = 256 ≤ 320 ✓）；又 1 ≤ rows ≤ height。
+    # 缺项即报错（**不得**静默回落过去的 2×4）；改网格取值 ⇒ 对齐代理评估器**即升版本**
+    # （同 evaluator_id@version 的行为不得随配置漂移，原则一）。
+    index_grid: {rows: 2, cols: 8}
   judge: # judge.script_fit 委员会：版本号 = 提示词 + 锚点集 + 摘要函数 + 输出预算四段哈希
     model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
     prompts:
@@ -592,6 +602,28 @@ pilot:
   backend: simulated # simulated | http：五个环节的平台适配器（分镜/视觉/声音/剪辑/宣发）
   llm_backend: mock # mock | http：LLM 网关后端（http 读 OPENAI_BASE_URL / OPENAI_API_KEY）
   overrides: {} # 逐环节覆盖（优先于全局取值），如 {visual: http, llm: http}
+  # 体量档（功能 018 / FR-014）：`scene_count` 与 `lines_per_scene` 是体量的**唯一来源**
+  # （唯一解析者是 `agents/pilot/pilot.py` 的 PilotConfig；`agents/*/config.py` 不读本段）。
+  # 缺项即报错（不取码内默认）；取值按**排练档**并如实标注"未标定"——具体数字属运营侧输入
+  # （运营给定后只改本段，零代码改动）。页数门禁 = 场景数 × 每场景行数 ÷ lines_per_page。
+  scene_count: 2 # 电影态排练档场景数（未标定）
+  lines_per_scene: 11 # 每场景行数（未标定；页数 = 2 × 11 ÷ 45 ≈ 0.49 页）
+  # 排练档（FR-013 / 契约 C10）：缩档只改本段，链路拓扑/交接契约/门禁/评估器组合一行不动。
+  # status=declared ⇒ 按 scale 覆盖体量键；unstandardized ⇒ 不覆盖（形态原值在 force）并如实
+  # 标注"未标定"；work_kind=real_work ⇒ 不缩档（真实作品用形态原值）。
+  rehearsal:
+    status: declared # declared | unstandardized
+    work_kind: rehearsal # rehearsal | real_work
+    scale: # status=declared 时逐键齐备（缺一即报错）；不变量 target_duration_s == script_target_minutes × 60
+      target_duration_s: 30.0 # 秒级浮点：**30 秒排练档**（覆盖 editing.target_duration_s）；**未标定**
+      script_target_minutes: 0.5 # 浮点分钟（0.5 = 30 秒，覆盖 screenplay.target_duration_min）；**未标定**
+      script_tolerance_minutes: 1.0 # 浮点分钟（覆盖 screenplay.page_tolerance）；**未标定**
+      clip_duration_seconds: 2.0 # 覆盖 visual.clip_spec.duration_seconds（与模拟生成器帧数自洽）；**未标定**
+  # 性能门禁阈值（FR-010 / 契约 C13）：status=declared 时七环节逐键齐备且值为正；
+  # 未标定期间**不发明数字**、不产出达标结论（固定时钟运行亦恒 not_evaluable）。
+  performance:
+    status: unstandardized # declared | unstandardized（阈值数字属运营侧输入）
+    stage_seconds: {} # 键 = 七环节 id（dev/script/storyboard/visual/sound/editing/promo）
 
 # 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
 # （未采纳更新指针次数恒 0，SC-002 机检；值 = policies/history/screenplay/ 下的策略版本；

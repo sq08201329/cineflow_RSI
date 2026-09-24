@@ -1,6 +1,6 @@
 """功能 015 US3（T1519）：`agents/pilot/pilot.py` 试水运行测试（契约 C10）。
 
-覆盖：启动前预检（输入不足 / 配置缺项 → 拒绝且零成本零落树）、一次运行六阶段 done、
+覆盖：启动前预检（输入不足 / 配置缺项 → 拒绝且零成本零落树）、一次运行七环节 done、
 **同输入同配置两次运行逐字节一致**（注入确定性时钟）、断点续跑不重跑已完成阶段、
 输入/配置变更后拒绝续跑、跳过与失败语义。
 """
@@ -25,9 +25,11 @@ FORM = "shortdrama"
 def _inputs() -> PilotInputs:
     return PilotInputs(
         topic="夜班记录",
-        target_duration_min=2,
+        target_duration_min=0.5,
         characters=("林静", "陈默"),
         constraints=("单场景为主",),
+        genre_bounds=("悬疑", "夜戏"),
+        audience="都市女性",
     )
 
 
@@ -76,7 +78,7 @@ class Test预检:
 
 
 class Test一次运行:
-    def test_六阶段全_done_且产出样片包(self, pilot_demo_config_path, pilot_dirs, tmp_path):
+    def test_七环节全_done_且产出样片包(self, pilot_demo_config_path, pilot_dirs, tmp_path):
         result = run_pilot(
             form=FORM,
             config_path=pilot_demo_config_path,
@@ -88,6 +90,7 @@ class Test一次运行:
         )
         assert result.record.status.value == "done"
         assert result.record.completed_stages == (
+            "dev",
             "script",
             "storyboard",
             "visual",
@@ -168,9 +171,11 @@ class Test续跑:
         )
         changed = PilotInputs(
             topic="换一个题材",
-            target_duration_min=2,
+            target_duration_min=0.5,
             characters=("林静", "陈默"),
             constraints=(),
+            genre_bounds=("悬疑",),
+            audience="都市女性",
         )
         with pytest.raises(OrchestrationError):
             resume_pilot(

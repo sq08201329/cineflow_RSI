@@ -3063,23 +3063,31 @@ def pilot_form_config_path(tmp_path):
 
 @pytest.fixture()
 def pilot_demo_config_path(tmp_path):
-    """pilot 演示档形态配置：真实短剧配置的**等值派生**（成片目标时长 120s → 60s）。
+    """pilot 演示档形态配置：真实短剧配置的派生副本，**只改排练档声明与账本根**。
 
-    用途：把端到端试水运行的镜头数压到 4（`镜头数 = 目标时长 / 单镜时长`），避开
-    连续 16 次 ffmpeg 编码在本机负载下的偶发抖动（单片段编码失败 → 视觉阶段如实 failed）。
-    **形态配置的边界不受影响**：短剧真实配置（16 镜）在上限内的断言由
-    `tests/unit/test_pilot_stages.py` 的"16 镜上限"边界用例守住。
+    缩档口径（功能 018 / FR-013/014、契约 C10）：**只经形态配置声明的排练档**——派生副本把
+    `pilot.rehearsal.scale` 的取值改成**演示档**（成片 30 秒 / 剧本 0.5 分钟），体量键
+    （`editing.target_duration_s` / `screenplay.target_duration_min` / `page_tolerance` /
+    `visual.clip_spec.duration_seconds`）**一个字都不动**——脚本/夹具不再改写体量键，
+    排练档因此是缩档的唯一表达处（"缩档只改配置"可机检）。
+
+    用途：把端到端试水运行的镜头数压到 4（派生镜头数 = `max(场景数, ceil(成片时长 / 单镜时长))`
+    = `max(4, ceil(30/7.5))` = 4），避开连续 16 次 ffmpeg 编码在本机负载下的偶发抖动。
+    **形态配置的边界不受影响**：短剧真实配置的镜头计划由 `tests/unit/test_pilot_stages.py`
+    的容量边界用例守住（索引容量 `2**(R·C)` 与派生镜头数的关系，功能 018 / 契约 C8）。
     """
     source = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
-    assert "target_duration_s: 120" in source
+    assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
+    text = source.replace("root: billing", f"root: {tmp_path / 'billing'}")
+    for old, new in (
+        ("target_duration_s: 120.0", "target_duration_s: 30.0"),
+        ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
+    ):
+        assert text.count(old) == 1, f"排练档取值行缺失或重复（{old}）：配置口径变了即红"
+        text = text.replace(old, new)
     target = tmp_path / "configs" / "shortdrama-demo.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        source.replace("target_duration_s: 120", "target_duration_s: 30")
-        # 019：账本根落 tmp（同 pilot_form_config_path 的口径）
-        .replace("root: billing", f"root: {tmp_path / 'billing'}"),
-        encoding="utf-8",
-    )
+    target.write_text(text, encoding="utf-8")
     return target
 
 
@@ -3158,8 +3166,10 @@ def stage_entrypoint_stub():
 
 # 精简 movie 形态配置：仅含全部加载器必需段（形态差异（权重/规格）在此表达，
 # 与短剧真实配置做同链对照；不做任何形态特化，故取值可以刻意不同）。
-# 不声明 `dev` 段：本夹具只服务 pilot 侧加载器清单（`agents/pilot/pilot.py` 的
-# config_completeness 未纳入 dev——017 不把开发 Agent 插入七阶段链，那属 G2/018）；
+# `dev` 段（链首环节）由**功能 018** 插入七环节链：本夹具与预检/装配的加载器清单同批声明
+# （漏一处即红）；`evaluator_weights.dev` 与 `deployment.dev` 部署指针同理。
+# 形态原值的两处时长按长片语义同口径（`editing.target_duration_s` = `screenplay.target_duration_min`
+# × 60 = 5400 s），排练档在夹具里为 `unstandardized`（未标定 ⇒ 不覆盖，形态原值在 force）。
 # 而 `tests/unit/test_config_integrity.py` 的加载器清单用的是**真实**配置文件。
 _MINIMAL_MOVIE_CONFIG = """\
 form: movie
@@ -3182,6 +3192,9 @@ evaluator_weights:
   promo:
     rule.material_compliance: gate
     proxy.ctr_history: 1.0
+  dev:
+    rule.slate_structure: gate
+    proxy.box_office_prior: 1.0
 replay:
   worker_count: 4
   latency_quantum_ms: 50
@@ -3240,7 +3253,7 @@ sound:
 editing:
   exploration_per_round_usd: 400
   edits_per_round: 3
-  target_duration_s: 120
+  target_duration_s: 5400
   duration_tolerance_s: 10
   shot_limits: {min_shot_ms: 500, max_shot_ms: 20000}
   transition_rules:
@@ -3287,6 +3300,7 @@ storyboard:
     codec: libx264
     encode_threads: 1
     price_per_shot_usd: 0.06
+    index_grid: {rows: 2, cols: 8}
   judge:
     model: mock-copy-v1
     prompts: ["哪一版分镜的镜头语言更贴合剧本段落？"]
@@ -3345,6 +3359,25 @@ screenplay:
             text: "别停手。"
             key: true
             emotion: tense
+dev:
+  slate: {min: 1, max: 2}
+  production_marks: {min: 1, max: 1}
+  combination:
+    max_direction_repeat_rate: 0.5
+  min_comparable_trees: 1
+  signals:
+    baseline_usd_million: 10.0
+    sensitivity: 1.0
+    buzz_baseline: 0.5
+  upgrade_criteria:
+    correlation_target: 0.6
+    min_samples: 3
+    drift_band: 0.1
+    gate_violation_max: 0.2
+  model: mock-copy-v1
+  model_prices:
+    mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
+  max_tokens: 512
 calibration:
   period_days: 7
   top_k: 5
@@ -3473,11 +3506,30 @@ budget:
   reconcile: {amount_tolerance_usd: 0.01, alert_threshold_usd: 1.0, unexplained_alert: true}
   ledger: {root: billing, lock_timeout_seconds: 5.0}
   runs: {min_window_days: 7, gap_tolerance_days: 0}
+pilot:
+  backend: simulated
+  llm_backend: mock
+  overrides: {}
+  scene_count: 4
+  lines_per_scene: 12
+  rehearsal:
+    status: unstandardized
+    work_kind: rehearsal
+    scale:
+      target_duration_s: 5400.0
+      script_target_minutes: 90.0
+      script_tolerance_minutes: 5.0
+      clip_duration_seconds: 2.0
+  performance:
+    status: unstandardized
+    stage_seconds: {}
 deployment:
   mode_default: manual
   gate: {validation_top_ratio: 0.2, require_unbiasedness: true, allow_without_judge: false}
   shadow: {min_days: 14, min_candidates: 20}
   spot_check: {first_n: 5, ratio: 0.2, pending_alert_days: 7}
+  dev:
+    current_policy_version: 34525518074d
   screenplay:
     current_policy_version: fa6b7bca77ed
 """

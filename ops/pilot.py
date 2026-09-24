@@ -4,12 +4,16 @@
 用法（与 quickstart 一致，退出码：0 成功 / 1 运行失败或拒绝 / 2 用法错误）：
 
     uv run python ops/pilot.py run     --form shortdrama --config configs/shortdrama.yaml \
-        --topic "夜班记录" --minutes 2 --characters 林静,陈默 --data-dir pilot \
+        --topic "夜班记录" --minutes 1.0 --characters 林静,陈默 \
+        --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot \
         --run-id demo-run --fixed-clock
     uv run python ops/pilot.py resume  --form shortdrama --config configs/shortdrama.yaml \
-        --topic "夜班记录" --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run
+        --topic "夜班记录" --minutes 1.0 --characters 林静,陈默 \
+        --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id demo-run
     uv run python ops/pilot.py inspect --data-dir pilot --run-id demo-run [--package]
 
+`--minutes`：**浮点分钟**（取生效档值，如 `1.0`；须等于生效成片时长 ÷ 60，否则预检拒绝）。
+`--genre-bounds` / `--audience`：立项环节（链首）的运行级输入映射，缺项即预检拒绝。
 `--fixed-clock`：全部时间戳取同一常量（两次运行逐字节一致的对照口径）；不给则用墙钟。
 本 CLI 只做参数解析与结果打印，编排全在 `agents/pilot/`（零形态分支：形态只作透传参数）。
 """
@@ -45,11 +49,17 @@ def _parse_inputs(args) -> PilotInputs:
     constraints = tuple(
         item.strip() for item in (args.constraints or "").split(",") if item.strip()
     )
+    genre_bounds = tuple(
+        item.strip() for item in (args.genre_bounds or "").split(",") if item.strip()
+    )
     return PilotInputs(
         topic=args.topic,
         target_duration_min=args.minutes,
         characters=characters,
         constraints=constraints,
+        # 立项环节（链首 `dev`）的显式运行级映射：缺项即预检拒绝（不静默补默认）
+        genre_bounds=genre_bounds,
+        audience=args.audience,
     )
 
 
@@ -187,9 +197,17 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--form", required=True, help="形态值（如 shortdrama/movie；只作透传）")
     parser.add_argument("--config", required=True, help="形态配置路径")
     parser.add_argument("--topic", required=True, help="题材（非空）")
-    parser.add_argument("--minutes", type=int, required=True, help="目标时长（分钟）")
+    parser.add_argument(
+        "--minutes",
+        type=float,
+        required=True,
+        help="目标时长（**浮点分钟**，如 0.5 = 30 秒档；须与生效成片时长同口径）",
+    )
     parser.add_argument("--characters", default="", help="角色表，逗号分隔")
     parser.add_argument("--constraints", default="", help="约束清单，逗号分隔")
+    # 立项环节（链首 `dev`）的运行级输入映射：缺项即预检拒绝（不静默补默认）
+    parser.add_argument("--genre-bounds", default="", help="立项题材边界，逗号分隔（非空）")
+    parser.add_argument("--audience", default="", help="立项目标受众（非空）")
     parser.add_argument("--data-dir", required=True, help="数据目录（runs/ 与 packages/ 所在根）")
     parser.add_argument(
         "--artifacts-root", default=None, help="工件根目录（默认 <data-dir>/artifacts）"
@@ -214,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="试水作品 CLI：run / resume / inspect / precheck")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = sub.add_parser("run", help="跑一次试水（预检 → 六阶段 → 样片包）")
+    run_parser = sub.add_parser("run", help="跑一次试水（预检 → 七环节 → 样片包）")
     _add_common(run_parser)
     run_parser.add_argument("--run-id", default=None)
     run_parser.add_argument("--fixed-clock", action="store_true", help="固定时钟（可复现对照）")

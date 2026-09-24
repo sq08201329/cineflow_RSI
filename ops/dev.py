@@ -44,7 +44,6 @@ from core.billing.budget import (  # noqa: E402 - 019（C10）：归因分支—
     refusal_reason,
 )
 
-POLICY_VERSION_LENGTH = 12  # 版本 = 源码 BLAKE3 前 12 位（FR-009/FR-015 口径）
 AGENT_ID = "dev"
 
 
@@ -79,48 +78,26 @@ def _policy_source_path(args) -> tuple[Path | None, str | None, str]:
 
 
 def _load_policy(args):
-    """加载人工策略：静态检查 → 版本核验/派生 → 实例化（版本绑定到策略对象）。
+    """加载人工策略：定位源码 → 薄调用 `agents/dev/policy_loader.load_policy_text`。
 
-    静态检查是沙箱第一道防线（002）：未过检查不得进入产出。版本核验保证
-    "策略版本 = 源码内容"（人工版本同样可回溯、可机检）。
+    装载三段（静态检查前置 → 版本核验 → 超时内实例化 + 零环境对象守护）是**业务侧单一实现**
+    （功能 018 / C2：`agents/dev/policy_loader.py`）；本处只做**参数定位**与错误转述，
+    不得留第二份装载路径（`agents/` 侧才是链首 dev 环节的装载入口）。
     """
-    import blake3
-
-    from policies.static_check import StaticCheckError, check_policy_source
+    from agents.dev.policy_loader import PolicyLoadError, load_policy_text
 
     path, declared, locate_error = _policy_source_path(args)
     if path is None:
         return None, None, locate_error
-    source = path.read_text(encoding="utf-8")
     try:
-        check_policy_source(source)
-    except StaticCheckError as exc:
-        return None, None, f"策略静态检查未通过：{exc}"
-    version = blake3.blake3(source.encode()).hexdigest()[:POLICY_VERSION_LENGTH]
-    if declared and declared != version:
-        return (
-            None,
-            None,
-            f"策略版本 {declared!r} 与源码内容不符（源码哈希前 {POLICY_VERSION_LENGTH} 位为 "
-            f"{version!r}）——版本必须等于源码 BLAKE3 前 {POLICY_VERSION_LENGTH} 位",
+        loaded = load_policy_text(
+            path.read_text(encoding="utf-8"),
+            declared_version=declared,
+            origin=str(path),
         )
-    namespace: dict = {"__name__": "dev_policy"}
-    try:
-        exec(compile(source, str(path), "exec"), namespace)  # noqa: S102 - 已过静态检查
-    except Exception as exc:  # noqa: BLE001 - 源码执行失败即拒绝（不进入产出）
-        return None, None, f"策略源码执行失败：{exc}"
-    policy_class = namespace.get("Policy")
-    if not isinstance(policy_class, type):
-        return None, None, f"策略源码缺少 Policy 类：{path}"
-    policy = policy_class()
-    policy.policy_version = version  # 节点与运营表落盘口径（人工策略版本）
-    try:
-        has_plan = callable(policy.plan)
-    except AttributeError:
-        has_plan = False
-    if not has_plan:
-        return None, None, f"策略缺少 plan(inputs, config) 接口：{path}"
-    return policy, str(path), ""
+    except PolicyLoadError as exc:
+        return None, None, str(exc)
+    return loaded, str(path), ""
 
 
 def _cmd_produce(args) -> int:

@@ -1,10 +1,20 @@
-"""试水链的六阶段定义与执行入口（功能 015 US3 / T1518，契约 C10）。
+"""试水链的**七环节**定义与执行入口（功能 015 US3 / T1518 + 功能 018 链首插入）。
 
-六个阶段（剧本 → 分镜 → 视觉 → 声音 → 剪辑 → 宣发）各调用**对应 Agent 的既有 loop 入口**
-（`run_screenplay_round` / `run_storyboard_round` / `run_round` / `run_sound_round` /
-`run_editing_round` / `run_round`）——预算门禁、幂等、评估器版本、落树路径全部沿用既有实现，
-**编排层不新增落树路径**（FR-011）；本模块只负责装配（引擎/树库/工件库/网关/模拟平台）
-与"上游产物 → 下游输入"的交接接线（交接口径全在 `handoffs.py`）。
+七环节（**选题立项 → 剧本 → 分镜 → 视觉 → 声音 → 剪辑 → 宣发**）各调用**对应 Agent 的既有
+loop 入口**（`run_dev_round` / `run_screenplay_round` / `run_storyboard_round` / `run_round` /
+`run_sound_round` / `run_editing_round` / `run_round`）——预算门禁、幂等、评估器版本、落树路径
+全部沿用既有实现，**编排层不新增落树路径**（FR-011）；本模块只负责装配（引擎/树库/工件库/
+网关/模拟平台）与"上游产物 → 下游输入"的交接接线（交接口径全在 `handoffs.py`）。
+
+**七处集中声明点的一致性**（功能 018 / 契约 C1：漏一处即红）：阶段元组、阶段表、`AgentConfigs`、
+运行时装配（含建表）、预检四处清单（`pilot.py`）、产物 kind 登记（`package.py`）、两形态声明
+由 `declaration_mismatches`/`assert_stage_declarations` 相互绑定（装配期即校验）；`stage_id` 与
+配置段名/轮次树前缀的映射是**单一映射声明**（`STAGE_CONFIG_SECTION`/`STAGE_TREE_PREFIX`）——
+**不得**以 `stage_id` 直推（`script` 的配置段是 `screenplay`、轮次树前缀是 `screenplay-round-`）。
+
+**链路本身不认识档位**（功能 018 / 契约 C10）：体量缩档只经形态配置 `pilot.rehearsal` 声明，
+由 `PilotConfig` **单点解析**后随配置覆盖进各环节配置（链路拓扑/交接契约/门禁/评估器组合一行
+不动）；场景数与每场景行数同样由 `PilotConfig` 唯一解析、经参数注入（码内常量退役）。
 
 **漂移门禁在 runtime 装配一次并透传（012 → 015 接线）**：`build_runtime` 用
 `DriftGate.load(<校准数据根>, DriftConfig.from_yaml(config))` 建**一个**实例存进
@@ -32,25 +42,32 @@
 （续跑据此恢复）。
 """
 
+import ast
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
+from agents.dev.config import DevConfig
+from agents.dev.db import create_jobs_schema as create_dev_jobs_schema
+from agents.dev.loop import run_dev_round
 from agents.editing.config import EditingConfig
 from agents.editing.db import create_render_jobs_schema as create_editing_jobs_schema
 from agents.editing.edl import EditDecisionList
 from agents.editing.loop import run_editing_round
 from agents.editing.shots import ShotLibrary
 from agents.pilot import handoffs
+from agents.pilot import package as package_module
 from agents.pilot.backends import PilotBackends, build_backends
+from agents.pilot.scale import derived_shot_count
 from agents.promo.config import PromoConfig
 from agents.promo.db import create_campaigns_schema
 from agents.promo.loop import run_round as run_promo_round
@@ -90,19 +107,59 @@ from core.tree.artifacts import LocalArtifactStore
 from core.tree.db import create_schema
 from core.tree.store import create_tree_store
 
-# 六阶段顺序即依赖顺序（结构上视觉与声音可并行；本特性按串行执行，依赖声明支持并行）
-PILOT_STAGE_IDS = ("script", "storyboard", "visual", "sound", "editing", "promo")
+if TYPE_CHECKING:  # 仅类型标注：pilot.py 运行期 import 本模块（避免循环 import）
+    from agents.pilot.pilot import PilotConfig
 
-# 每镜时长（毫秒）= 片段规格时长；镜头数由成片目标时长与单镜时长派生（全配置驱动）
-_DEFAULT_SCENE_COUNT = 4  # 试水体量：短剧四场景档（分镜阶段按真实剧本场景数生成）
+# 七环节顺序即依赖顺序（结构上视觉与声音可并行；本特性按串行执行，依赖声明支持并行）
+# 链首是 `dev`（选题立项产出 → 剧本输入交接），`script` 因此依赖 `dev`（契约 C1）。
+PILOT_STAGE_IDS = ("dev", "script", "storyboard", "visual", "sound", "editing", "promo")
+
+# 单一映射声明：stage_id → 形态配置段名（**不得**以 stage_id 直推：`script` 的段是 `screenplay`）
+STAGE_CONFIG_SECTION = {
+    "dev": "dev",
+    "script": "screenplay",
+    "storyboard": "storyboard",
+    "visual": "visual",
+    "sound": "sound",
+    "editing": "editing",
+    "promo": "promo",
+}
+
+# 单一映射声明：stage_id → 轮次树前缀（各 Agent loop 的 `round_tree_id` 口径；**不得**直推）
+STAGE_TREE_PREFIX = {
+    "dev": "dev",
+    "script": "screenplay",
+    "storyboard": "storyboard",
+    "visual": "visual",
+    "sound": "sound",
+    "editing": "editing",
+    "promo": "promo",
+}
+
+# 环节 id → 该环节的 Agent loop 模块（树前缀的**实测对照面**：声明必须与实现一致）
+STAGE_LOOP_MODULES = {
+    "dev": "agents.dev.loop",
+    "script": "agents.screenplay.loop",
+    "storyboard": "agents.storyboard.loop",
+    "visual": "agents.visual.loop",
+    "sound": "agents.sound.loop",
+    "editing": "agents.editing.loop",
+    "promo": "agents.promo.loop",
+}
+
 _SHOT_SIZE_CYCLE = ("close_up", "medium", "full", "close_up", "medium")
 _DISSOLVE_MS = 400  # 同区连续镜头的叠化时长（转场规则库容差内）
 
 
 @dataclass(frozen=True)
 class AgentConfigs:
-    """六段各自的形态配置（同一份 `configs/*.yaml` 逐段加载；形态差异全在配置）。"""
+    """七环节各自的形态配置（同一份 `configs/*.yaml` 逐段加载；形态差异全在配置）。
 
+    字段名即**配置段名**（`STAGE_CONFIG_SECTION` 的值域）：`script` 环节的配置段是
+    `screenplay`，链首 `dev` 环节的配置段是 `dev`。
+    """
+
+    dev: DevConfig
     screenplay: ScreenplayConfig
     storyboard: StoryboardConfig
     visual: VisualConfig
@@ -128,6 +185,7 @@ class PilotRuntime:
     shot_plan: tuple[dict, ...]
     calibration_dir: Path
     drift_gate: DriftGate
+    pilot: "PilotConfig"
 
     @property
     def gateway(self) -> LLMGateway:
@@ -153,14 +211,22 @@ def build_runtime(
     `backend` / `llm_backend`：运行时全局覆盖（CLI `--backend` / `--llm-backend`）；
     缺省取形态配置 `pilot` 段（缺段即 `simulated`/`mock`）。**后端在落树/生成之前装配**：
     声明真实后端而凭证缺失时在这里就失败（零成本、零落树）。
+
+    形态配置 `pilot` 段的**体量档与体量键**在这里单点生效（功能 018 / C10）：`pilot` 段由
+    `PilotConfig` 唯一解析（缺项即拒绝装配），排练档生效时覆盖成片时长/剧本目标/单镜时长，
+    场景数与每场景行数经参数注入到镜头计划与剧本计划。装配末尾校验七处集中声明的一致性
+    （`assert_stage_declarations`：漏一处即拒绝启动）。
     """
+    from agents.pilot import pilot as pilot_module  # 延迟导入：pilot.py 运行期 import 本模块
+
     config_path = Path(config_path)
     data_dir = Path(data_dir)
     artifacts_root = Path(artifacts_root)
     resolved_calibration = (
         Path(calibration_dir) if calibration_dir is not None else calibration_data_dir(config_path)
     )
-    configs = AgentConfigs(
+    raw_configs = AgentConfigs(
+        dev=DevConfig.from_yaml(config_path),
         screenplay=ScreenplayConfig.from_yaml(config_path),
         storyboard=StoryboardConfig.from_yaml(config_path),
         visual=VisualConfig.from_yaml(config_path),
@@ -168,10 +234,16 @@ def build_runtime(
         editing=EditingConfig.from_yaml(config_path),
         promo=PromoConfig.from_yaml(config_path),
     )
-    # 唯一后端装配点（配置驱动；缺凭证即在此显式拒绝，先于任何落树/生成）
-    backends = build_backends(configs, config_path, backend=backend, llm_backend=llm_backend)
+    # 唯一后端装配点（配置驱动；缺凭证即在此显式拒绝，先于任何落树/生成）。
+    # 后端装配只读后端槽位与模拟器参数（不含体量键），故在排练档解析**之前**——`pilot` 段
+    # 形状非法时给出的仍是后端装配的既有报错（口径不变）
+    backends = build_backends(raw_configs, config_path, backend=backend, llm_backend=llm_backend)
+    # 体量档单点解析（缺项即拒绝装配）+ 生效体量覆盖（链路与门禁一行不动，只换取值）
+    pilot_config = pilot_module.PilotConfig.from_yaml(config_path)
+    configs = apply_rehearsal_scale(raw_configs, pilot_config)
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)  # 001 发现树
+    create_dev_jobs_schema(engine)  # 017 开发 Agent 作业表（链首环节自己的表）
     create_screenplay_jobs_schema(engine)
     create_storyboard_jobs_schema(engine)
     create_visual_jobs_schema(engine)
@@ -181,7 +253,7 @@ def build_runtime(
     config_fingerprint = fingerprint_of(config_path.read_bytes())
     # 漂移门禁**装配一次**（012 → 015 接线）：同一实例透传给各 judge 阶段的 loop
     drift_gate = DriftGate.load(resolved_calibration, DriftConfig.from_yaml(config_path))
-    return PilotRuntime(
+    runtime = PilotRuntime(
         form=form,
         config_path=config_path,
         data_dir=data_dir,
@@ -192,10 +264,188 @@ def build_runtime(
         backends=backends,
         configs=configs,
         config_fingerprint=config_fingerprint,
-        shot_plan=build_shot_plan(configs, scene_count=_DEFAULT_SCENE_COUNT),
+        shot_plan=build_shot_plan(configs, scene_count=pilot_config.scene_count),
         calibration_dir=resolved_calibration,
         drift_gate=drift_gate,
+        pilot=pilot_config,
     )
+    # 七处集中声明点的一致性（漏一处即拒绝启动，不是"少一环也能跑"）
+    assert_stage_declarations(build_stage_specs(runtime), configs)
+    return runtime
+
+
+def apply_rehearsal_scale(configs: AgentConfigs, pilot: "PilotConfig") -> AgentConfigs:
+    """排练档生效体量的单点覆盖（功能 018 / C10）：只覆盖**体量键**，链路一行不动。
+
+    `status=declared` 且 `work_kind=rehearsal` 时按档位覆盖成片时长/剧本目标分钟/页数容差/
+    单镜时长；`unstandardized`（未标定）或 `real_work`（真实作品用形态原值）**不覆盖**
+    （形态原值在 force）。
+
+    **分钟 → 整页折算**（页数门禁 `rule.page_minutes` 是整数页口径，而档位分钟键是浮点、
+    可表达 30 秒演示档）：目标向上折算到 ≥1 页、容差向上取整（**整分钟档恒等**，非整分钟档
+    取覆盖该档位的最近整页窗口）。**时长口径的一致性校验不拿折算后的整数页当分钟用**——
+    一律按档位声明的浮点分钟比对（见 `pilot._require_duration_consistency`）。
+    """
+    if not pilot.rehearsal_in_force:
+        return configs
+    scale = pilot.scale
+    return replace(
+        configs,
+        screenplay=replace(
+            configs.screenplay,
+            target_duration_min=_page_target(scale.script_target_minutes),
+            page_tolerance=_page_tolerance(scale.script_tolerance_minutes),
+        ),
+        visual=replace(
+            configs.visual,
+            clip_spec={**configs.visual.clip_spec, "duration_seconds": scale.clip_duration_seconds},
+        ),
+        editing=replace(configs.editing, target_duration_s=scale.target_duration_s),
+    )
+
+
+def _page_target(minutes: float) -> int:
+    """剧本目标页数（整页口径）：整分钟档恒等，非整分钟档向上折算到 ≥1 页。"""
+    return max(1, math.ceil(float(minutes) - 1e-9))
+
+
+def _page_tolerance(minutes: float) -> int:
+    """页数容差（整页口径）：向上取整（整分钟档恒等）。"""
+    return max(0, math.ceil(float(minutes) - 1e-9))
+
+
+# ---------------------------------------------------------------------------
+# 七处集中声明点的一致性机检（契约 C1：漏一处即红，不靠人记得）
+# ---------------------------------------------------------------------------
+
+# `.chat(` 调用点的扫描域（与 `tests/unit/test_no_vendor_literals.py` 同域：含 dreaming/、
+# 不含 ops/）；网关自身是定义处，不在扫描域内
+_CHAT_SCAN_ROOTS = ("agents", "dreaming", "core")
+_CHAT_SCAN_EXCLUDE = ("core/llm_gateway",)
+
+
+def repo_root() -> Path:
+    """仓库根（本文件位于 `agents/pilot/`）。"""
+    return Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=4)
+def _scan_chat_call_sites(root: str) -> tuple[tuple[str, str | None], ...]:
+    """扫描实现（进程内缓存：调用点是源码静态声明，同一进程不随运行变化）。"""
+    base = Path(root)
+    sites: list[tuple[str, str | None]] = []
+    for prefix in _CHAT_SCAN_ROOTS:
+        for path in sorted((base / prefix).rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            relative = path.relative_to(base).as_posix()
+            if any(relative.startswith(excluded) for excluded in _CHAT_SCAN_EXCLUDE):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "chat"
+                ):
+                    continue
+                declared = next((kw for kw in node.keywords if kw.arg == "stage"), None)
+                value = (
+                    declared.value.value
+                    if declared is not None and isinstance(declared.value, ast.Constant)
+                    else None
+                )
+                sites.append((f"{relative}:{node.lineno}", value))
+    return tuple(sites)
+
+
+def chat_call_sites(root: str | Path | None = None) -> tuple[tuple[str, str | None], ...]:
+    """扫描域内全部 `.chat(` 调用点 → (文件:行, 声明的 `stage=` 取值 | None)。
+
+    环节归属由**调用点**声明（网关只有四个 `role`，`judge` 一个角色覆盖四个环节）——
+    本函数只做**如实扫描**，不发明 agent ↔ 环节映射。
+    """
+    base = Path(root) if root is not None else repo_root()
+    return _scan_chat_call_sites(str(base.resolve()))
+
+
+def chat_stage_ids(root: str | Path | None = None) -> tuple[str, ...]:
+    """调用点声明的环节 id 取值集（去重排序；未声明或非字面量的调用点不在其列）。"""
+    return tuple(sorted({value for _, value in chat_call_sites(root) if value}))
+
+
+def round_tree_id_of(stage_id: str, round_id: str) -> str:
+    """某环节轮次树的确定性标识（`STAGE_TREE_PREFIX` 的**单一**消费口径）。
+
+    **不得**以 `f"{stage_id}-round-"` 直推：`script` 环节的轮次树实为
+    `screenplay-round-{round_id}`（`agents/screenplay/loop.py`）。
+    """
+    try:
+        prefix = STAGE_TREE_PREFIX[stage_id]
+    except KeyError as exc:  # 未知环节即报错（不静默拼一个前缀出来）
+        raise StageFailedError(f"未知环节 {stage_id!r}：无可用的轮次树前缀声明") from exc
+    return f"{prefix}-round-{round_id}"
+
+
+def declaration_mismatches(specs: Sequence[StageSpec], configs: AgentConfigs) -> list[str]:
+    """七处集中声明点的一致性机检：返回不一致清单（空列表 = 通过）。
+
+    ① 阶段表拓扑序 == `PILOT_STAGE_IDS`（顺序链：每环依赖前一环、链首无依赖）；
+    ② `STAGE_CONFIG_SECTION` 键域 == 阶段元组、值域 == `AgentConfigs` 字段名集；
+    ③ 阶段表 `output_kind` 的全部取值 ∈ 产物 kind 登记表（`package._KIND_CONTENT_TYPE`）；
+    ④ `STAGE_TREE_PREFIX` 键域 == 阶段元组，且**实测前缀**与该环节 Agent loop 的
+       `round_tree_id` 一致（不得以 stage_id 直推）。
+    """
+    mismatches: list[str] = []
+    stage_ids = tuple(spec.stage_id for spec in specs)
+    if stage_ids != PILOT_STAGE_IDS:
+        mismatches.append(
+            f"阶段表拓扑序 {stage_ids} != 阶段元组 {PILOT_STAGE_IDS}（漏同步即有环缺失）"
+        )
+    if set(STAGE_CONFIG_SECTION) != set(PILOT_STAGE_IDS):
+        mismatches.append(
+            f"STAGE_CONFIG_SECTION 键域 {sorted(STAGE_CONFIG_SECTION)} != {sorted(PILOT_STAGE_IDS)}"
+        )
+    config_fields = {field.name for field in fields(AgentConfigs)}
+    if set(STAGE_CONFIG_SECTION.values()) != config_fields:
+        mismatches.append(
+            f"STAGE_CONFIG_SECTION 值域 {sorted(set(STAGE_CONFIG_SECTION.values()))} "
+            f"!= AgentConfigs 字段名集 {sorted(config_fields)}"
+        )
+    for spec in specs:
+        if spec.output_kind not in package_module._KIND_CONTENT_TYPE:
+            mismatches.append(
+                f"阶段 {spec.stage_id} 的产物 kind {spec.output_kind!r} 未登记内容类型"
+                "（新增 kind 须在 package._KIND_CONTENT_TYPE 声明）"
+            )
+    if set(STAGE_TREE_PREFIX) != set(PILOT_STAGE_IDS):
+        mismatches.append(
+            f"STAGE_TREE_PREFIX 键域 {sorted(STAGE_TREE_PREFIX)} != {sorted(PILOT_STAGE_IDS)}"
+        )
+    for stage_id in PILOT_STAGE_IDS:
+        module_name = STAGE_LOOP_MODULES.get(stage_id)
+        if module_name is None:
+            mismatches.append(f"阶段 {stage_id} 未声明对应的 Agent loop 模块（树前缀无法实测）")
+            continue
+        module = __import__(module_name, fromlist=["round_tree_id"])
+        probe = "probe"
+        expected = module.round_tree_id(probe).removesuffix(f"-round-{probe}")
+        if STAGE_TREE_PREFIX.get(stage_id) != expected:
+            mismatches.append(
+                f"阶段 {stage_id} 的轮次树前缀 {STAGE_TREE_PREFIX.get(stage_id)!r} "
+                f"!= 该 Agent loop 实测 {expected!r}（不得以 stage_id 直推）"
+            )
+    return mismatches
+
+
+def assert_stage_declarations(specs: Sequence[StageSpec], configs: AgentConfigs) -> None:
+    """一致性断言：不一致即拒绝启动（装配期，零成本零落树）。"""
+    mismatches = declaration_mismatches(specs, configs)
+    if mismatches:
+        raise StageFailedError(
+            "七环节集中声明不一致（漏一处即红，拒绝装配）：\n"
+            + "\n".join(f"- {item}" for item in mismatches)
+        )
 
 
 # 校准数据根在形态配置中的声明位置：`web.data_dirs.calibration`（010/012 消费方同源）
@@ -228,10 +478,17 @@ def calibration_data_dir(config_path: str | Path) -> Path:
 
 
 def build_shot_plan(configs: AgentConfigs, *, scene_count: int) -> tuple[dict, ...]:
-    """由形态配置派生镜头计划：镜头数 = 成片目标时长 / 单镜时长（不小于场景数）。"""
+    """由形态配置派生镜头计划：镜头数 = **派生镜头数**（`agents/pilot/scale.py` 的唯一公式）。
+
+    `scene_count` 由 `PilotConfig` 唯一解析后注入（码内体量常量已退役）；成片时长与单镜时长
+    取**排练档覆盖后**的生效配置值。
+    """
     clip_ms = int(configs.visual.clip_spec["duration_seconds"] * 1000)
-    target_ms = int(configs.editing.target_duration_s * 1000)
-    total = max(scene_count, math.ceil(target_ms / clip_ms))
+    total = derived_shot_count(
+        scene_count=scene_count,
+        target_duration_s=configs.editing.target_duration_s,
+        clip_duration_seconds=configs.visual.clip_spec["duration_seconds"],
+    )
     plan = []
     for index in range(total):
         size = _SHOT_SIZE_CYCLE[index % len(_SHOT_SIZE_CYCLE)]
@@ -374,7 +631,7 @@ def _require_ok(label: str, outcome: CandidateSet, *, jobs: Sequence[Mapping] = 
 
 
 def build_dag_for(runtime: PilotRuntime):
-    """构建试水链依赖图（六阶段顺序链）。"""
+    """构建试水链依赖图（七环节顺序链）。"""
     from core.orchestration.dag import build_dag
 
     return build_dag(build_stage_specs(runtime))
@@ -395,15 +652,102 @@ def _product(kind: str, ref: str, content_hash: str) -> ProductRef:
     return ProductRef(kind=kind, ref=ref, content_hash=content_hash)
 
 
+# `dev`（立项）环节的运行级输入映射（**显式声明**：逐字段可追溯，禁止未声明直通）
+# 键 = `agents/dev/loop.py` 的 `_validate_inputs` 要求，来源 = 运行级输入字段
+DEV_INPUT_FIELDS = {
+    "genre_bounds": "pilot_inputs.genre_bounds",
+    "audience": "pilot_inputs.audience",
+}
+
+
+def dev_inputs_of(pilot_inputs: Mapping) -> dict:
+    """立项环节输入：由**显式声明的运行级映射**产生（缺来源即拒绝，不静默补默认）。"""
+    inputs: dict[str, Any] = {}
+    for field, source in DEV_INPUT_FIELDS.items():
+        value = pilot_inputs.get(field)
+        if not value:
+            raise StageFailedError(
+                f"立项环节输入缺失：{field}（来源 {source}）——运行级输入未声明该字段即拒绝启动"
+            )
+        inputs[field] = list(value) if isinstance(value, (list, tuple)) else str(value)
+    return inputs
+
+
+def _dev_entry(stage_input: StageInput) -> StageOutcome:
+    """链首立项环节：既有 `run_dev_round`（零新增落树路径，落树/幂等/对账全部沿用）。
+
+    策略装载（静态检查前置 → 版本核验 → 实例化，带**执行超时**与**零环境对象守护**）在同一
+    实现处 `agents/dev/policy_loader.py`；版本取形态配置部署指针
+    `deployment.dev.current_policy_version`——缺指针或源码不存在 ⇒ 拒绝启动（**不**回落
+    "最新/第一条"策略）。`artifact_hash` 为空（执行前拒绝/失败）即判**阶段失败**并点名原因，
+    不带着空工件往下走。
+    """
+    from agents.dev.artifact import TopicSlate
+    from agents.dev.policy_loader import load_deployed_policy
+
+    runtime = _runtime_of(stage_input)
+    round_id = _round_id(runtime, stage_input)
+    loaded = load_deployed_policy(runtime.config_path)
+    result = run_dev_round(
+        round_id=round_id,
+        policy=loaded,  # 只喂 plan(inputs, config)：不交付任何环境句柄（例外义务③）
+        store=runtime.store,
+        artifacts=runtime.artifacts,
+        engine=runtime.engine,
+        gateway=runtime.gateway,
+        config=runtime.configs.dev,
+        inputs=dev_inputs_of(stage_input.shared.get("pilot_inputs") or {}),
+        evaluators=None,  # 真实四评估器装配（两门禁 + 两确定性代理）
+    )
+    job = dict(result.job)
+    artifact_hash = job.get("artifact_hash")
+    candidate_id = str(job.get("job_id") or round_id)
+    outcome = CandidateSet(
+        candidates=(
+            CandidateOutcome(
+                candidate_id=candidate_id,
+                score=1.0 if artifact_hash else 0.0,
+                reasons=() if artifact_hash else (_job_failure_text(job),),
+            ),
+        ),
+        expected=1,
+    )
+    _require_ok("立项环节", outcome, jobs=(job,))
+    slate_hash = str(artifact_hash)
+    slate = TopicSlate.from_dict(json.loads(runtime.artifacts.get(slate_hash)))
+    return StageOutcome(
+        products=(_product("slate", slate_hash, slate_hash),),
+        cost_usd=result.spent_usd,
+        candidates=outcome.candidates,
+        detail={
+            "artifact_hash": slate_hash,
+            "policy_version": result.policy_version,
+            "entry_count": len(slate.entries),
+            "production_marks": list(slate.production_marks),
+            "cost_reconciliation": dict(result.cost_reconciliation),
+            "spent_usd": result.spent_usd,
+        },
+    )
+
+
 def _script_entry(stage_input: StageInput) -> StageOutcome:
     """剧本阶段：既有 `run_screenplay_round`（三阶段产出，节拍表与页数门禁沿用配置）。"""
     runtime = _runtime_of(stage_input)
     config = runtime.configs.screenplay
     round_id = _round_id(runtime, stage_input)
     inputs = dict(stage_input.shared.get("pilot_inputs") or {})
+    # 运行级分钟（浮点，可表达 30 秒档）→ 剧本环节的**整数分钟**口径：取生效剧本目标
+    # （排练档折算后的整页口径，与页数门禁同源）；运行级浮点分钟与生效成片时长的一致性
+    # 已在预检硬校验（`precheck` 的 `_require_duration_consistency`）
+    inputs["target_duration_min"] = int(config.target_duration_min)
     result = run_screenplay_round(
         round_id=round_id,
-        policy=_ScreenplayPolicy(config=config, inputs=inputs),
+        policy=_ScreenplayPolicy(
+            config=config,
+            inputs=inputs,
+            scene_count=runtime.pilot.scene_count,
+            lines_per_scene=runtime.pilot.lines_per_scene,
+        ),
         store=runtime.store,
         artifacts=runtime.artifacts,
         engine=runtime.engine,
@@ -888,19 +1232,28 @@ def _material_prompt(material: Mapping, reel_ref: str, config) -> str:
 
 
 class _ScreenplayPolicy:
-    """剧本策略：按输入与形态配置生成三阶段结构化计划（节拍表取自配置）。"""
+    """剧本策略：按输入与形态配置生成三阶段结构化计划（节拍表取自配置）。
+
+    场景数与每场景行数由 `PilotConfig` 唯一解析后**经参数注入**（码内体量常量已退役）。
+    """
 
     policy_version = "pilot-screenplay-v1"
 
-    def __init__(self, *, config: ScreenplayConfig, inputs: Mapping) -> None:
-        self._plan = build_screenplay_plan(config, inputs)
+    def __init__(
+        self, *, config: ScreenplayConfig, inputs: Mapping, scene_count: int, lines_per_scene: int
+    ) -> None:
+        self._plan = build_screenplay_plan(
+            config, inputs, scene_count=scene_count, lines_per_scene=lines_per_scene
+        )
 
     def plan(self, inputs: Mapping, config: ScreenplayConfig) -> dict:
         return self._plan
 
 
-def build_screenplay_plan(config: ScreenplayConfig, inputs: Mapping) -> dict:
-    """三阶段计划：四场景 × 12 行（对白占比与页数区间落在配置门禁内）。"""
+def build_screenplay_plan(
+    config: ScreenplayConfig, inputs: Mapping, *, scene_count: int, lines_per_scene: int
+) -> dict:
+    """三阶段计划：场景数 × 每场景行数（注入值；对白占比与页数区间落在配置门禁内）。"""
     topic = str(inputs.get("topic", ""))
     cast = list(inputs.get("characters") or ()) or ["主角"]
     beats = [
@@ -915,7 +1268,7 @@ def build_screenplay_plan(config: ScreenplayConfig, inputs: Mapping) -> dict:
     ]
     emotions = ("tense", "sorrow", "calm", "joyful", "awe")
     scenes, lines = [], []
-    for scene_index in range(4):
+    for scene_index in range(scene_count):
         scene_id = f"scene-{scene_index + 1}"
         scenes.append(
             {
@@ -927,7 +1280,7 @@ def build_screenplay_plan(config: ScreenplayConfig, inputs: Mapping) -> dict:
                 "axis_base": "A",
             }
         )
-        for offset in range(12):
+        for offset in range(lines_per_scene):
             name = cast[offset % len(cast)]
             is_dialogue = offset % 3 != 2
             lines.append(
@@ -1016,12 +1369,25 @@ class _PromoPolicy:
 
 
 def build_stage_specs(runtime: PilotRuntime) -> list[StageSpec]:
-    """六阶段定义：依赖顺序 + 执行入口 + 输入契约（交接口径全在 handoffs）。"""
+    """七环节定义：依赖顺序 + 执行入口 + 输入契约（交接口径全在 handoffs）。
+
+    链首是 `dev`（立项组合 → 剧本输入），`script` 因此依赖 `dev`（契约 C1）；`runtime` 只作
+    装配签名的一部分，本函数为**静态声明**（形态配置不参与阶段结构）。
+    """
+    del runtime
     return [
+        StageSpec(
+            stage_id="dev",
+            entrypoint=_dev_entry,
+            depends_on=(),
+            handoff=_handoff_dev,
+            title="立项",
+            output_kind="slate",
+        ),
         StageSpec(
             stage_id="script",
             entrypoint=_script_entry,
-            depends_on=(),
+            depends_on=("dev",),
             handoff=_handoff_script,
             title="剧本",
             output_kind="script",
@@ -1069,8 +1435,23 @@ def build_stage_specs(runtime: PilotRuntime) -> list[StageSpec]:
     ]
 
 
+def _handoff_dev(upstream: Mapping[str, StageOutcome]) -> dict:
+    """链首立项环节的输入由运行级映射产生（`dev_inputs_of`），无上游。
+
+    上游 → 剧本的**字段级交接声明**（`reads`/`renames`/`dropped`/`derived`/`sources` 与
+    守恒等式）归 018 的 US2（`agents/pilot/handoffs.py`），本函数只落最小可运行形态。
+    """
+    del upstream
+    return {}
+
+
 def _handoff_script(upstream: Mapping[str, StageOutcome]) -> dict:
-    del upstream  # 首段输入来自运行输入（题材/时长/角色），由 pilot 注入
+    """剧本环节输入：交接声明的字段级形状与拒绝逻辑归 US2（T1824），此处保持空映射。
+
+    本阶段的实际输入经运行级映射（`shared["pilot_inputs"]`）注入——`dev` 产物的逐字段
+    承接（`topic ← genre` 等）在 US2 落声明后由 `_script_entry` 按 `mode` 取数。
+    """
+    del upstream
     return {}
 
 

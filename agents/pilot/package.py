@@ -149,7 +149,7 @@ def assemble_from_run(*, record: RunRecord, runtime: Any, package_root: str | Pa
     """由运行记录 + 运行时工件库装配样片包（含账目对账，零差异才落盘）。"""
     if record.status is not RunStatus.DONE:
         raise PackageError(
-            f"运行未完成（{record.status}）：只有六阶段全 done 才装配样片包（不产半包）"
+            f"运行未完成（{record.status}）：只有七环节全 done 才装配样片包（不产半包）"
         )
     reel = _reel_of(runtime, record)
     check_product_kinds(record, runtime.artifacts)  # 标签↔内容类型逐项机检（证据载体不误导）
@@ -171,6 +171,7 @@ def assemble_from_run(*, record: RunRecord, runtime: Any, package_root: str | Pa
 # 产物 kind ↔ 内容类型对照（清单标签必须如实描述内容：新增 kind 时**必须**在此声明，
 # 未登记即拒绝装配——不静默放行未知标签，否则同类标签漂移会重新溜进证据包）
 _KIND_CONTENT_TYPE = {
+    "slate": "json",  # 立项组合（TopicSlate canonical JSON，链首产出）
     "script": "json",  # 剧本工件（ScriptArtifact canonical JSON）
     "shotlist": "json",  # 分镜清单（ShotList canonical JSON，内容寻址）
     "material": "json",  # 宣发物料（模拟平台的文案载荷）

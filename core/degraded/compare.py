@@ -219,12 +219,15 @@ def assert_no_environment_objects(*delivered, environment: Sequence = ()) -> Non
 
 
 @contextmanager
-def _policy_deadline(seconds: float | None = None):
+def policy_execution_deadline(seconds: float | None = None):
     """策略执行超时（义务①）：超时即 `CompareError`，宿主不被策略死循环占用。
 
     SIGALRM 只对主线程可用：非主线程**拒绝执行**策略（宁可拒绝，也不无超时执行）。
     边界（如实标注）：吞掉 `BaseException` 的策略仍可绕过进程内的信号截断——该残余风险
     由静态检查与"人工显式采纳"两道前置把关，与容器隔离的例外口径一致。
+
+    **跨业务复用**：降级 Agent 在业务侧（`agents/`）的链首策略装载使用同一实现——"带超时执行
+    策略"只有一份口径，不得在业务侧另写一遍。
     """
     if threading.current_thread() is not threading.main_thread():
         raise CompareError("策略执行超时依赖主线程信号：非主线程调用拒绝执行（不得无超时执行策略）")
@@ -327,7 +330,7 @@ def replay_policy(
     # 交付面 = 策略执行的实际实参（断言与调用共用同一元组：后续加参数即在同一处失败）
     delivered = (inputs, cfg)
     assert_no_environment_objects(*delivered, environment=(store,))
-    with _policy_deadline():
+    with policy_execution_deadline():
         policy = _instantiate(source)
         version = policy_version(source)
         plans = policy.plan(*delivered)

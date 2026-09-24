@@ -1,6 +1,6 @@
-"""功能 015 US3（T1517）：`agents/pilot/stages.py` 六阶段定义与执行入口测试。
+"""功能 015 US3（T1517）+ 功能 018（链首插入）：`agents/pilot/stages.py` 七环节定义与执行入口测试。
 
-覆盖：六阶段 StageSpec（依赖 script→storyboard→visual→sound→editing→promo、DAG 合法）、
+覆盖：七环节 StageSpec（依赖 dev→script→storyboard→visual→sound→editing→promo、DAG 合法）、
 形态配置装配（各 Agent 配置对象按形态配置加载）、候选重试语义（环节内换候选、
 **全败才 failed 并带全部候选判 0 理由**）、以及两条静态断言：
 执行入口不新增落树路径、模块无形态分支。
@@ -34,7 +34,7 @@ def runtime(pilot_form_config_path, pilot_dirs, tmp_path):
 
 
 class Test阶段定义:
-    def test_六阶段顺序与依赖(self, runtime):
+    def test_七环节顺序与依赖(self, runtime):
         specs = build_stage_specs(runtime)
         assert [spec.stage_id for spec in specs] == list(PILOT_STAGE_IDS)
         dag = build_dag(specs)
@@ -50,8 +50,8 @@ class Test阶段定义:
 
     def test_形态配置装配到各_Agent(self, runtime):
         assert runtime.form == FORM
-        # 六段各自的配置对象按同一份形态配置加载（形态差异只在配置）
-        for agent in ("screenplay", "storyboard", "visual", "sound", "editing", "promo"):
+        # 七环节各自的配置对象按同一份形态配置加载（形态差异只在配置；链首为 dev）
+        for agent in ("dev", "screenplay", "storyboard", "visual", "sound", "editing", "promo"):
             assert getattr(runtime.configs, agent) is not None
         assert runtime.config_fingerprint
 

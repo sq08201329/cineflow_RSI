@@ -246,6 +246,12 @@ storyboard:
     codec: libx264
     encode_threads: 1 # 固定单线程档：消除 x264 多线程编码的非确定性
     price_per_shot_usd: 0.02 # 按镜头数计价；缺价目即报错（原则三）
+    # 索引块网格（功能 018 / FR-015，契约 C8）：帧顶 R 行 × C 列块网格，容量 = 2**(R·C)。
+    # 容量下界 = 该形态**派生镜头数**（`agents/pilot/scale.py` 的唯一公式）：短剧态
+    # ceil(120 s ÷ 7.5 s) = 16 镜 ⇒ 容量 ≥ 4 位 ⇒ 此处 1×4 = 16 位容量恰够（无余量，如实登记）；
+    # 量子上界（解码保真）2**C ≤ width ⇒ cols ≤ 7（2**4 = 16 ≤ 144 ✓）；又 1 ≤ rows ≤ height。
+    # 缺项即报错；改网格取值 ⇒ 对齐代理评估器**即升版本**（原则一）。
+    index_grid: {rows: 1, cols: 4}
   judge: # judge.script_fit 委员会：版本号 = 提示词 + 锚点集 + 摘要函数 + 输出预算四段哈希
     model: mock-copy-v1 # judge 走既有网关计费；缺价目网关即报错（不允许静默零成本）
     prompts:
@@ -594,6 +600,25 @@ pilot:
   backend: simulated # simulated | http：五个环节的平台适配器（分镜/视觉/声音/剪辑/宣发）
   llm_backend: mock # mock | http：LLM 网关后端（http 读 OPENAI_BASE_URL / OPENAI_API_KEY）
   overrides: {} # 逐环节覆盖（优先于全局取值），如 {visual: http, llm: http}
+  # 体量档（功能 018 / FR-014）：`scene_count` 与 `lines_per_scene` 是体量的**唯一来源**
+  # （唯一解析者是 `agents/pilot/pilot.py` 的 PilotConfig；`agents/*/config.py` 不读本段）。
+  # 缺项即报错（不取码内默认）；页数门禁 = 场景数 × 每场景行数 ÷ lines_per_page。
+  scene_count: 4 # 短剧试水体量：四场景（未标定）
+  lines_per_scene: 12 # 每场景行数（未标定；页数 = 4 × 12 ÷ 45 ≈ 1.07 页）
+  # 排练档（FR-013 / 契约 C10）：缩档只改本段，链路拓扑/交接契约/门禁/评估器组合一行不动。
+  rehearsal:
+    status: declared # declared | unstandardized
+    work_kind: rehearsal # rehearsal | real_work
+    scale: # 短剧形态原值即其 1~3 分钟档（各键与形态原值同值：无缩减，如实标注"未标定"）
+      target_duration_s: 120.0 # 秒级浮点：覆盖 editing.target_duration_s；**未标定**
+      script_target_minutes: 2.0 # 浮点分钟（0.5 合法）：覆盖 screenplay.target_duration_min
+      script_tolerance_minutes: 1.0 # 浮点分钟：覆盖 screenplay.page_tolerance
+      clip_duration_seconds: 7.5 # 覆盖 visual.clip_spec.duration_seconds
+  # 性能门禁阈值（FR-010 / 契约 C13）：status=declared 时七环节逐键齐备且值为正；
+  # 未标定期间**不发明数字**、不产出达标结论。
+  performance:
+    status: unstandardized # declared | unstandardized（阈值数字属运营侧输入）
+    stage_seconds: {} # 键 = 七环节 id（dev/script/storyboard/visual/sound/editing/promo）
 
 # 部署指针（功能 009）：剧本 Agent 的当前部署策略版本——**仅人工采纳后更新**
 # （值 = policies/history/screenplay/ 下的策略版本）。部署自动化（功能 014）：

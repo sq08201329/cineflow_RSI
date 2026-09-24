@@ -36,9 +36,11 @@ _WIRED_LOOPS = {
 def _inputs() -> PilotInputs:
     return PilotInputs(
         topic="夜班记录",
-        target_duration_min=2,
+        target_duration_min=0.5,
         characters=("林静", "陈默"),
         constraints=("单场景为主",),
+        genre_bounds=("悬疑",),
+        audience="都市女性",
     )
 
 

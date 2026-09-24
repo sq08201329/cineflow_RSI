@@ -200,7 +200,13 @@ class Test登记点四_预检读声明值:
         report = precheck(
             form="movie",
             config_path=config_path,
-            inputs=PilotInputs(topic="题材", target_duration_min=90, characters=("林一",)),
+            inputs=PilotInputs(
+                topic="题材",
+                target_duration_min=90,
+                characters=("林一",),
+                genre_bounds=("悬疑",),
+                audience="都市女性",
+            ),
             data_dir=config_path.parent / "pilot",
         )
         assert "budget" in report["loaders"]
@@ -222,7 +228,13 @@ class Test登记点四_预检读声明值:
             precheck(
                 form="movie",
                 config_path=broken,
-                inputs=PilotInputs(topic="题材", target_duration_min=90, characters=("林一",)),
+                inputs=PilotInputs(
+                    topic="题材",
+                    target_duration_min=90,
+                    characters=("林一",),
+                    genre_bounds=("悬疑",),
+                    audience="都市女性",
+                ),
                 data_dir=tmp_path / "pilot",
             )
 

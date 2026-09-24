@@ -28,6 +28,8 @@ CONFIG_CLASSES = (
     ("editing", "agents.editing.config", "EditingConfig"),
     ("promo", "agents.promo.config", "PromoConfig"),
     ("dev", "agents.dev.config", "DevConfig"),
+    # 018：pilot 段（体量档：场景数/每场景行数/排练档/性能阈值）——唯一解析者
+    ("pilot", "agents.pilot.pilot", "PilotConfig"),
     ("pooling", "core.replay.pooling_models", "PoolingConfig"),
     ("dreaming", "dreaming.config", "DreamConfig"),
     ("calibration", "core.calibration.config", "CalibrationConfig"),
@@ -59,6 +61,8 @@ REQUIRED_PATHS = (
     ("editing", ("editing", "judge", "max_tokens")),
     ("promo", ("promo", "model_prices")),
     ("dev", ("dev", "slate")),
+    ("pilot", ("pilot", "scene_count")),
+    ("pilot", ("pilot", "rehearsal")),
     ("pooling", ("replay", "pooling")),
     ("dreaming", ("dreaming",)),
     ("calibration", ("calibration", "self_pairing_exclusions")),

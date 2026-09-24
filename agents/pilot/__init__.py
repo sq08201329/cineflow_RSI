@@ -4,7 +4,7 @@
 本包只承载业务侧内容：
 
 - `handoffs.py`：四段交接纯映射（上游导出 → 下游输入）+ 双向快照断言；
-- `stages.py`：六阶段 StageSpec 定义（各阶段调用对应 Agent 的既有 loop 入口，
+- `stages.py`：七环节 StageSpec 定义（各阶段调用对应 Agent 的既有 loop 入口，
   不新增落树路径）；
 - `pilot.py`：试水运行编排（预检 → DAG 执行 → 样片包）；
 - `package.py`：样片包装配（manifest 含"模拟生成"标注 + 成片 + 产物 + 账目 + 状态）。

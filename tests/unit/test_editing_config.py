@@ -28,7 +28,9 @@ class Test真实配置解析:
         cfg = EditingConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
         assert cfg.exploration_per_round_usd == 400.0
         assert cfg.edits_per_round == 3
-        assert cfg.target_duration_s == 120.0
+        # 长片语义 90 分钟 = 5400 秒（功能 018 修 bug：此前的 120 秒从短剧形态抄来，
+        # 与 screenplay.target_duration_min: 90 自相矛盾；两处时长不一致即拒绝启动）
+        assert cfg.target_duration_s == 5400.0
         assert cfg.duration_tolerance_s == 10.0
         assert cfg.shot_limits == {"min_shot_ms": 500, "max_shot_ms": 20000}
 
