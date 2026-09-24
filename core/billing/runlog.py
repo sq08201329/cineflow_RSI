@@ -18,12 +18,12 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import blake3
 
-from core.billing.budget import BudgetConfig, channel_dir
+from core.billing.budget import BudgetConfig, BudgetRefusedError, channel_dir
 
 RUN_SOURCES = ("real", "simulated", "fallback")
 # 保留值：本特性无写入点（装配期即拒、网关不设回落路径），值域保留 + 写入侧要求原因
@@ -199,3 +199,199 @@ def load_run(date: str, *, channel_id: str, root: str | Path) -> dict:
         raise RunLogError(f"运行记录文件与渠道不符：{path} 属 {payload.get('channel_id')!r}")
     _verify_chain(payload, path)
     return payload
+
+
+# 金额来源口径（C12/C15：花费可回溯、不凭报告自证）：网关折算记账值 / 厂商侧实测回填
+COST_SOURCE_GATEWAY = "gateway_accounting"
+COST_SOURCE_MEASURED = "measured_backfill"
+
+
+def _as_date(value, cfg: BudgetConfig):
+    """日期归一：`end` 允许 date / `YYYY-MM-DD` / 带时区 datetime。
+
+    带时区的 datetime 按**渠道日历**（`peak_windows.timezone`）取本地日。
+    """
+    if isinstance(value, datetime):
+        return date.fromisoformat(cfg.local_date(value))
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise RunLogError(f"日期必须为 YYYY-MM-DD，实际为 {value!r}") from exc
+    raise RunLogError(f"日期必须为 date / YYYY-MM-DD / datetime，实际为 {value!r}")
+
+
+def window_coverage(
+    channel_id: str,
+    *,
+    cfg: BudgetConfig,
+    root: str | Path,
+    end,
+    min_window_days: int | None = None,
+    gap_tolerance_days: int | None = None,
+) -> dict:
+    """窗口机检（C15）：**覆盖 + 连续双条件**，缺口如实列出、**禁止插值补齐**。
+
+    - `covered_days` **只计 `source=real` 的日期**（模拟/回落日不算真实运行日）；
+    - `meets = covered_days ≥ min_window_days` **∧** `max_gap_days ≤ gap_tolerance_days`
+      （两项均由配置声明：缺省取 `budget.runs.*`）；
+    - `continuous = not gaps`（**有无断档**，与容差无关）：通过也不谎报为"连续"，
+      `covered_days` / `continuous` / `gaps` 三项照旧落在产物里，失败可归因；
+    - 未达标时给出**归因**：覆盖差值、最长断档与容差的差值、逐段 `gaps`；
+    - 日期口径 = `peak_windows.timezone`（与额度 day 窗口、峰谷判定同一日历）。
+    """
+    from datetime import timedelta
+
+    cfg.channel(channel_id)
+    end_date = _as_date(end, cfg)
+    min_days = int(cfg.runs["min_window_days"] if min_window_days is None else min_window_days)
+    tolerance = int(
+        cfg.runs["gap_tolerance_days"] if gap_tolerance_days is None else gap_tolerance_days
+    )
+    directory = channel_dir(root, channel_id) / "runs"
+    observed: dict[date, dict[str, int]] = {}
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        payload = load_run(path.stem, channel_id=channel_id, root=root)  # 链校验后才采信
+        day = _as_date(payload["date"], cfg)
+        if day > end_date:
+            continue
+        counts = observed.setdefault(day, {"real": 0, "simulated": 0, "fallback": 0})
+        for entry in payload.get("entries", []):
+            counts[str(entry.get("source"))] = counts.get(str(entry.get("source")), 0) + 1
+    covered_dates = sorted(day for day, counts in observed.items() if counts.get("real"))
+    start_date = min(observed) if observed else end_date
+    gaps: list[dict] = []
+    cursor = start_date
+    while cursor <= end_date:
+        if cursor not in observed:  # 断档 = **没有任何记录**的日期；不插值、不补零
+            gap_start = cursor
+            while cursor <= end_date and cursor not in observed:
+                cursor += timedelta(days=1)
+            gaps.append(
+                {
+                    "from": gap_start.isoformat(),
+                    "to": (cursor - timedelta(days=1)).isoformat(),
+                    "days": (cursor - gap_start).days,
+                }
+            )
+            continue
+        cursor += timedelta(days=1)
+    max_gap_days = max((gap["days"] for gap in gaps), default=0)
+    covered_days = len(covered_dates)
+    meets = covered_days >= min_days and max_gap_days <= tolerance
+    coverage_shortfall = max(0, min_days - covered_days)
+    gap_shortfall = max(0, max_gap_days - tolerance)
+    reasons: list[str] = []
+    if coverage_shortfall:
+        reasons.append(f"覆盖不足：covered_days={covered_days} < min_window_days={min_days}")
+    if gap_shortfall:
+        reasons.append(f"断档超容差：max_gap_days={max_gap_days} > gap_tolerance_days={tolerance}")
+    return {
+        "channel_id": str(channel_id),
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "covered_days": covered_days,
+        "covered_dates": [day.isoformat() for day in covered_dates],
+        "gaps": gaps,
+        "max_gap_days": max_gap_days,
+        "continuous": not gaps,
+        "min_window_days": min_days,
+        "gap_tolerance_days": tolerance,
+        "meets": meets,
+        "coverage_shortfall_days": coverage_shortfall,
+        "gap_shortfall_days": gap_shortfall,
+        "reasons": reasons,
+        "note": (
+            "covered_days 只计 source=real 的日期；断档按逐日**如实列出**（不插值补齐）；"
+            "continuous 与 meets 并列呈现——容差放开时可能 meets=true 而 continuous=false"
+        ),
+    }
+
+
+class RecordingGateway:
+    """网关的运行记录包装（C15 / T1942）：转发一切，`chat` 之后落一条运行记录。
+
+    **为什么是包装而非网关内改**：`core/llm_gateway` 对本包**零 import**（C1），且网关必须
+    独立可用；运行记录属渠道计费纪律，故在**装配面**包装——两个真实装配点共用本实现。
+
+    - 一次调用 = 一条 entry：`result` ∈ `ok` / `failed` / `refused`（拒绝与厂商失败可辨）；
+    - `source` 由装配面声明：真实渠道 = `real`，模拟后端 = `simulated`（**模拟日不计入
+      `covered_days`**，C15）；`fallback` 为保留值（本特性无写入点）；
+    - `cost_source` 标注金额来源（网关折算记账值 / 厂商侧实测回填），使花费可回溯；
+    - 缺少环节归属的拒绝（`tier_undeclared`）不写记录（运行记录要求可归到环节，
+      该次拒绝的证据在 `alerts.jsonl`），其余调用一律留痕；写记录失败**不吞**（证据不得静默丢失）。
+    """
+
+    def __init__(
+        self,
+        gateway,
+        *,
+        cfg: BudgetConfig,
+        root: str | Path,
+        channel_id: str,
+        source: str,
+        adapter_ref: str = "",
+        clock=None,
+    ) -> None:
+        if source not in RUN_SOURCES:
+            raise RunLogError(f"运行来源必须 ∈ {list(RUN_SOURCES)}，实际为 {source!r}")
+        self._gateway = gateway
+        self._cfg = cfg
+        self._root = root
+        self._channel_id = str(channel_id)
+        self._source = str(source)
+        self._adapter_ref = str(adapter_ref)
+        self._clock = clock or (lambda: _now())
+
+    def chat(self, prompt: str, **kwargs):
+        """转发一次调用并留痕。
+
+        **本处不新增 `.chat(` 调用点**（静态计数钉死 8 处；那 8 处各自声明 `role=`/`stage=`）：
+        转发目标用 `getattr` 取——这是**装配面的转发器**，不是发起调用的调用点。
+        """
+        moment = self._clock()
+        stage = str(kwargs.get("stage", "") or "")
+        try:
+            result = getattr(self._gateway, "chat")(prompt, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - 失败/拒绝都要留痕后原样上抛
+            self._write(
+                moment=moment,
+                stage=stage,
+                result="refused" if isinstance(exc, BudgetRefusedError) else "failed",
+                profile_id="",
+            )
+            raise
+        self._write(
+            moment=moment,
+            stage=stage,
+            result="ok",
+            profile_id=str(getattr(result, "profile_id", "") or ""),
+        )
+        return result
+
+    def __getattr__(self, name: str):
+        """其余属性与方法一律转发（`cost_report` / `profile_snapshot` / `spend_guard` …）。"""
+        return getattr(self._gateway, name)
+
+    def _write(self, *, moment, stage: str, result: str, profile_id: str) -> None:
+        if not stage:
+            return  # 无环节归属（如缺 stage= 的拒绝）：证据在 alerts.jsonl
+        append_run(
+            self._channel_id,
+            cfg=self._cfg,
+            root=self._root,
+            moment=moment,
+            stage=stage,
+            source=self._source,
+            adapter_ref=self._adapter_ref,
+            profile_id=profile_id,
+            result=result,
+            cost_source=COST_SOURCE_GATEWAY,
+            fallback_reason="",
+        )
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)

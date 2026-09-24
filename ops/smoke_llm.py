@@ -64,6 +64,7 @@ from core.billing.budget import (  # noqa: E402 - 019：门禁装配与拒绝文
     assemble_guard,
     refusal_reason,
 )
+from core.billing.runlog import RecordingGateway  # noqa: E402 - 019：运行记录（C15/T1942）
 from core.llm_gateway.backends.http import HttpBackend  # noqa: E402
 from core.llm_gateway.gateway import GatewayError, LLMGateway  # noqa: E402
 from core.llm_gateway.profiles import (  # noqa: E402
@@ -203,7 +204,7 @@ def build_gateway(
     loaded, profile = resolve_profile(config_path, profile_id)
     scoped = restricted_profile_set(loaded, profile.profile_id)
     budget = assemble_guard(config_path)
-    return LLMGateway(
+    gateway = LLMGateway(
         backend if backend is not None else HttpBackend.from_profile(profile, environ=environ),
         price_book=scoped.snapshot().price_book(),
         sleep=lambda _: None,
@@ -211,6 +212,15 @@ def build_gateway(
         spend_guard=budget.guard,  # 019：前置预算门禁（固定序列第③步）
         channel_id=budget.channel_id,  # 019：请求的渠道归属
         peak_windows=budget.peak_windows,  # 019：渠道日历（峰谷归属=调用开始时刻）
+    )
+    # 019（C15/T1942）：一次调用 = 一条运行记录；注入后端（测试/离线）按 simulated 如实标注
+    return RecordingGateway(
+        gateway,
+        cfg=budget.cfg,
+        root=budget.root,
+        channel_id=budget.channel_id,
+        source="real" if backend is None else "simulated",
+        adapter_ref=budget.cfg.channel(budget.channel_id).adapter,
     )
 
 

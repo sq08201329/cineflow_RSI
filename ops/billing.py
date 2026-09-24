@@ -2,13 +2,18 @@
 """真实渠道与账单对账 CLI（功能 019）：额度台账 / 最小规模校准 / 扩量。
 
 **判定全在 core**（`core/billing/`），本脚本只做参数解析、调用与 JSON 打印（薄转发）。
-本阶段落地三个子命令（其余子命令 `import-bill` / `reconcile` / `alert-check` / `runs`
-随 US2/US3 的产物面在后续阶段落地，命名与契约 C16 逐字一致）：
+子命令（命名与契约 C16 逐字一致；`runs` 属 US3，随后续阶段落地）：
 
 ```
 uv run python ops/billing.py tiers     --channel <id> [--config configs/*.yaml]
 uv run python ops/billing.py calibrate --channel <id> --tier <环节> --measured-usd <实测> \
         --sample-count <n> [--profile <档案 id> | --expected-usd <按价目折算>] [--cost-source <源>]
+uv run python ops/billing.py import-bill --channel <id> --file <账单> --bill-id <批次> \
+        --period <周期> [--currency USD] [--source export|api] [--config configs/*.yaml]
+uv run python ops/billing.py reconcile --channel <id> --period <周期> \
+        --gateway-report <网关账目 JSON> [--config configs/*.yaml]
+uv run python ops/billing.py alert-check --channel <id> [--period <周期>] [--since <YYYY-MM-DD>] \
+        [--config configs/*.yaml]
 uv run python ops/billing.py raise-tier --channel <id> --tier <环节> --limit-usd <额> \
         --calibration <单轮校准 id> --by <人> --reason <理由> [--config configs/*.yaml]
 ```
@@ -17,6 +22,12 @@ uv run python ops/billing.py raise-tier --channel <id> --tier <环节> --limit-u
 - `calibrate`：**只读既有记录、不联网、不构造后端、不新测花费**——"实测花费"由运营从
   厂商侧读出（`--measured-usd`，口径写在 `--cost-source`），"按价目折算"由档案价目 × token
   数算出；本阶段以显式输入落记录（US3 接上运行记录/账单侧的自动复述）；
+- `import-bill`：账单导入（**不联网**：人工上传厂商导出文件）；格式/列映射由配置声明，
+  缺声明即报错、**零落盘**；批次幂等（同批次重复导入拒绝）；
+- `reconcile`：逐项对账并落报告 + 告警留痕；**无账单批次即拒绝产出**（不产"零差异"报告）；
+  有告警 ⇒ 退出码 1；
+- `alert-check`：告警门禁**只读入口**（报告的未解释项/告警 + `alerts.jsonl` 留痕证据）；
+  有告警 ⇒ 退出码 1——供定时工作流非零退出即告警；
 - `raise-tier`：六条先决条件全过才**定点改写**配置额度（`core/yaml_edit.py`，其余段与注释
   逐字节不变）+ 写 `calibrated_by` + `alerts.jsonl` 留痕；任一条件不满足即拒绝并留
   `uncalibrated_raise`（配置一字不改）。
@@ -37,10 +48,19 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.billing.bill import (  # noqa: E402 - 019：账单导入面（C2/C3）
+    BillError,
+    UnknownBillFormatError,
+    load_bill,
+    normalize_bill,
+    save_bill,
+)
 from core.billing.budget import (  # noqa: E402 - 019：账本/档位/告警读取
+    AlertLog,
     BudgetConfig,
     BudgetConfigError,
     alerts_path,
+    channel_dir,
     ledger_path,
     sole_channel,
 )
@@ -49,6 +69,13 @@ from core.billing.calibration import (  # noqa: E402 - 019：校准记录与扩�
     calibration_status,
     raise_tier,
     record_calibration,
+)
+from core.billing.reconcile import (  # noqa: E402 - 019：对账与报告（C13/C14）
+    ReconciliationError,
+    load_report,
+    reconcile,
+    report_path,
+    save_report,
 )
 
 DEFAULT_CONFIG = "configs/movie.yaml"
@@ -244,7 +271,10 @@ def _cmd_raise_tier(args) -> int:
             config_path=args.config,
             root=cfg.ledger_root(),
         )
-    except (CalibrationRecordError, BudgetConfigError) as exc:
+    except BudgetConfigError as exc:
+        # 缺档/渠道不符/额度非法 = **用法或配置错误**（不发明档位、不猜渠道）
+        return _fail(f"配置错误：{exc}", EXIT_USAGE)
+    except CalibrationRecordError as exc:
         # 拒绝：配置未被改写（raise_tier 在改写之前就抛），留痕已写 `uncalibrated_raise`
         print(
             json.dumps(
@@ -270,6 +300,169 @@ def _cmd_raise_tier(args) -> int:
         )
     )
     return EXIT_OK
+
+
+def _cmd_import_bill(args) -> int:
+    """账单导入（**不联网**）：规范化 + 批次幂等落盘；任一行非法 ⇒ 整体拒绝、零落盘。"""
+    cfg = _load_config(args.config)
+    channel_id = _channel_of(cfg, args.channel)
+    spec = cfg.channel(channel_id).bill
+    path = Path(args.file)
+    if not path.is_file():
+        return _fail(f"账单文件不存在：{path}", EXIT_USAGE)
+    try:
+        bill = normalize_bill(
+            path.read_text(encoding="utf-8"),
+            channel_id=channel_id,
+            bill_id=args.bill_id,
+            period=args.period,
+            currency=args.currency,
+            source=args.source,
+            fmt=spec.format_id,
+            columns=spec.columns,
+        )
+    except UnknownBillFormatError as exc:
+        return _fail(f"未注册的账单格式（零落盘）：{exc}", EXIT_FAILED)
+    except BillError as exc:
+        return _fail(f"账单导入被拒（整体拒绝、零落盘）：{exc}", EXIT_FAILED)
+    try:
+        target = save_bill(bill, root=cfg.ledger_root())
+    except Exception as exc:  # noqa: BLE001 - 同批次已存在等：拒绝覆盖（append-only）
+        return _fail(f"账单落盘被拒（批次幂等）：{exc}", EXIT_FAILED)
+    print(
+        json.dumps(
+            {
+                "channel_id": channel_id,
+                "bill_id": bill.bill_id,
+                "period": bill.period,
+                "currency": bill.currency,
+                "source": bill.source,
+                "format": bill.format_id,
+                "entries": len(bill.entries),
+                "raw_ref": bill.raw_ref,
+                "fetched_at": bill.fetched_at,
+                "system_digest": bill.system_digest,
+                "path": str(target),
+                "network": "none",  # 本命令不联网（导出形态人工上传）
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return EXIT_OK
+
+
+def _gateway_ledger_from(args) -> dict:
+    """网关账目（C13 的输入之一）：由文件给出（网关内存账目不在产物面）。"""
+    path = Path(args.gateway_report)
+    if not path.is_file():
+        raise ReconciliationError(f"网关账目文件不存在：{path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _cmd_reconcile(args) -> int:
+    """逐项对账：**无账单即拒绝产出**（不产"零差异"报告）；有告警 ⇒ 退出码 1。"""
+    cfg = _load_config(args.config)
+    channel_id = _channel_of(cfg, args.channel)
+    try:
+        bill_payload = load_bill(args.bill_id, channel_id=channel_id, root=cfg.ledger_root())
+    except Exception as exc:  # noqa: BLE001 - 无账单/账单不可用 ⇒ 拒绝产出
+        return _fail(
+            f"无账单批次即拒绝产出（不产零差异报告）：{exc}",
+            EXIT_FAILED,
+        )
+    from core.billing.bill import BillEntry, VendorBill
+
+    bill = VendorBill(
+        channel_id=bill_payload["channel_id"],
+        bill_id=bill_payload["bill_id"],
+        period=bill_payload["period"],
+        currency=bill_payload["currency"],
+        source=bill_payload["source"],
+        raw_ref=bill_payload["raw_ref"],
+        fetched_at=bill_payload["fetched_at"],
+        format_id=bill_payload["format_id"],
+        entries=tuple(BillEntry(**entry) for entry in bill_payload["entries"]),
+        system_digest=bill_payload.get("system_digest", ""),
+    )
+    try:
+        report = reconcile(
+            args.period,
+            channel_id=channel_id,
+            gateway_ledger=_gateway_ledger_from(args),
+            bill=bill,
+            cfg=cfg,
+        )
+    except ReconciliationError as exc:
+        return _fail(f"对账拒绝产出：{exc}", EXIT_FAILED)
+    try:
+        save_report(report, root=cfg.ledger_root())
+    except Exception as exc:  # noqa: BLE001 - 同周期重产拒绝（append-only）
+        return _fail(f"报告落盘被拒（同周期重产）：{exc}", EXIT_FAILED)
+    print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_FAILED if report.has_alerts() else EXIT_OK
+
+
+def _cmd_alert_check(args) -> int:
+    """告警门禁只读入口（C14）：报告未解释项/超阈值 ⇒ 退出码 1；`alerts.jsonl` 逐条列出。"""
+    cfg = _load_config(args.config)
+    channel_id = _channel_of(cfg, args.channel)
+    directory = channel_dir(cfg.ledger_root(), channel_id) / "reports"
+    periods = (
+        [args.period] if args.period else sorted(path.stem for path in directory.glob("*.json"))
+    )
+    reports: list[dict] = []
+    alerting: list[str] = []
+    for period in periods:
+        if not args.period:
+            path = directory / f"{period}.json"
+        else:
+            path = report_path(cfg.ledger_root(), channel_id, period)
+        if not path.is_file():
+            if args.period:
+                return _fail(f"报告不存在：{path}（先 reconcile 再 alert-check）", EXIT_USAGE)
+            continue
+        try:
+            payload = load_report(period, channel_id=channel_id, root=cfg.ledger_root())
+        except Exception as exc:  # noqa: BLE001 - 报告被改写/机检失败 ⇒ 有告警（不静默放行）
+            alerting.append(f"{period}: 报告完整性校验失败（{exc}）")
+            continue
+        reports.append(payload)
+        if payload.get("unexplained") or payload.get("alerts"):
+            alerting.append(
+                f"{period}: unexplained={len(payload.get('unexplained', []))} "
+                f"alerts={list(payload.get('alerts', []))}"
+            )
+    entries = AlertLog(alerts_path(cfg.ledger_root(), channel_id)).entries()
+    since = args.since or ""
+    incremental = [entry for entry in entries if not since or str(entry.get("at", "")) >= since]
+    gate_kinds = {"unexplained_delta", "delta_over_threshold", "budget_refused", "over_limit"}
+    if since:
+        new_gate = [entry for entry in incremental if entry.get("kind") in gate_kinds]
+        if new_gate:
+            alerting.append(f"since {since}：新增门禁类告警 {len(new_gate)} 条")
+    payload = {
+        "channel_id": channel_id,
+        "periods_scanned": periods,
+        "reports": [
+            {
+                "period": report.get("period"),
+                "unexplained": list(report.get("unexplained", [])),
+                "alerts": list(report.get("alerts", [])),
+                "deviates": report.get("deviates"),
+                "bill_refs": list(report.get("bill_refs", [])),
+            }
+            for report in reports
+        ],
+        "alerts_total": len(entries),
+        "alerts_jsonl": str(alerts_path(cfg.ledger_root(), channel_id)),
+        "since": since,
+        "alerting": alerting,
+        "has_alerts": bool(alerting),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_FAILED if alerting else EXIT_OK
 
 
 def _credential_report() -> dict:
@@ -320,6 +513,40 @@ def build_parser() -> argparse.ArgumentParser:
     raise_tier_parser.add_argument("--reason", required=True, help="理由（留痕必填）")
     raise_tier_parser.add_argument("--config", default=DEFAULT_CONFIG, help="形态配置路径")
     raise_tier_parser.set_defaults(handler=_cmd_raise_tier)
+
+    import_bill = sub.add_parser("import-bill", help="账单导入（不联网；批次幂等、零部分导入）")
+    import_bill.add_argument("--channel", required=True)
+    import_bill.add_argument("--file", required=True, help="账单文件（厂商导出的人工上传副本）")
+    import_bill.add_argument("--bill-id", dest="bill_id", required=True, help="批次标识（幂等键）")
+    import_bill.add_argument("--period", required=True, help="账单周期（如 2026-09）")
+    import_bill.add_argument("--currency", default="USD", help="记账币种（异币种按条目 fx 折算）")
+    import_bill.add_argument("--source", default="export", choices=("export", "api"))
+    import_bill.add_argument("--config", default=DEFAULT_CONFIG)
+    import_bill.set_defaults(handler=_cmd_import_bill)
+
+    reconcile_parser = sub.add_parser(
+        "reconcile", help="逐项对账（无账单即拒绝产出；有告警退出码 1）"
+    )
+    reconcile_parser.add_argument("--channel", required=True)
+    reconcile_parser.add_argument("--period", required=True)
+    reconcile_parser.add_argument(
+        "--bill-id", dest="bill_id", required=True, help="账单批次（先 import-bill）"
+    )
+    reconcile_parser.add_argument(
+        "--gateway-report",
+        dest="gateway_report",
+        required=True,
+        help="网关账目 JSON（cost_report() 形状；网关内存账目不在产物面，故以文件给出）",
+    )
+    reconcile_parser.add_argument("--config", default=DEFAULT_CONFIG)
+    reconcile_parser.set_defaults(handler=_cmd_reconcile)
+
+    alert_check = sub.add_parser("alert-check", help="告警门禁只读入口（有告警退出码 1）")
+    alert_check.add_argument("--channel", required=True)
+    alert_check.add_argument("--period", default=None, help="只查该周期（缺省查全部报告）")
+    alert_check.add_argument("--since", default=None, help="只看该时刻之后的告警增量（ISO8601）")
+    alert_check.add_argument("--config", default=DEFAULT_CONFIG)
+    alert_check.set_defaults(handler=_cmd_alert_check)
     return parser
 
 

@@ -40,6 +40,7 @@ from agents.sound.platform.base import UnavailableError as SoundUnavailableError
 from agents.storyboard.platform.base import UnavailableError as StoryboardUnavailableError
 from agents.visual.platform.base import UnavailableError as VisualUnavailableError
 from core.billing.budget import assemble_guard  # 019：真实渠道装配点的门禁装配
+from core.billing.runlog import RecordingGateway  # 019：运行记录（C15/T1942）
 from core.llm_gateway.gateway import GatewayError, LLMGateway
 from core.orchestration.errors import OrchestrationError
 
@@ -174,7 +175,7 @@ class PilotBackends:
     selection: BackendSelection
     resolved: Mapping[str, str]
     llm: Any  # MockBackend / HttpBackend
-    gateway: LLMGateway
+    gateway: LLMGateway | RecordingGateway
     storyboard: Any
     visual: Any
     sound: Mapping[str, Any]  # tts / sfx / music
@@ -208,11 +209,10 @@ def build_backends(
     # 告警写手与渠道日历一次装配（缺 budget 段/缺档/缺峰谷声明在此装配期拒绝，
     # 不等到第一次调用）；守卫生效后超限调用被拒且**成本零入账**
     budget = assemble_guard(config_path)
-    return PilotBackends(
-        selection=selection,
-        resolved=resolved,
-        llm=llm,
-        gateway=LLMGateway(
+    # 019（C15/T1942）：网关外层包**运行记录**（一次调用 = 一条 entry；来源按后端声明如实标注，
+    # 模拟后端 = simulated ⇒ 不计入 covered_days）
+    gateway = RecordingGateway(
+        LLMGateway(
             llm,
             price_book=configs.screenplay.model_prices,
             sleep=lambda _: None,
@@ -221,6 +221,17 @@ def build_backends(
             channel_id=budget.channel_id,  # 019：请求的渠道归属（守卫按渠道绑定判定）
             peak_windows=budget.peak_windows,  # 019：渠道日历（峰谷归属=调用开始时刻）
         ),
+        cfg=budget.cfg,
+        root=budget.root,
+        channel_id=budget.channel_id,
+        source="real" if resolved[LLM_SLOT] == HTTP else SIMULATED,  # 真实渠道 / 模拟后端
+        adapter_ref=budget.cfg.channel(budget.channel_id).adapter,
+    )
+    return PilotBackends(
+        selection=selection,
+        resolved=resolved,
+        llm=llm,
+        gateway=gateway,
         storyboard=_guard(
             "storyboard", resolved["storyboard"], lambda: _storyboard(resolved["storyboard"])
         ),

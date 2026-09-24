@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from core.billing.bill import system_digest, write_snapshot
-from core.billing.budget import BudgetConfig, channel_dir
+from core.billing.bill import load_snapshot, system_digest, write_snapshot
+from core.billing.budget import AlertLog, BudgetConfig, alerts_path, channel_dir
 
 # 分类枚举：固定六类，不增不减（FR-007 六类 + 边界情况）
 CLASSIFICATIONS = (
@@ -143,10 +143,38 @@ def report_path(root: str | Path, channel_id: str, period: str) -> Path:
     return channel_dir(root, channel_id) / "reports" / f"{period}.json"
 
 
+def load_report(period: str, *, channel_id: str, root: str | Path) -> dict:
+    """读取差异报告并机检 `system_digest`（系统字段被改写即报错，不静默取）。"""
+    return load_snapshot(
+        report_path(root, channel_id, period), system_fields=REPORT_SYSTEM_FIELDS
+    )
+
+
 def save_report(report: ReconciliationReport, *, root: str | Path) -> Path:
-    """报告落盘：同键（渠道 + 周期）重产拒绝；`system_digest` 机检（人工批注只追加）。"""
+    """报告落盘 + 告警留痕（C13/C14 的产物面）。
+
+    - 报告：同键（渠道 + 周期）重产拒绝；`system_digest` 机检（人工批注只追加）；
+    - 告警：报告的 `alerts[]` **逐条**追加到 `alerts.jsonl`（只增；`kind` 取
+      `unexplained_delta` / `delta_over_threshold`）——未解释项与超阈值必须留下可追溯的痕迹，
+      不能只躺在报告里；
+    - 先落报告再去重写告警：报告因同键被拒时**不重复写**告警（事实不重复记账）。
+    """
     path = report_path(root, report.channel_id, report.period)
     write_snapshot(path, report.to_dict(), system_fields=REPORT_SYSTEM_FIELDS)
+    alerts = AlertLog(alerts_path(root, report.channel_id))
+    for kind in report.alerts:
+        alerts.record(
+            kind=kind,
+            at=report.generated_at,
+            channel_id=report.channel_id,
+            period=report.period,
+            detail={
+                "unexplained": list(report.unexplained),
+                "thresholds_snapshot": dict(report.thresholds_snapshot),
+                "bill_refs": [dict(ref) for ref in report.bill_refs],
+            },
+            ref=report.report_id,
+        )
     return path
 
 

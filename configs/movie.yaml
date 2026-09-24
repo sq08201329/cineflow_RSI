@@ -510,6 +510,8 @@ budget:
           period: period
           line_kind: line_kind
           amount_sign: amount_sign
+          # 档案 id 列：对账按**（档案 id, 周期）**逐项配对（网关账目与账单两侧同一维度）；可空
+          model_ref: model_ref
           # 异币种**条件必填**（账单币种 ≠ 记账币种时缺任一即导入报错，不猜汇率）
           fx_rate: fx_rate
           fx_source: fx_source
