@@ -44,7 +44,11 @@ def script(make_script_segment):
 
 @pytest.fixture()
 def render_cfg():
-    """渲染配置：真实 storyboard.render 段缩小尺寸（64x48）以控制单测耗时。"""
+    """渲染配置：真实 storyboard.render 段缩小尺寸（64x48）以控制单测耗时。
+
+    帧宽缩小 ⇒ 索引块网格随收窄（量子上界 `2**cols <= width`）；网格取值即编/解/绘三处
+    同取的唯一来源（容量 `2**(R·C)`，契约 C8）。
+    """
     return {
         "fps": _FPS,
         "width": 64,
@@ -52,6 +56,7 @@ def render_cfg():
         "codec": "libx264",
         "encode_threads": 1,
         "price_per_shot_usd": 0.06,
+        "index_grid": {"rows": 2, "cols": 4},
     }
 
 
@@ -148,7 +153,65 @@ class Test分镜卡帧:
         """顶部索引条编码镜头序号（构图可机检，非像素比对依赖）。"""
         cards = _cards(make_shotlist(), script, render_cfg)
         for index, frame in enumerate(cards.frames):
-            assert board_render.decode_index_code(frame) == index
+            assert board_render.decode_index_code(frame, render_cfg) == index
+
+    def test_索引条按R乘C块网格参数化(self, script, render_cfg):
+        """编/解/绘三处同取 `render_cfg["index_grid"]`：容量 `2**(R·C)` 内逐序号往返可解。
+
+        码内位宽常量已退役 ⇒ 同一张卡在两个网格取值下逐字节不同（网格取值只有一处来源）；
+        真实帧宽下 movie 原值 **2700 镜** 的逐序号往返见 `test_storyboard_index_scale.py`。
+        """
+        rows, cols = render_cfg["index_grid"]["rows"], render_cfg["index_grid"]["cols"]
+        capacity = 2 ** (rows * cols)
+        assert len(board_render.encode_index_bits(capacity - 1, render_cfg)) == rows * cols
+        with pytest.raises(ValidationError, match=str(capacity)):
+            board_render.encode_index_bits(capacity, render_cfg)
+        shot = {
+            "shot_id": "shot-x",
+            "scene_id": "scene-1",
+            "covers": ["s1-l1"],
+            "shot_size": "medium",
+            "camera": "eye_level",
+            "side": "A",
+            "movement": "static",
+            "est_duration_ms": 1000,
+            "alternatives": 1,
+        }
+        for index in range(capacity):
+            frame = board_render.render_shot_card(
+                shot,
+                index=index,
+                emotion="tense",
+                render_cfg=render_cfg,
+                grammar_rules=_GRAMMAR,
+                emotion_vectors=_VECTORS,
+            )
+            assert board_render.decode_index_code(frame, render_cfg) == index
+        wider = {**render_cfg, "index_grid": {"rows": rows, "cols": cols + 1}}
+        assert not np.array_equal(
+            board_render.render_shot_card(
+                shot,
+                index=1,
+                emotion="tense",
+                render_cfg=render_cfg,
+                grammar_rules=_GRAMMAR,
+                emotion_vectors=_VECTORS,
+            ),
+            board_render.render_shot_card(
+                shot,
+                index=1,
+                emotion="tense",
+                render_cfg=wider,
+                grammar_rules=_GRAMMAR,
+                emotion_vectors=_VECTORS,
+            ),
+        )
+
+    def test_缺网格即拒绝(self, make_shotlist, script):
+        """缺项即报错（不静默回落过去的 2×4）——渲染器入口与配置加载期同口径。"""
+        without_grid = {"fps": _FPS, "width": 64, "height": 48}
+        with pytest.raises(ValidationError, match="index_grid"):
+            _cards(make_shotlist(), script, without_grid)
 
     def test_情绪色板注入可测(self, script, render_cfg):
         """澄清 Q2：情绪基调注入分镜卡像素（对齐代理读同一批帧做余弦）。"""

@@ -2,12 +2,14 @@
 
 配置即形态（宪章原则五）：探索预算、单轮分镜组数、镜头语法规则库（执行前校验
 第③层与 rule.shot_grammar 门禁共用单一事实源）、轴规则（机位侧别机检口径）、
-情绪基调向量表（proxy.emotion_alignment 对照分镜卡帧像素特征）、渲染价目与编码
-参数、judge 提示词与锚点 ShotList 集全部来自配置。
+情绪基调向量表（proxy.emotion_alignment 对照分镜卡帧像素特征）、渲染价目、
+编码参数与索引块网格（容量 `2**(R·C)`，编/解/绘同取）、judge 提示词与锚点
+ShotList 集全部来自配置。
 
 纪律：规则库缺失即报错（不允许静默放过门禁）、价目缺失/为零即报错（不允许静默
-零成本，原则三）、编码强制单线程确定性档（SC-002）、情绪向量表维度与取值域校验、
-judge 锚点集解析为 ShotList（与候选摘要做成对比较）。
+零成本，原则三）、编码强制单线程确定性档（SC-002）、索引网格缺项/越界即报错
+（不回落过去的 2×4）、情绪向量表维度与取值域校验、judge 锚点集解析为 ShotList
+（与候选摘要做成对比较）。
 """
 
 from dataclasses import dataclass, field
@@ -15,7 +17,10 @@ from pathlib import Path
 
 import yaml
 
+from agents.pilot.scale import derived_shot_count
+from agents.storyboard.board_render import index_grid_size
 from agents.storyboard.shotlist import ShotList
+from core.tree.errors import ValidationError
 
 
 class StoryboardConfigError(Exception):
@@ -160,8 +165,41 @@ def _require_emotion_vectors(vectors: dict) -> dict:
     return normalized
 
 
+def _require_index_grid(render: dict) -> tuple[int, int]:
+    """索引块网格 `(rows, cols)`：缺项/越界即报错（取值点与编/解/绘同源，契约 C8）。"""
+    try:
+        return index_grid_size(render)
+    except ValidationError as exc:
+        raise StoryboardConfigError(str(exc)) from exc
+
+
+def require_index_capacity(
+    render: dict, *, scene_count: int, target_duration_s: float, clip_duration_seconds: float
+) -> int:
+    """容量下界（C8）：`2**(R·C) >= 该形态派生镜头数`，返回派生镜头数供调用方登记。
+
+    派生镜头数只经 `agents/pilot/scale.py` 的**唯一公式**取得（本模块不自算第二遍，F-04）；
+    三个**形态原值**由调用方注入——本模块**不读 `pilot` 段**（体量键的唯一解析者是 `PilotConfig`）。
+    容量不足即拒绝启动并点名两处实测值（要更少镜头请改单镜时长，**不是**放宽校验）。
+    """
+    rows, cols = _require_index_grid(render)
+    derived = derived_shot_count(
+        scene_count=scene_count,
+        target_duration_s=target_duration_s,
+        clip_duration_seconds=clip_duration_seconds,
+    )
+    capacity = 2 ** (rows * cols)
+    if capacity < derived:
+        raise StoryboardConfigError(
+            f"storyboard.render.index_grid 容量不足：2**({rows}×{cols}) = {capacity} < "
+            f"该形态派生镜头数 {derived}（场景数 {scene_count}，成片 {target_duration_s} s ÷ "
+            f"单镜 {clip_duration_seconds} s）——要更少镜头请改单镜时长，不得放宽容量校验"
+        )
+    return derived
+
+
 def _require_render(render: dict) -> dict:
-    """渲染参数：价目缺失/为零即报错；编码强制单线程确定性档（SC-002）。"""
+    """渲染参数：价目缺失/为零即报错；编码强制单线程确定性档（SC-002）；索引网格必填且越界即报错。"""
     if not isinstance(render, dict):
         raise StoryboardConfigError(f"storyboard.render 必须为 dict，实际为 {render!r}")
     price = _require(render, "price_per_shot_usd", "storyboard.render")
@@ -183,6 +221,7 @@ def _require_render(render: dict) -> dict:
         _require_int(
             _require(render, key, "storyboard.render"), f"storyboard.render.{key}", minimum=1
         )
+    _require_index_grid(render)
     return dict(render)
 
 

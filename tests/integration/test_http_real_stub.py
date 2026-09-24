@@ -105,9 +105,9 @@ def stub_factory():
 
 @pytest.fixture(scope="module")
 def storyboard_config():
-    """渲染配置：真实 storyboard 段缩小尺寸（64x48）以控制编码耗时。"""
+    """渲染配置：真实 storyboard 段缩小尺寸（64x48）以控制编码耗时；索引网格随帧宽收窄。"""
     config = copy.deepcopy(_MOVIE_CONFIG)
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return StoryboardConfig.from_dict(config)
 
 
@@ -354,6 +354,9 @@ class Test分镜渲染协议:
             "storyboard-render", board_render_params(shotlist, storyboard_config, script=script)
         )
         assert body["params"]["render"] == dict(storyboard_config.render)
+        # 索引块网格随 `render` 段全量透传（计划缺口 8：B 路径 not_delivered ⇒ 无在线影响，
+        # 但载荷口径须与真实渲染请求一致——stub 侧按同一 render_cfg 重算帧）
+        assert body["params"]["render"]["index_grid"] == storyboard_config.render["index_grid"]
 
     def test_同输入两次渲染_同一平台任务且逐字节一致(
         self, adapter_factory, inputs, storyboard_config

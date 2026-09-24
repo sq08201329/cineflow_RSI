@@ -164,7 +164,11 @@ def start_contract_stub() -> dict[str, StubPlatformServer]:
     """
     config = _movie_config()
     storyboard_render = dict(config["storyboard"]["render"])
-    storyboard_render.update(width=CONTRACT_RENDER_WIDTH, height=CONTRACT_RENDER_HEIGHT)
+    storyboard_render.update(
+        width=CONTRACT_RENDER_WIDTH,
+        height=CONTRACT_RENDER_HEIGHT,
+        index_grid={"rows": 2, "cols": 4},  # 帧宽缩小 ⇒ 网格随收窄（量子上界 2**cols <= width）
+    )
     editing_render = _contract_editing_render_cfg()
     visual_dist = dict(config["visual"]["simulated_gen"])
     clip_spec = dict(config["visual"]["clip_spec"])

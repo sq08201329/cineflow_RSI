@@ -12,6 +12,11 @@
 - 得分：cosine(预测, 目标) → `cos ≤ cos_floor → 0`，否则线性归一到 [0,1]（定点 6 位）。
 
 情绪基调缺失（剧本未标注）→ "不适用"注明（合成按适用分量归一）。
+
+**版本材料含生效网格参数**（原则一，强定义务）：对齐代理读帧像素 ⇒ 索引块网格
+`render.index_grid` 的取值变化会改变帧内容，故它作为附加部件进 `implementation_version`
+——**仅改配置网格取值也必须升版本**（同 `evaluator_id@version` 不得随配置漂移）。读帧的
+评估器只有本代理一处（`rule.*` 与 `judge.script_fit` 不读帧，其版本不受网格影响）。
 """
 
 import json
@@ -19,6 +24,7 @@ import math
 
 from agents.storyboard.board_render import (
     frame_function_hash,
+    index_grid_size,
     shot_frame_count,
     storyboard_cards,
 )
@@ -34,6 +40,7 @@ from core.evaluators.base import (
     EvaluatorSpec,
 )
 from core.evaluators.quantize import quantize_score
+from core.tree.errors import ValidationError
 
 EVALUATOR_ID = "proxy.emotion_alignment"
 
@@ -79,6 +86,12 @@ class EmotionAlignmentEvaluator(Evaluator):
             raise StoryboardConfigError(
                 "proxy.emotion_alignment 缺渲染配置（fps/width/height），无法重算分镜卡帧"
             )
+        try:
+            rows, cols = index_grid_size(render_cfg)
+        except ValidationError as exc:
+            raise StoryboardConfigError(
+                f"proxy.emotion_alignment 缺索引块网格（读帧与解码的前提）：{exc}"
+            ) from exc
         self._render_cfg = dict(render_cfg)
         self._grammar_rules = dict(grammar_rules or {})
         self._emotion_vectors = dict(emotion_vectors or {})
@@ -91,7 +104,13 @@ class EmotionAlignmentEvaluator(Evaluator):
             version=(
                 "1.0.0+a"
                 + implementation_version(
-                    json.dumps({"alignment": alignment}, sort_keys=True, ensure_ascii=False)
+                    json.dumps({"alignment": alignment}, sort_keys=True, ensure_ascii=False),
+                    # **生效网格参数**进版本材料：仅改配置网格取值也必然升版本（原则一，强定义务）
+                    json.dumps(
+                        {"index_grid": {"rows": rows, "cols": cols}},
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    ),
                 ).rsplit("+", 1)[1]
                 + f"f{frame_function_hash()}"  # 帧产出函数变更即版本变更（原则一）
             ),

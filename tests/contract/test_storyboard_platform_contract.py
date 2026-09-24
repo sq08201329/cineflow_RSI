@@ -45,9 +45,9 @@ _METADATA_KEYS = {
 
 
 def _config() -> StoryboardConfig:
-    """渲染配置：真实 storyboard 段缩小尺寸（64x48）以控制契约套件耗时。"""
+    """渲染配置：真实 storyboard 段缩小尺寸（64x48）以控制契约套件耗时；网格随帧宽收窄。"""
     config = copy.deepcopy(_REAL_CONFIG)
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return StoryboardConfig.from_dict(config)
 
 

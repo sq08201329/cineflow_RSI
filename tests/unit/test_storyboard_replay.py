@@ -362,7 +362,7 @@ def _loop_config_dict():
             )
         )
     )
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return config
 
 

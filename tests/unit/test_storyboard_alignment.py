@@ -38,9 +38,13 @@ _ALIGNMENT = {"cos_floor": 0.90}
 
 
 def _config() -> StoryboardConfig:
-    """渲染配置：真实 storyboard 段缩小尺寸（64x48）以控制单测耗时。"""
+    """渲染配置：真实 storyboard 段缩小尺寸（64x48）以控制单测耗时。
+
+    帧宽缩小 ⇒ 索引块网格随之收窄（量子上界 `2**cols <= width`；8 位容量 ≥ 本套件镜头数）；
+    网格取值进对齐代理版本材料（`tests/unit/test_storyboard_index_scale.py` 机检）。
+    """
     config = copy.deepcopy(_REAL_CONFIG)
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return StoryboardConfig.from_dict(config)
 
 
@@ -245,3 +249,20 @@ class Test注册元数据:
         from agents.storyboard import board_render
 
         assert board_render.frame_function_hash() in evaluator.spec.version
+
+    def test_版本含生效网格参数(self, evaluator, config):
+        """原则一（**强定义务**）：仅改配置网格取值也必须升版本（同实现两种网格 ⇒ 两版本号）。
+
+        网格参数**来自配置**、不进 `board_render.py` 的文件字节 ⇒ 必须显式折进版本材料，
+        否则同 `evaluator_id@version` 的行为会随配置漂移。`rule.*` 与 `judge.script_fit`
+        不读帧、版本材料不含渲染配置（受影响面只有本代理一处，见 index-scale 套件）。
+        """
+        other = copy.deepcopy(_REAL_CONFIG)
+        other["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 6})
+        replayed = EmotionAlignmentEvaluator(
+            config.alignment,
+            StoryboardConfig.from_dict(other).render,
+            config.shot_grammar,
+            config.emotion_vectors,
+        )
+        assert replayed.spec.version != evaluator.spec.version

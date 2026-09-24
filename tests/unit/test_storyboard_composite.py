@@ -45,9 +45,9 @@ _WEIGHTS = {
 
 
 def _config() -> StoryboardConfig:
-    """接线用配置：渲染尺寸缩小提速（64x48）。"""
+    """接线用配置：渲染尺寸缩小提速（64x48）；索引网格随帧宽收窄。"""
     config = copy.deepcopy(_REAL_CONFIG)
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return StoryboardConfig.from_dict(config)
 
 

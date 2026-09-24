@@ -69,7 +69,7 @@ def _config() -> StoryboardConfig:
     import yaml
 
     raw = copy.deepcopy(yaml.safe_load(MOVIE_YAML.read_text(encoding="utf-8")))
-    raw["storyboard"]["render"].update(width=64, height=48)
+    raw["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return StoryboardConfig.from_dict(raw)
 
 

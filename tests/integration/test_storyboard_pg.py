@@ -148,7 +148,7 @@ def _pg_config() -> StoryboardConfig:
     config = copy.deepcopy(
         yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"))
     )
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     return StoryboardConfig.from_dict(config)
 
 

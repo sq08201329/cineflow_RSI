@@ -37,9 +37,12 @@ _MOVEMENTS = ["static", "pan", "tilt", "dolly", "handheld"]
 
 
 def _config_dict(**overrides) -> dict:
-    """合法配置字典：渲染尺寸缩小提速（64x48）；其余按需覆盖。"""
+    """合法配置字典：渲染尺寸缩小提速（64x48）；其余按需覆盖。
+
+    帧宽缩小 ⇒ 索引块网格随之收窄（量子上界 `2**cols <= width`；8 位容量 ≥ 本套件镜头数）。
+    """
     config = copy.deepcopy(_REAL_CONFIG)
-    config["storyboard"]["render"].update(width=64, height=48)
+    config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
     for key, value in overrides.items():
         config["storyboard"][key] = value
     return config

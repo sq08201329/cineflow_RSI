@@ -9,7 +9,8 @@ ShotList → 每镜一张分镜卡（程序化构图表达景别/机位/运动 +
 - 主体框边长占比 = 景别档位序号映射（景别越远占比越小）；
 - 构图锚点 = 机位档位（含侧别 A|B 的左右镜像）；
 - 运动标记条 = 运动档位 + 镜头序号（静止档不画）；
-- 顶部索引条 = 镜头序号 4 位二进制编码（decode_index_code 可机检）。
+- 顶部索引条 = 帧顶 `R` 行 × `C` 列块网格（`render.index_grid`，容量 `2**(R·C)`）承载镜头序号
+  （decode_index_code 可机检；网格取值来自配置，码内位宽常量已退役）。
 色板只做标量倍数着色（主体/条/索引块都是基调色的定比缩放），因此整卡均值与情绪
 基调向量同向——proxy.emotion_alignment 读同一函数产出的帧做余弦即成立（澄清 Q2）。
 
@@ -35,9 +36,8 @@ from core.tree.errors import ValidationError
 # 编码单线程确定性档（007 同参数）：x264 多线程编码在负载下非确定，逐字节复现的根因
 ENCODE_FFMPEG_PARAMS = ["-threads", "1"]
 
-# 索引条：帧顶两行 4 位二进制编码镜头序号（最多 16 镜/组）
-INDEX_BITS = 4
-_INDEX_ROWS = 2
+# 索引条：帧顶 R 行 × C 列块网格承载镜头序号（容量 2**(R·C)）——R/C 只来自
+# `render.index_grid`（**唯一取值点** `index_grid_size`，缺项即报错、不留码内回落值）。
 # 色板只做标量倍数着色：背景 1.0、主体 0.55、运动标记 0.85、索引亮块 0.75 / 暗块 0.30
 _SUBJECT_FACTOR = 0.55
 _MARKER_FACTOR = 0.85
@@ -68,12 +68,48 @@ def _as_entry(shot: ShotEntry | dict) -> ShotEntry:
     return shot if isinstance(shot, ShotEntry) else ShotEntry.from_dict(shot)
 
 
+def index_grid_size(render_cfg: dict) -> tuple[int, int]:
+    """索引块网格 `(rows, cols)`——编/解/绘三处与版本材料的**唯一取值点**（契约 C8）。
+
+    取值只来自 `render_cfg["index_grid"]`（缺项即报错，**不得**静默回落过去的 2×4）；两个界
+    一并校验：量子上界 `2**cols <= width`（块宽 `max(1, width // 2**cols)` 在块数超像素数时
+    退化为 1、位之间互相吞并 ⇒ 解码失真）与 `1 <= rows <= height`（索引条占帧顶 rows 行）。
+    """
+    if not isinstance(render_cfg, dict):
+        raise ValidationError(f"render_cfg 必须为 dict，实际为 {render_cfg!r}")
+    grid = render_cfg.get("index_grid")
+    if not isinstance(grid, dict):
+        raise ValidationError(
+            "storyboard.render 缺少配置项 'index_grid'（索引块网格 rows/cols；"
+            "缺项即报错，不回落默认网格）"
+        )
+    for name, value in (("rows", grid.get("rows")), ("cols", grid.get("cols"))):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValidationError(
+                f"storyboard.render.index_grid.{name} 必须为 ≥1 的整数，实际为 {value!r}"
+            )
+    rows, cols = int(grid["rows"]), int(grid["cols"])
+    width, height = int(render_cfg["width"]), int(render_cfg["height"])
+    if rows > height:
+        raise ValidationError(
+            f"storyboard.render.index_grid.rows = {rows} 超出帧高 {height}"
+            "（索引条占用帧顶 rows 行：1 <= rows <= height）"
+        )
+    if 2**cols > width:
+        raise ValidationError(
+            f"storyboard.render.index_grid.cols = {cols} 的块数 2**{cols} = {2**cols} 超出帧宽 "
+            f"{width}（块宽退化为 1 并互相吞并 ⇒ 解码失真：2**cols <= width）"
+        )
+    return rows, cols
+
+
 def _require_render_cfg(render_cfg: dict) -> dict:
     if not isinstance(render_cfg, dict):
         raise ValidationError(f"render_cfg 必须为 dict，实际为 {render_cfg!r}")
     for key in ("fps", "width", "height"):
         if key not in render_cfg:
             raise ValidationError(f"storyboard.render 缺少配置项 {key!r}")
+    index_grid_size(render_cfg)  # 网格缺项/越界即拒绝（编/解/绘同取同一取值）
     return render_cfg
 
 
@@ -134,23 +170,35 @@ def camera_anchor(camera: str, side: str, width: int, height: int) -> tuple[int,
     return cx, cy
 
 
-def encode_index_bits(index: int) -> tuple[bool, ...]:
-    """镜头序号 → 索引条 4 位（高位在左，与 decode_index_code 对称）。"""
-    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < 2**INDEX_BITS:
-        raise ValidationError(f"镜头序号必须 ∈ [0, {2**INDEX_BITS})，实际为 {index!r}")
-    return tuple(bool((index >> (INDEX_BITS - 1 - bit)) & 1) for bit in range(INDEX_BITS))
+def encode_index_bits(index: int, render_cfg: dict) -> tuple[bool, ...]:
+    """镜头序号 → 索引条 `R×C` 块网格的位元（**行优先**、高位在左，与 decode_index_code 对称）。
+
+    每块 1 位、共 `R·C` 位 ⇒ 容量 `2**(R·C)`（契约 C8）。
+    """
+    rows, cols = index_grid_size(render_cfg)
+    bits = rows * cols
+    capacity = 2**bits
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < capacity:
+        raise ValidationError(f"镜头序号必须 ∈ [0, {capacity})，实际为 {index!r}")
+    return tuple(bool((index >> (bits - 1 - k)) & 1) for k in range(bits))
 
 
-def decode_index_code(frame: np.ndarray) -> int:
-    """索引条解码：返回镜头序号（分镜卡身份可机检，不依赖像素全等比对）。"""
-    if frame.ndim != 3 or frame.shape[0] < _INDEX_ROWS:
-        raise ValidationError(f"分镜卡帧形状非法：{frame.shape!r}")
-    block_width = max(1, frame.shape[1] // (2**INDEX_BITS))
+def decode_index_code(frame: np.ndarray, render_cfg: dict) -> int:
+    """索引条解码：返回镜头序号（分镜卡身份可机检，不依赖像素全等比对）。
+
+    网格取值与绘制同源（`render_cfg["index_grid"]`）；帧自身尺寸也须容得下 `2**cols` 列与
+    `rows` 行，否则位之间互相吞并、解码失真（错网格解不出原序号，如实拒绝而非硬解）。
+    """
+    rows, cols = index_grid_size(render_cfg)
+    if frame.ndim != 3 or frame.shape[0] < rows or frame.shape[1] < 2**cols:
+        raise ValidationError(f"分镜卡帧形状非法：{frame.shape!r}（索引网格 {rows}×{cols}）")
+    block_width = max(1, frame.shape[1] // (2**cols))
     luma = frame.mean(axis=2)
     threshold = _INDEX_DECODE_THRESHOLD * float(luma.mean())
     value = 0
-    for bit in range(INDEX_BITS):
-        block = luma[0:_INDEX_ROWS, bit * block_width : (bit + 1) * block_width]
+    for k in range(rows * cols):
+        row, col = divmod(k, cols)
+        block = luma[row, col * block_width : (col + 1) * block_width]
         value = (value << 1) | (1 if float(block.mean()) >= threshold else 0)
     return value
 
@@ -168,7 +216,9 @@ def shot_emotion(shot: ShotEntry | dict, script) -> str | None:
     return None
 
 
-def _draw_subject(frame: np.ndarray, palette: np.ndarray, shot: ShotEntry, rules: dict) -> None:
+def _draw_subject(
+    frame: np.ndarray, palette: np.ndarray, shot: ShotEntry, rules: dict, *, index_rows: int
+) -> None:
     """主体框：景别档位决定占比、机位档位决定锚点（程序化构图表达镜头语言）。"""
     height, width = frame.shape[:2]
     scale = shot_size_scale(shot.shot_size, rules)
@@ -176,7 +226,7 @@ def _draw_subject(frame: np.ndarray, palette: np.ndarray, shot: ShotEntry, rules
     box_h = max(2, int(height * scale))
     cx, cy = camera_anchor(shot.camera, shot.side, width, height)
     x0 = min(max(0, cx - box_w // 2), width - box_w)
-    y0 = min(max(_INDEX_ROWS, cy - box_h // 2), height - box_h)
+    y0 = min(max(index_rows, cy - box_h // 2), height - box_h)
     frame[y0 : y0 + box_h, x0 : x0 + box_w] = _shade(palette, _SUBJECT_FACTOR)
 
 
@@ -200,12 +250,14 @@ def _draw_movement_marker(
     frame[y0 : y0 + 1, x0 : x0 + length] = _shade(palette, _MARKER_FACTOR)
 
 
-def _draw_index_code(frame: np.ndarray, palette: np.ndarray, index: int) -> None:
-    """索引条：帧顶两行 4 位二进制（亮块=1 / 暗块=0），镜头身份可机检。"""
-    block_width = max(1, frame.shape[1] // (2**INDEX_BITS))
-    for bit, on in enumerate(encode_index_bits(index)):
+def _draw_index_code(frame: np.ndarray, palette: np.ndarray, index: int, render_cfg: dict) -> None:
+    """索引条：帧顶 `R` 行 × `C` 列块网格（亮块=1 / 暗块=0，行优先），镜头身份可机检。"""
+    rows, cols = index_grid_size(render_cfg)
+    block_width = max(1, frame.shape[1] // (2**cols))
+    for k, on in enumerate(encode_index_bits(index, render_cfg)):
+        row, col = divmod(k, cols)
         factor = _INDEX_ON_FACTOR if on else _INDEX_OFF_FACTOR
-        frame[0:_INDEX_ROWS, bit * block_width : (bit + 1) * block_width] = _shade(palette, factor)
+        frame[row, col * block_width : (col + 1) * block_width] = _shade(palette, factor)
 
 
 def render_shot_card(
@@ -221,12 +273,13 @@ def render_shot_card(
     cfg = _require_render_cfg(render_cfg)
     entry = _as_entry(shot)
     height, width = int(cfg["height"]), int(cfg["width"])
+    index_rows, _ = index_grid_size(cfg)
     palette = emotion_palette(emotion, emotion_vectors)
     frame = np.empty((height, width, 3), dtype=np.uint8)
     frame[...] = palette  # 背景 = 情绪基调色板（色板注入）
-    _draw_subject(frame, palette, entry, grammar_rules)
+    _draw_subject(frame, palette, entry, grammar_rules, index_rows=index_rows)
     _draw_movement_marker(frame, palette, entry, index, grammar_rules)
-    _draw_index_code(frame, palette, index)
+    _draw_index_code(frame, palette, index, cfg)
     return frame
 
 

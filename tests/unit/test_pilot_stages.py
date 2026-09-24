@@ -55,11 +55,13 @@ class Test阶段定义:
             assert getattr(runtime.configs, agent) is not None
         assert runtime.config_fingerprint
 
-    def test_镜头计划在分镜渲染器上限内(self, pilot_form_config_path, pilot_dirs, tmp_path):
-        """边界断言：短剧真实配置的镜头计划 ≤ 16（分镜渲染器位编码索引上限）。
+    def test_镜头计划在分镜渲染器容量内(self, pilot_form_config_path, pilot_dirs, tmp_path):
+        """边界断言：镜头计划必须落在索引块网格容量内（分镜渲染器的编码上限）。
 
-        镜头数 = ceil(成片目标时长 / 单镜时长)：真实配置 120s / 7.5s = 16 恰在上限；
-        演示档（30s）压到 4 镜是为了避开本机 ffmpeg 长连编码抖动，**上限本身**由本用例守住。
+        镜头数 = 派生镜头数（`agents/pilot/scale.py` 的唯一公式：`max(场景数,
+         ceil(成片时长 ÷ 单镜时长))`）：短剧真实配置 120s / 7.5s = 16 镜 **恰在容量（4 位 = 16）
+        上限**；演示档压到 4 镜是为了避开本机 ffmpeg 长连编码抖动，**上限本身**由本用例守住。
+        口径来自配置（`storyboard.render.index_grid`），不再是码内魔数 16。
         """
         real = build_runtime(
             form=FORM,
@@ -68,9 +70,12 @@ class Test阶段定义:
             artifacts_root=tmp_path / "artifacts",
         )
         shots = len(real.shot_plan)
-        assert 1 <= shots <= 16
-        assert shots >= 4  # 至少每场景一镜（试水体量四场景档）
-        assert shots == 16  # 真实短剧配置恰在上限（= 120s / 7.5s）
+        render = real.configs.storyboard.render
+        rows, cols = render["index_grid"]["rows"], render["index_grid"]["cols"]
+        assert shots == 16  # 真实短剧配置恰在容量上限（= 120s / 7.5s）
+        assert 2 ** (rows * cols) >= shots  # 容量下界：派生镜头数在网格容量内 100% 可编码
+        assert 2**cols <= render["width"]  # 量子上界：每列块 ≥1px（块间不互相吞并）
+        assert 1 <= rows <= render["height"]
 
     def test_剪辑目标时长来自配置(self, runtime):
         # 试水体量 = 形态配置：分镜镜头数与成片目标时长都从配置派生（代码零硬编码）

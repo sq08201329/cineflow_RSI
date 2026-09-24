@@ -80,7 +80,7 @@ from agents.sound.db import create_gen_jobs_schema as create_sound_jobs_schema
 from agents.sound.evaluators.loudness import measure_loudness_lufs
 from agents.sound.loop import run_sound_round
 from agents.sound.timing import TimingSheet
-from agents.storyboard.config import StoryboardConfig
+from agents.storyboard.config import StoryboardConfig, require_index_capacity
 from agents.storyboard.db import create_render_jobs_schema as create_storyboard_jobs_schema
 from agents.storyboard.loop import run_storyboard_round
 from agents.storyboard.script import ScriptSegment
@@ -214,8 +214,9 @@ def build_runtime(
 
     形态配置 `pilot` 段的**体量档与体量键**在这里单点生效（功能 018 / C10）：`pilot` 段由
     `PilotConfig` 唯一解析（缺项即拒绝装配），排练档生效时覆盖成片时长/剧本目标/单镜时长，
-    场景数与每场景行数经参数注入到镜头计划与剧本计划。装配末尾校验七处集中声明的一致性
-    （`assert_stage_declarations`：漏一处即拒绝启动）。
+    场景数与每场景行数经参数注入到镜头计划与剧本计划。索引块网格的容量下界（C8）也在此按
+    **形态原值**校验——派生镜头数只读 `agents/pilot/scale.py` 的唯一公式。装配末尾校验七处
+    集中声明的一致性（`assert_stage_declarations`：漏一处即拒绝启动）。
     """
     from agents.pilot import pilot as pilot_module  # 延迟导入：pilot.py 运行期 import 本模块
 
@@ -241,6 +242,15 @@ def build_runtime(
     # 体量档单点解析（缺项即拒绝装配）+ 生效体量覆盖（链路与门禁一行不动，只换取值）
     pilot_config = pilot_module.PilotConfig.from_yaml(config_path)
     configs = apply_rehearsal_scale(raw_configs, pilot_config)
+    # 索引网格容量下界（功能 018 / C8）：按**形态原值**派生镜头数校验（排练档缩的是本轮的
+    # 运行体量，"该形态要能编码多少镜"这一容量义务不随之缩）；派生镜头数只读
+    # `agents/pilot/scale.py` 的唯一公式——容量不足即拒绝装配并点名实测值。
+    require_index_capacity(
+        raw_configs.storyboard.render,
+        scene_count=pilot_config.scene_count,
+        target_duration_s=raw_configs.editing.target_duration_s,
+        clip_duration_seconds=raw_configs.visual.clip_spec["duration_seconds"],
+    )
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_schema(engine)  # 001 发现树
     create_dev_jobs_schema(engine)  # 017 开发 Agent 作业表（链首环节自己的表）

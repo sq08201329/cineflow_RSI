@@ -259,7 +259,7 @@ class TestStoryboard接线:
         from agents.storyboard.config import StoryboardConfig
 
         raw = copy.deepcopy(_REAL_CONFIG)
-        raw["storyboard"]["render"].update(width=64, height=48)
+        raw["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
         return StoryboardConfig.from_dict(raw)
 
     @pytest.fixture()

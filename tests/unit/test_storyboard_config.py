@@ -178,7 +178,7 @@ class Test价目纪律:
         with pytest.raises(StoryboardConfigError, match="render"):
             StoryboardConfig.from_dict(config)
 
-    @pytest.mark.parametrize("key", ["price_per_shot_usd", "fps", "width", "height"])
+    @pytest.mark.parametrize("key", ["price_per_shot_usd", "fps", "width", "height", "index_grid"])
     def test_缺渲染字段即报错(self, key):
         config = _valid_dict()
         del config["storyboard"]["render"][key]
