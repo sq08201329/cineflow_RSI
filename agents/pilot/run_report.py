@@ -1,7 +1,7 @@
 """报告侧证据面（功能 018 US3 / 契约 C13）：成本**第三方腿**（网关记账）采样 + 性能画像。
 
 **只读采样，不新增构造点**（E-03）：第三方腿在**环节边界**只读 `LLMGateway.total_cost_usd`
-（网关账本，对账三方之一），**不构造 `LLMGateway`**（019 的构造点普查仍 13 处）、不改网关契约、
+（网关账本，对账三方之一），**不构造 `LLMGateway`**（构造点普查仍 14 处）、不改网关契约、
 不改 `cost_breakdown`、不进树——采样装饰只有**一处**（`agents/pilot/stages.py` 的
 `build_stage_specs`），增量随 `StageOutcome.detail` 落入运行记录（`detail` 是执行器**不解释**的
 透传面，故树模型与网关契约都不动）。

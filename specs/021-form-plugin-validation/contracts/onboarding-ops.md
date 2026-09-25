@@ -212,50 +212,47 @@
 
 | # | 总账项（FR-013 逐项） | `items` 落在哪一组路径 |
 | --- | --- | --- |
-| ① | 配置驱动的插件声明与唯一装配点（声明面 + `importlib` 解析 + 通用参数通道 + 既有装配面改委派 + **A1 夹具同步面**） | **新增**：`core/evaluators/plugin.py`、六个薄工厂 `agents/visual/evaluators/plugins.py` / `agents/dev/evaluators/plugins.py` / `agents/screenplay/evaluators/plugins.py` / `agents/storyboard/evaluators/plugins.py` / `agents/sound/evaluators/plugins.py` / `agents/editing/evaluators/plugins.py`、`tests/unit/test_evaluator_plugin_assembly.py`、`tests/contract/test_plugin_contracts.py`、`tests/unit/fixtures/evaluator_assembly_baseline.json`（**装配序列对照基线夹具**）、**夹具同步面 15 条**（见下表）；**修改**：`core/evaluators/errors.py`、`core/calibration/config.py`（cadence 收口的加载面）、六个装配函数所在文件（`agents/visual/loop.py`、`agents/dev/evaluators/__init__.py`、`agents/screenplay/evaluators/__init__.py`、`agents/storyboard/evaluators/__init__.py`、`agents/sound/evaluators/__init__.py`、`agents/editing/evaluators/__init__.py`）、`configs/movie.yaml` 与 `configs/shortdrama.yaml`（新增 `evaluators` 段） |
+| ① | 配置驱动的插件声明与唯一装配点（声明面 + `importlib` 解析 + 通用参数通道 + 既有装配面改委派 + 声明面承载 + 测试侧夹具与存根 + **A1 夹具同步面**） | **新增**：`core/evaluators/plugin.py`、六个薄工厂 `agents/visual/evaluators/plugins.py` / `agents/dev/evaluators/plugins.py` / `agents/screenplay/evaluators/plugins.py` / `agents/storyboard/evaluators/plugins.py` / `agents/sound/evaluators/plugins.py` / `agents/editing/evaluators/plugins.py`、六份 `agents/<agent>/config.py`（声明面承载）、`tests/unit/test_evaluator_plugin_assembly.py`、`tests/contract/test_plugin_contracts.py`、`tests/plugin_fixtures.py`、`tests/plugin_stubs.py`、`tests/unit/fixtures/evaluator_assembly_baseline.json`（**装配序列对照基线夹具**）、`tests/unit/test_form_no_new_dependency.py` 与 `tests/unit/fixtures/dependency_baseline.json`、**A1 夹具同步面**（**口径与纠正见下**）；**修改**：`core/evaluators/errors.py`、`core/calibration/config.py`（cadence 收口的加载面）、六个装配函数所在文件（`agents/visual/loop.py`、`agents/dev/evaluators/__init__.py`、`agents/screenplay/evaluators/__init__.py`、`agents/storyboard/evaluators/__init__.py`、`agents/sound/evaluators/__init__.py`、`agents/editing/evaluators/__init__.py`）、`configs/movie.yaml` 与 `configs/shortdrama.yaml`（新增 `evaluators` 段） |
 | ② | 扫描面补面（字面量与判断分支两层均覆盖 `core/` + `agents/` **含 `agents/pilot`**、锚点改符号名） | **新增**：`ops/form_guard.py`、`tests/unit/test_form_guard.py`；**修改**：`tests/unit/test_form_switch.py`、`tests/unit/test_billing_core_purity.py`、`tests/unit/test_dev_core_degraded_purity.py` |
 | ③ | 形态名由 `configs/*.yaml` 派生 + 三副本收敛为单一实现（副本数 ⇒ 1） | **新增**：`ops/form_guard.py`（与②同一路径，并集去重）；**修改**：`tests/contract/test_pilot_contracts.py`、`tests/unit/test_billing_channels.py`、`tests/contract/test_billing_contracts.py`、`tests/unit/test_pilot_rehearsal.py` |
 | ④ | `agents/pilot/pilot.py` 的裸形态词收敛（`:613`）+ 020 口径逐项机检（`form_clause_completeness`） | **修改**：`agents/pilot/pilot.py`；**新增**：`tests/unit/test_form_clause_completeness.py` |
 | ⑤ | "恰好两份"升级为**登记完备**口径（禁止删除） | **新增**：`tests/unit/test_form_registration.py`；**修改**：`tests/unit/test_form_switch.py`（与②同一路径，并集去重）、`tests/unit/test_config_integrity.py`、`tests/conftest.py`、`tests/unit/test_pilot_chain_seven.py` |
 | ⑥ | 接入改动清单机检与 CLI/演示（**A5 同批创建**） | **新增**：`ops/form_onboarding.py`、`ops/form_plugin.py`、`ops/demo_form_plugin.py`（**形态无关**：遍历 `declared_forms()`，对新形态零改动即可演示——见 C12 的 I-09 条）、`tests/unit/test_form_onboarding.py`、`tests/contract/test_form_onboarding_contracts.py` |
 
-**A1 夹具同步面（穷举，逐条；归入总账项 ①）**——口径是"**凡在 `tests/**` 内调用六个 `build_*_evaluators` 的
-测试文件**"（它们用**内联配置字典**构造，必须补 `evaluators` 段，否则"缺声明即装配期报错"会让它们全红）：
+**A1 夹具同步面（口径 + 纠正登记；归入总账项 ①）**——**成员 = 实际被修改的路径**，不是"符号命中面"。
+**权威在本契约之外**：成员清单 = `MECHANISM_LEDGER_PATHS` 中归入总账项 ① 的、真实的 `tests/**` 夹具
+改动路径（实现面 `ops/form_onboarding.py` 的常量 + 交付件 `quickstart.md` 的"机制侧总账"表，
+两处**集合相等**即判据）；**本契约不复抄清单**——同一份清单两处副本必然漂移，契约只引用口径。
 
-| # | 路径（`kind = "modified"`，`ops/demo_*` 除外） | 实测依据 |
-| --- | --- | --- |
-| 1 | `tests/contract/test_dev_contracts.py` | 调用 `build_dev_evaluators` |
-| 2 | `tests/unbiasedness/test_dev_unbiased.py` | 同上 |
-| 3 | `tests/unbiasedness/test_editing_unbiased.py` | 调用 `build_editing_evaluators` |
-| 4 | `tests/unbiasedness/test_screenplay_unbiased.py` | 调用 `build_screenplay_evaluators` |
-| 5 | `tests/unbiasedness/test_sound_unbiased.py` | 调用 `build_sound_evaluators` |
-| 6 | `tests/unbiasedness/test_storyboard_unbiased.py` | 调用 `build_storyboard_evaluators` |
-| 7 | `tests/unit/test_dev_compare_adopt.py` | 调用 `build_dev_evaluators` |
-| 8 | `tests/unit/test_dev_composite.py` | 同上 |
-| 9 | `tests/unit/test_editing_composite.py` | 调用 `build_editing_evaluators` |
-| 10 | `tests/unit/test_screenplay_cli.py` | 调用 `build_screenplay_evaluators` |
-| 11 | `tests/unit/test_screenplay_compare_adopt.py` | 同上 |
-| 12 | `tests/unit/test_screenplay_composite.py` | 同上 |
-| 13 | `tests/unit/test_sound_composite.py` | 调用 `build_sound_evaluators` |
-| 14 | `tests/unit/test_storyboard_composite.py` | 调用 `build_storyboard_evaluators` |
-| 15 | `tests/unit/test_visual_consistency.py` | 调用 `agents.visual.loop` 的 `build_evaluators` |
+- **口径（含本次纠正，如实登记）**：此前本契约写的是"**凡在 `tests/**` 内调用六个 `build_*_evaluators`
+  的测试文件**"（符号命中面，`grep` 实测 **16 个文件**），并据此登记了 **15 条**（`tests/conftest.py`
+  归 ⑤）——**口径错**：ledger 的成员必须是**实际被修改**的路径，而 021 实现的实测改动集里，
+  该口径**只兑现 5 条**（`kind = "modified"`、用**内联配置字典**构造评估器因而**真的**需要补
+  `evaluators` 声明段的 `tests/**` 文件）。**纠正后的口径**：成员 = 权威常量里归入 ① 的真实改动夹具路径。
+- **为什么符号面 ⊋ 改动面**：① 其余命中文件从**真实形态配置**取声明段（不是内联字典）⇒ 无需改动；
+  ② 原因之一（本次纠正的连带面）：**A3 把三副本委派收敛**（形态名常量改由 `declared_forms()` 派生、
+  断言体与原循环体保留原位）后，部分夹具**不再需要逐处改写**。⇒ 机检只以**实测改动集**为准，
+  不拿"符号调用点"充数。
+- **不存在的路径一律不登记、更不为凑数保留**（该结论仍然成立且有用）：`plan.md` 阶段 A1 第 7 步以
+  `test_{…,visual}_composite.py` 与 `tests/contract/test_{dev,screenplay,storyboard,editing,sound}_contracts.py`
+  的**形式**给出该面——**实测** `tests/unit/test_visual_composite.py` **不存在**（visual 的装配调用点在
+  `tests/unit/test_visual_consistency.py`），`tests/contract/` 下**只有** `test_dev_contracts.py` 命中
+  （`test_screenplay_contracts.py` 等**不存在**）；且这两个**真实路径本身在本特性里也未改动** ⇒
+  一律不入账，并在 `NOT_LEDGER_ITEMS` 的剔除面里逐条登记。
+- **机检（可派生、不靠人工维护）**：① 反向扫描 `tests/**` 的六个 `build_*_evaluators` 调用点得到
+  符号命中面；② 断言 `MECHANISM_LEDGER_PATHS` 与 `quickstart.md` 的机制侧总账表**集合相等**；
+  ③ 符号命中面与改动面之间的**差集**必须逐条出现在剔除面（`NOT_LEDGER_ITEMS`）——两处口径
+  **都**有牙齿（漏登记 ⇒ 红；拿符号面充数 ⇒ 剔除面里对不上 ⇒ 红）。
 
-- **实测偏差（如实登记，不以 glob 代实清单）**：`plan.md` 阶段 A1 第 7 步以 `test_{…,visual}_composite.py` 与
-  `tests/contract/test_{dev,screenplay,storyboard,editing,sound}_contracts.py` 的形式给出该面——**实测**：
-  `tests/unit/test_visual_composite.py` **不存在**（visual 的装配调用点在 `tests/unit/test_visual_consistency.py`）；
-  `tests/contract/` 下**只有** `test_dev_contracts.py` 命中（`test_screenplay_contracts.py` 等**不存在**）。
-  ⇒ 本表以**实测集合**为准（**不存在的路径一律不登记、更不为凑数保留**）：visual 面按**真实路径**
-  `tests/unit/test_visual_consistency.py` 登记（见子表第 15 行），`tests/contract/` 面按**真实命中**
-  `tests/contract/test_dev_contracts.py` 登记（第 1 行）；机检按上面的**可派生口径**
-  （"调用六个 `build_*_evaluators` 的文件集合"）**反查**：
-  集合与上表（**去掉已在 ⑤ 登记的 `tests/conftest.py`**）相等，新增一处即红（须显式登记）。
-  经 `grep` 实测：命中集**恰好 16 个文件**，其中 `tests/conftest.py` 属 ⑤ ⇒ 本表 **15** 条。
-
-- **`MECHANISM_LEDGER_PATHS`** = 上表六项 `items`（含夹具同步面子表）的路径**并集**，**不写死条数**
-  （当前实测 **55 条**，仅作对照、**不是判据**）。**判据 = 文档表与常量的集合相等**（见机检断言 4/5）。
+- **`MECHANISM_LEDGER_PATHS`** = 六项 `items`（含 A1 夹具同步面的真实改动集）的路径**并集**，**不写死条数**
+  （当前实测 **69 条**，仅作对照、**不是判据**）。**判据 = 文档表与常量的集合相等**（见机检断言 4/5）。
   **按 FR-013 六项归属的当前实测分解（仅作对照，非判据；重复路径只在其**首次归属项**计数）**：
-  ① = **35**（新增 10 / 修改 25，含 A1 夹具同步面 15）；② = **5**（2 / 3）；③ = **4**（0 / 4）；
-  ④ = **2**（1 / 1）；⑤ = **4**（1 / 3）；⑥ = **5**（5 / 0）——合计 55（新增 19 / 修改 36）。
+  ① = **35**（新增 20 / 修改 15，含 A1 夹具同步面 5）；② = **5**（2 / 3）；③ = **18**（0 / 18，含 T2146/T2196
+  普查后逐处委派的同族副本）；④ = **2**（1 / 1）；⑤ = **4**（1 / 3）；⑥ = **5**（5 / 0）——合计 **69**
+  （新增 29 / 修改 40）。**穷举口径（权威）= git 派生实测改动集**：
+  `git diff --name-status 6579766 -- . ':(exclude)specs'` ∪ `git ls-files --others --exclude-standard`
+  （排除 `specs/**` 与 B 阶段接入侧件）——权威集合实测 **72** 条，其中 **69** 条入账、**3** 条按
+  `NOT_LEDGER_ITEMS` 的规则剔除并逐条给出理由（注释/文档面，不服务 FR-013 任一项）。
   归属与去重纪律：
   - **计数只按 FR-013 的六项归属**（①~⑥），**不按实现阶段号**（A1~A5）——`items` 里**不带阶段号语义**，
     阶段号只是实现顺序；A4 的路径按"服务哪一项总账"归入（`core/calibration/config.py` → ①；
@@ -276,23 +273,28 @@
 **`NOT_LEDGER_ITEMS`（排除面；机检在做集合比较前**必须逐条剔除**，否则"文档表与常量集合相等"会被
 行文引用污染——这正是"66/56 条"一类虚高计数的来源）**：
 
-- **真·条目来源只有两处**：①~⑥ 表的 `items` 单元格 + `A1 夹具同步面`子表。**除这两处之外的任何路径都不算条目。**
-- 下列路径**在正文里以反引号形式出现、但**不是**条目**（逐条实测判定，含"路径根本不存在"的情形——按指令
-  **不得为凑数保留不存在的路径**，一律按**真实路径**登记或直接排除）：
+- **真·条目来源只有一处**：①~⑥ 表的 `items` 单元格（`A1 夹具同步面`的成员**就在 ① 的 `items` 里**，
+  由 `MECHANISM_LEDGER_PATHS` 常量给出；**本契约不另列子表**——同一份清单两处副本必然漂移）。
+  **除该处之外的任何路径都不算条目。**
+- 下列路径**在正文里以反引号形式出现、但**不是**条目**（逐条实测判定，含"路径根本不存在"与"符号命中
+  但**未改动**"两类情形——按指令**不得为凑数保留不存在的路径、也不得拿"符号调用点"充改动面**）：
 
 | 正文里被反引号写出的路径 | 存在性（实测） | 处置（含真实路径） |
 | --- | --- | --- |
-| `tests/unit/test_visual_composite.py` | **不存在** | **不作为条目**——视觉面的**真实路径 = `tests/unit/test_visual_consistency.py`**（`plan.md` 阶段 A1 第 7 步给的是 `test_{…,visual}_composite.py` 的**形式**，实测 visual 无 `*_composite` 文件）；该真实路径已按实测登记在 ① 组夹具子表第 15 行 |
-| `tests/contract/test_screenplay_contracts.py`（及 storyboard / editing / sound 同族；**正文里的写法是裸片段 `test_screenplay_contracts.py`**） | **不存在** | **不作为条目**——`tests/contract/` 下真正的命中**只有** `tests/contract/test_dev_contracts.py`（已登记在夹具子表第 1 行） |
+| `tests/unit/test_visual_composite.py` | **不存在** | **不作为条目**——视觉面的**真实路径 = `tests/unit/test_visual_consistency.py`**（`plan.md` 阶段 A1 第 7 步给的是 `test_{…,visual}_composite.py` 的**形式**，实测 visual 无 `*_composite` 文件）；该真实路径在本特性里**也未改动** ⇒ 同样**不入账**（见剔除面） |
+| `tests/contract/test_screenplay_contracts.py`（及 storyboard / editing / sound 同族；**正文里的写法是裸片段 `test_screenplay_contracts.py`**） | **不存在** | **不作为条目**——`tests/contract/` 下真正的命中**只有** `tests/contract/test_dev_contracts.py`，而它在本特性里**未改动** ⇒ 同样**不入账**（见剔除面） |
+| `tests/contract/test_dev_contracts.py` / `tests/unbiasedness/test_*_unbiased.py` / `tests/unit/test_{dev,screenplay}_compare_adopt.py` / `tests/unit/test_sound_composite.py` / `tests/unit/test_visual_consistency.py` | 存在 | **符号命中但实测未改动**（它们从**真实形态配置**取声明段）⇒ **不作为条目**（旧口径"凡调用六个 `build_*_evaluators` 的文件都在账上"已按实测更正，见上"A1 夹具同步面"段） |
+| `agents/pilot/stages.py` / `agents/pilot/run_report.py` / `docs/三期立项书.md` | 存在且**已改动** | **注释/文档面**（019 构造点普查事实 13 → 14 的更正，无语义变更、**不服务 FR-013 任一项**；且 `docs/**` 的机制侧文档变更按本文规则**不重复登记**）⇒ **不作为条目**（如实登记在 `NOT_LEDGER_ITEMS`） |
 | `tests/unit/test_calibration_config.py` | 存在 | **明确不动的既有文件**（`research.md` 决策 12 第 19 项；cadence 越界新用例落在 `tests/unit/test_form_clause_completeness.py`）⇒ **不作为条目** |
-| `plan.md` / `research.md` / `quickstart.md` / `data-model.md` / `spec.md` | 存在 | **设计件的行文引用**（§决策来源、§与另两份契约的分工、§文档面一致机检的比较对象等）⇒ **一律不作为条目**。**注意 `plan.md` 是"第 56 条"的元凶**：它在本文里以反引号出现（如 `plan.md` 阶段 A1 第 7 步），朴素抽取会把它算成一条 ledger 路径 ⇒ **必须剔除** |
+| `plan.md` / `research.md` / `quickstart.md` / `data-model.md` / `spec.md` | 存在 | **设计件的行文引用**（§决策来源、§与另两份契约的分工、§文档面一致机检的比较对象等）⇒ **一律不作为条目**。**注意 `plan.md` 是"第 56 条"一类**旧版虚高计数**的元凶**：它在本文里以反引号出现（如 `plan.md` 阶段 A1 第 7 步），朴素抽取会把它算成一条 ledger 路径 ⇒ **必须剔除** |
 | **片段形**：`__init__.py` / `test_dev_contracts.py` / `test_screenplay_contracts.py` / `test_{…,visual}_composite.py` 一类**不含目录前缀的裸文件名** | 见上 | 反引号写出的**片段**（正文引用时的简写）⇒ **也一律不作为条目**（否则片段会被当成独立路径，计数虚高 1~3 条）。判定规则：**token 形如"不含 `/` 的 `.py`"⇒ 一律剔除** |
 
-- **机检口径（唯一）**：`MECHANISM_LEDGER_PATHS` =（①~⑥ 表 `items` 单元格的反引号路径 **∪** 夹具子表路径）
-  **−** `NOT_LEDGER_ITEMS`；**集合相等即通过，不比较条数、不比较顺序**。
-  当前实测：**①~⑥ 表 ∪ 夹具子表本身就是 55 条**（两处来源内**不含**任何行文引用与片段）；
-  若把本文**全部**反引号路径一并朴素抽取则得 **63** 条，**− `NOT_LEDGER_ITEMS` 8 条 = 55 条**——
-  与 `quickstart.md` 的"机制侧总账"表**逐路径相等**（**双向差集为空**）。
+- **机检口径（唯一）**：`MECHANISM_LEDGER_PATHS` = ①~⑥ 表 `items` 单元格的路径**并集**（`A1 夹具同步面`
+  的成员就在 ① 的 `items` 里）**−** `NOT_LEDGER_ITEMS`；**集合相等即通过，不比较条数、不比较顺序**。
+  当前实测：常量 **69 条**，与 `quickstart.md` 的"机制侧总账"表**逐路径相等**（**双向差集为空**）；
+  权威**穷举口径 = git 派生实测改动集**（`git diff --name-status 6579766 -- . ':(exclude)specs'`
+  ∪ `git ls-files --others --exclude-standard`，排除 `specs/**` 与 B 阶段接入侧件）实测 **72** 条，
+  其中 **69** 条入账、**3** 条注释/文档面按 `NOT_LEDGER_ITEMS` 逐条给出理由剔除。
   **条数从来不是判据**：虚高是**抽取口径**的问题，不是两侧表集合不一致。
 
 **分账规则（本契约的核心，不得含糊）**：
@@ -314,17 +316,20 @@
    `baseline_ref == mechanism_ledger_ref` ⇒ 报错（基线取错；这会让机制侧改动被算成接入越界，判据自相矛盾）。
 3. **冒充禁列（字段面）**：清单与演示产物必须带 `mechanism_changes_included: false`（为 `true` ⇒ 报错：
    机制改动被混进接入账）与 `zero_code_onboarding: true`——后者**只对基线之后的接入侧**成立。
-4. **文档面一致（**集合相等**，**不写死条数**）**：`quickstart.md` 的"机制侧总账"表（含其"夹具同步面"子表）
-   里的**路径集合**与 `MECHANISM_LEDGER_PATHS` **相等**（机检读 quickstart 的表格，提取 `` `路径` `` token 后
+4. **文档面一致（**集合相等**，**不写死条数**）**：`quickstart.md` 的"机制侧总账"表（其成员含 ① 组的
+   A1 夹具同步面，**该表是唯一的清单副本**——本契约不复抄）里的**路径集合**与 `MECHANISM_LEDGER_PATHS` **相等**
+   （机检读 quickstart 的表格，提取 `` `路径` `` token 后
    与常量做**集合相等**比较；**不**比较条数、**不**比较顺序）——防"文档说机制改动只是新增文件、
    而实际改了既有模块"，也防"文档表与常量表悄悄分叉"。条数只作运行期报表，
    **新增/删除路径 ⇒ 两侧同时改才算通过**（单侧改 ⇒ 红）。
 5. **常驻清单纪律**：`len(MECHANISM_LEDGER) == 6`（与 FR-013 的六项一一对应；**不新造第 7 项**）。
    `MECHANISM_LEDGER_PATHS` **不设固定条数**（新增/删除路径即红，须显式登记到对应的总账项；
    纪律与 `tests/unit/test_billing_core_purity.py:268-285` 的 `OFFLINE_ASSEMBLIES` 常驻清单同款）。
-6. **夹具同步面的可派生性**：`tests/**` 内调用六个 `build_*_evaluators` 的文件集合（去掉已在 ⑤ 登记的
-   `tests/conftest.py`）**== 夹具同步面子表的路径集合**——该面**由符号调用反查**，不是人工维护；
-   新增一处调用点而漏登记 ⇒ 红。`tests/unit/fixtures/evaluator_assembly_baseline.json` 必须存在
+6. **夹具同步面的可派生性（口径已按实测更正）**：`tests/**` 内调用六个 `build_*_evaluators` 的**符号命中面**
+   （去掉已在 ⑤ 登记的 `tests/conftest.py`）**减去实际改动面**，其**差集必须逐条出现在剔除面
+   `NOT_LEDGER_ITEMS`**——即：两处口径**都要有牙齿**（漏登记真实改动 ⇒ 集合相等判定红；
+   拿符号调用点充改动面 ⇒ 与剔除面对不上 ⇒ 红）。**不得**再断言"符号命中面 == 改动面"（那是旧口径的错）。
+   `tests/unit/fixtures/evaluator_assembly_baseline.json` 必须存在
    （A1 的"装配序列逐字相同"对照基线），缺失 ⇒ 红。
 5. **常驻清单纪律**：`len(MECHANISM_LEDGER) == 6`（与 FR-013 的六项对应）且
    `MECHANISM_LEDGER_PATHS` **不设固定条数**（新增/删除路径即红，须显式登记到对应总账项
@@ -343,7 +348,8 @@
    （断言 4 是**集合相等**；条数相同但路径不同也算红）。
 8. 把 `core/evaluators/plugins/**`（B 阶段的接入侧新增面）登记进机制侧 ledger ⇒ 同一路径既算机制侧、
    又按 C12 判 `plugin` 放行 ⇒ 自相矛盾 ⇒ 红。
-9. 漏登记 A1 夹具同步面的某个"调用 `build_*_evaluators`"的测试文件 ⇒ 断言 6 的反查不一致 ⇒ 红。
+9. 漏登记 A1 夹具同步面的某个**真实改动**文件（或反过来：把"符号命中但未改动"的文件当成条目充数）
+   ⇒ 断言 6 的差集与剔除面对不上 ⇒ 红。
 10. 省掉 `tests/unit/fixtures/evaluator_assembly_baseline.json`（装配序列对照基线）却声称"逐字相同"⇒ 红
     （没有基线就没有对照）。
 

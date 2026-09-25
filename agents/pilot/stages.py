@@ -1475,7 +1475,7 @@ def build_stage_specs(runtime: PilotRuntime | None) -> list[StageSpec]:
     链首是 `dev`（立项组合 → 剧本输入），`script` 因此依赖 `dev`（契约 C1）；本函数为
     **静态声明**（形态配置不参与阶段结构）。每环节入口在这里被**只读采样包装装饰一次**
     （功能 018 / C13：成本第三方腿取逐环节网关记账增量；`run_report.sample_entrypoint` 只读
-    `total_cost_usd`，**不构造网关**，构造点普查仍 13 处）。`runtime=None` 时只做静态声明
+    `total_cost_usd`，**不构造网关**，构造点普查仍 14 处）。`runtime=None` 时只做静态声明
     （一致性机检用，无采样）。
     """
     specs = [

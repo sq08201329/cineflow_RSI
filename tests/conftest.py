@@ -3080,13 +3080,21 @@ def pilot_form_config_path(tmp_path):
             if "evaluators:" not in source:
                 # 021（C1/T2125）：内联精简副本必须补齐**插件声明面**（缺段 ⇒ 预检拒绝启动）；
                 # 声明面逐字取真实配置的 `evaluators.plugins` 结构，以**追加段**的方式拼上
-                # （原文字节一字不动——夹具下游有逐字文本断言，重排会被误判为"口径变了"）
+                # （原文字节一字不动——夹具下游有逐字文本断言，重排会被误判为"口径变了"）。
+                # 021（T2152/C11）：本夹具的排练档为 `unstandardized` ⇒ 段级标注必须齐备
+                # （五段非空 `note` 含「未标定」），`evaluators` 段的标注键随本节一并写入
+                # （它位于 `plugins` 子树**之上**，不参与插件清单解析）。
                 import yaml
 
                 from tests.plugin_fixtures import reference_plugins
 
                 section = yaml.safe_dump(
-                    {"evaluators": {"plugins": reference_plugins()}},
+                    {
+                        "evaluators": {
+                            "note": _UNCALIBRATED_FIXTURE_NOTE,
+                            "plugins": reference_plugins(),
+                        }
+                    },
                     allow_unicode=True,
                     sort_keys=False,
                 )
@@ -3268,6 +3276,11 @@ def stage_entrypoint_stub():
 # 形态原值的两处时长按长片语义同口径（`editing.target_duration_s` = `screenplay.target_duration_min`
 # × 60 = 5400 s），排练档在夹具里为 `unstandardized`（未标定 ⇒ 不覆盖，形态原值在 force）。
 # 而 `tests/unit/test_config_integrity.py` 的加载器清单用的是**真实**配置文件。
+# 021（T2152/C11）：未标定形态的**段层标注**文本（五段 `note` 必须非空且含「未标定」）
+# 句面与上文四段的行内 `note` **逐字一致**（promo / budget / calibration / pilot 在精简副本里，
+# `evaluators` 段由 `pilot_form_config_path` 追加段时写入）
+_UNCALIBRATED_FIXTURE_NOTE = "未标定（夹具）：业务数字属业务侧输入，待运营给定"
+
 _MINIMAL_MOVIE_CONFIG = """\
 form: movie
 evaluator_weights:
@@ -3304,6 +3317,8 @@ replay:
     enabled_for_dreaming: false
     pools_dir: replay/pools
 promo:
+  # 021（T2152）：未标定形态的**段层标注**（非空 note 且含「未标定」；缺任一段即拒绝启动）
+  note: "未标定（夹具）：业务数字属业务侧输入，待运营给定"
   exploration_per_round_usd: 500
   promo_pilot_ratio: 0.02
   # 归属日必填口径生效日（功能 020；缺键即报错，不取码内默认）
@@ -3478,6 +3493,11 @@ dev:
     mock-copy-v1: {prompt_per_1k: 0.001, completion_per_1k: 0.002}
   max_tokens: 512
 calibration:
+  # 021（T2152）：未标定形态的**段层标注**（非空 note 且含「未标定」；缺任一段即拒绝启动）
+  note: "未标定（夹具）：业务数字属业务侧输入，待运营给定"
+  # 021（C11）：未标定形态**必须**登记所取档位与业务侧真实节律的近似关系
+  # （须同时含「近似」与「未标定」两处字样）
+  cadence_note: "所取档位（周级 period_days）与业务侧真实节律为**近似关系**；当前未标定"
   period_days: 7
   top_k: 5
   min_samples: 3
@@ -3544,6 +3564,8 @@ web:
     pools: replay/pools
   export_dir: web/dist
 budget:
+  # 021（T2152）：未标定形态的**段层标注**（非空 note 且含「未标定」；缺任一段即拒绝启动）
+  note: "未标定（夹具）：业务数字属业务侧输入，待运营给定"
   # 019 精简档：与真实配置**同键集**（渠道 id / 环节 id / 格式 id），取值压到夹具量级
   # （`thresholds_snapshot` 一类的取值差异由 T1923 的用例承担）。缺段即预检拒绝启动。
   # 021（C11）：本夹具不登记投放渠道（`adapter: promo_platform`）⇒ 必须显式声明「不适用」
@@ -3626,6 +3648,8 @@ budget:
   ledger: {root: billing, lock_timeout_seconds: 5.0}
   runs: {min_window_days: 7, gap_tolerance_days: 0}
 pilot:
+  # 021（T2152）：未标定形态的**段层标注**（非空 note 且含「未标定」；缺任一段即拒绝启动）
+  note: "未标定（夹具）：业务数字属业务侧输入，待运营给定"
   backend: simulated
   llm_backend: mock
   overrides: {}

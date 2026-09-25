@@ -332,3 +332,119 @@ def _agent_config(form: str, agent: str):
     }[agent]
     config_class = getattr(importlib.import_module(module_name), class_name)
     return config_class.from_dict(_document(form))
+
+
+class Test同步版本口径:
+    """T2160：`sync-versions` 的校验口径与"不允许覆盖实现"机检（门禁只跑 `--check`）。"""
+
+    def _tampered_config(self, tmp_path, *, suffix: str) -> Path:
+        """把 movie.yaml 的**第一条** `version` 改掉（其余字节逐字保留）→ 临时配置。"""
+        text = (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
+        first = next(
+            leaf["version"]
+            for entries in _document("movie")["evaluators"]["plugins"].values()
+            for slot in entries.values()
+            for leaf in slot.values()
+        )
+        tampered = f"{first}{suffix}"
+        assert text.count(first) == 1, "版本声明不唯一（配置口径变了即红）"
+        target = tmp_path / "movie.yaml"
+        target.write_text(text.replace(first, tampered), encoding="utf-8")
+        return target
+
+    def _run(self, *args: str) -> tuple[int, dict]:
+        import contextlib
+        import io
+        import json as _json
+
+        from ops import form_plugin
+
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = form_plugin.main(list(args))
+        return code, _json.loads(stream.getvalue())
+
+    def test_check报差集不回写且退出非零(self, tmp_path):
+        target = self._tampered_config(tmp_path, suffix="-x")
+        before = target.read_bytes()
+        code, payload = self._run("sync-versions", "--check", "--config", str(target))
+        assert code == 1
+        assert payload["mode"] == "check" and payload["diffs"]
+        assert target.read_bytes() == before, "`--check` 不得回写配置（门禁禁止改写权威配置换绿灯）"
+        diff = payload["diffs"][0]
+        assert diff["declared"] != diff["actual"]
+        assert diff["section_path"][:2] == ["evaluators", "plugins"]
+
+    def test_write只改version叶子键且check随即归零(self, tmp_path):
+        target = self._tampered_config(tmp_path, suffix="-x")
+        before = target.read_text(encoding="utf-8").splitlines(keepends=True)
+        code, payload = self._run("sync-versions", "--write", "--config", str(target))
+        assert code in (0, 1) and payload["diffs"]
+        after = target.read_text(encoding="utf-8").splitlines(keepends=True)
+        assert len(before) == len(after)
+        changed = [
+            index for index, (old, new) in enumerate(zip(before, after, strict=True)) if old != new
+        ]
+        assert len(changed) == len(payload["diffs"]), f"被改动的行数 {changed} 与差集数不等"
+        for index in changed:
+            assert "version" in before[index] and "version" in after[index]
+        code_again, payload_again = self._run("sync-versions", "--check", "--config", str(target))
+        assert code_again == 0 and payload_again["diffs"] == []
+
+    def test_不回写声明值进实现且不归一化版本(self, tmp_path):
+        """三条禁止：不改 `spec`、不反射改写、不"归一化"版本字符串。"""
+        source = (REPO_ROOT / "ops" / "form_plugin.py").read_text(encoding="utf-8")
+        for forbidden in (
+            "dataclasses.replace",
+            "object.__setattr__",
+            "setattr(",
+            "spec.version =",
+            "spec.key =",
+        ):
+            assert forbidden not in source, f"sync 面出现 {forbidden!r}（不得覆盖实现）"
+        # 只留 `+` 前的基础版本 ⇒ 装配期必须**拒绝**（不得把它归一化到实现身份版本）
+        text = (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8")
+        first = next(
+            leaf["version"]
+            for entries in _document("movie")["evaluators"]["plugins"].values()
+            for slot in entries.values()
+            for leaf in slot.values()
+        )
+        base_only = first.split("+")[0]
+        target = tmp_path / "base.yaml"
+        target.write_text(text.replace(first, base_only), encoding="utf-8")
+        code, payload = self._run("sync-versions", "--check", "--config", str(target))
+        assert code == 1 and payload["diffs"]
+        diff = payload["diffs"][0]
+        assert diff["declared"] == base_only and diff["actual"] != base_only
+
+    def test_判据是装配期一致性校验(self, tmp_path):
+        """`--check` 的差集来自**装配期三方一致性校验**（不是 sync 自身的产物）。"""
+        target = self._tmp_ok(tmp_path)
+        code, payload = self._run("sync-versions", "--check", "--config", str(target))
+        assert code == 0 and payload["diffs"] == []
+        spec_source = (REPO_ROOT / "core" / "evaluators" / "base.py").read_text(encoding="utf-8")
+        assert "frozen=True" in spec_source
+        spec = EvaluatorSpec(
+            evaluator_id="rule.x", version="1.0.0+abc", kind=EvaluatorKind.RULE, deterministic=True
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            spec.version = "1.0.0+other"
+        assert spec.key == "rule.x@1.0.0+abc"
+
+    def _tmp_ok(self, tmp_path) -> Path:
+        target = tmp_path / "movie-ok.yaml"
+        target.write_text(
+            (REPO_ROOT / "configs" / "movie.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        return target
+
+    def test_check是默认模式(self, tmp_path):
+        target = self._tampered_config(tmp_path, suffix="-x")
+        code, payload = self._run("sync-versions", "--config", str(target))
+        assert code == 1 and payload["mode"] == "check"
+
+    def test_只读纪律_零git命令(self):
+        source = (REPO_ROOT / "ops" / "form_plugin.py").read_text(encoding="utf-8")
+        for token in ("git add", "git commit", "git reset", "git checkout"):
+            assert token not in source

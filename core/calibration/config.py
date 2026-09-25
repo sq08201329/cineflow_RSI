@@ -12,6 +12,10 @@
 - `calibration.transfer.{basis, source_forms, target_forms, conditions, storage, adoption}`
   （校准结论迁移的可比性条件配置化，契约 C15）——`conditions` 的**键集 = 判定项清单**，
   键必须 ∈ `TRANSFER_CONDITION_IDS`（判定实现单点在 `core/calibration/transfer.py`）。
+
+功能 021（C11 / T2149）在本加载器**收口 cadence 取值域**：`calibration.period_days` 必须 ∈
+`core/calibration/periods.py` 的 `SUPPORTED_CADENCES`（`(1, 7)`），越界即**显式报错并点名取值域**；
+`periods.py` **一字不改**，也不发明第三档量纲（"双周/月"须另立特性）。
 """
 
 from dataclasses import dataclass, field
@@ -21,7 +25,7 @@ from pathlib import Path
 import yaml
 
 from core.calibration.errors import CalibrationConfigError
-from core.calibration.periods import WINDOW_SEMANTICS
+from core.calibration.periods import SUPPORTED_CADENCES, WINDOW_SEMANTICS
 
 _INT_FIELDS = ("period_days", "top_k", "min_samples")
 
@@ -167,6 +171,19 @@ class CalibrationConfig:
             if key not in section:
                 raise CalibrationConfigError(f"calibration 缺少配置项 {key!r}")
             return section[key]
+
+        # cadence 取值域收口（021 C11 / T2149）：取值域取自 `core/calibration/periods.py` 的
+        # `SUPPORTED_CADENCES`（该文件一字不改）——越界即显式报错并**点名取值域**，
+        # **不回落**日级/周级、不发明"双周/月"等第三档量纲。既有
+        # `core/calibration/drift_config.py` 与 `agents/promo/config.py` 两处同取值域校验
+        # 原样保留（同一口径的多个检查点，不是三套口径）。
+        period_days = req("period_days")
+        if isinstance(period_days, bool) or period_days not in SUPPORTED_CADENCES:
+            raise CalibrationConfigError(
+                f"calibration.period_days 必须 ∈ {SUPPORTED_CADENCES}"
+                f"（取值域 {SUPPORTED_CADENCES}），实际为 {period_days!r}"
+                "——越界即拒绝启动，不回落日级/周级"
+            )
 
         ints = {}
         for key in _INT_FIELDS:

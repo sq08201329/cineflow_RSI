@@ -1,4 +1,4 @@
-"""形态接入登记点面（021 C9/C10 的机检实现；本任务只落登记点面，清单机制另行追加）。
+"""形态接入登记点面 + 接入改动清单 + 机制侧总账（021 C9/C10/C12/C13 的机检实现）。
 
 **不新造第六处登记点**（FR-007 / FR-012）：`REGISTRATION_SITES` 是**常驻白名单**，恰好五处——
 `tests/unit/test_form_switch.py`（①）、`tests/unit/test_config_integrity.py`（②）、
@@ -30,6 +30,8 @@
 from __future__ import annotations
 
 import ast
+import json
+import subprocess
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -625,4 +627,478 @@ def sixth_site_scan(
         site
         for site in form_enum_sites(configs_dir=configs_dir, roots=roots)
         if site.path not in FORM_SET_FACE
+    )
+
+
+# ---------------------------------------------------------------------------
+# 接入改动清单（C12）：基线派生 / 类别判定 / 指纹 / append-only / 越界即红
+# ---------------------------------------------------------------------------
+
+# 退出码语义（与既有工具一致；常量符号沿用 `ops/transfer.py` 的先例）
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_USAGE = 2
+# 清单的语义版本（C12 的字段权威表：当前取值 `1`；只增不改）
+SCHEMA = 1
+# 类别枚举（**英文，权威**）：判定一律走它，`counts` 的中文键只作报表人读面
+CATEGORIES: tuple[str, ...] = ("config", "plugin", "test_doc", "out_of_scope")
+# `counts` 的中文键名（权威；多/少键即红）
+COUNTS_KEYS: tuple[str, ...] = ("配置", "插件", "测试与文档", "越界", "既有模块被修改")
+# 类别 → counts 中文键（唯一映射；`越界` 单列）
+_CATEGORY_COUNTS_KEY = {
+    "config": "配置",
+    "plugin": "插件",
+    "test_doc": "测试与文档",
+    "out_of_scope": "越界",
+}
+# 状态枚举（`git diff --name-status` 的取值；未跟踪新增文件恒为 `A`）
+STATUS_CODES: tuple[str, ...] = ("A", "M", "D")
+# 放行面（按**类别**判定，不按路径前缀）
+_TEST_DOC_PREFIXES: tuple[str, ...] = ("tests/", "docs/", "specs/")
+_PLUGIN_TARGET_PREFIX = "core/evaluators/plugins/"
+_CONFIG_PREFIX = "configs/"
+# `index.jsonl` 每行的字段集（**恰好七键**；C12 的字段权威表）
+INDEX_KEYS: tuple[str, ...] = (
+    "baseline_ref",
+    "form",
+    "config_path",
+    "config_fingerprint",
+    "change_count",
+    "violations",
+    "exit_code",
+)
+# 产物层固定字段（C11 三层标注之产物层；键名权威在 C14）
+UNCALIBRATED_REASON = (
+    "受众 / 指标口径 / 素材规格 / 预算档属业务侧输入，未给定 ⇒ 新形态按最小可行形态接入"
+    "（未标定）；机制已就绪、真实节律与业务数字待运营给定后只改配置值"
+)
+
+
+class OnboardingError(ValueError):
+    """清单机制的用法/配置错误（基线取错、基线不可解析、配置不可读、形态 id 不一致）。"""
+
+
+@dataclass(frozen=True)
+class ChangedFile:
+    """一处改动（`path` 相对仓库根、`status` ∈ `STATUS_CODES`）。"""
+
+    path: str
+    status: str
+
+
+def _git(args: list[str], repo_root: Path) -> str:
+    completed = subprocess.run(
+        ["git", *args], cwd=repo_root, capture_output=True, text=True, check=False
+    )
+    if completed.returncode != 0:
+        raise OnboardingError(f"git {' '.join(args)} 失败：{completed.stderr.strip()}")
+    return completed.stdout
+
+
+def rev_parse(ref: str, *, repo_root: Path = REPO_ROOT) -> str:
+    """把 ref 解析为提交哈希（不可解析即报错——不猜、不静默兜底到 HEAD）。"""
+    if not isinstance(ref, str) or not ref.strip():
+        raise OnboardingError("ref 必须为非空字符串（基线必须显式给出，不默认取 HEAD）")
+    return _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], repo_root).strip()
+
+
+def _normalize_status(status: str) -> str:
+    code = str(status).strip().upper()[:1]
+    if code in ("R", "C"):  # 改名/拷贝 = 对既有文件的修改（既有实现口径）
+        return "M"
+    if code not in STATUS_CODES:
+        raise OnboardingError(f"非法改动状态：{status!r}（取值域 {list(STATUS_CODES)}）")
+    return code
+
+
+def untracked_files(*, repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """仓库根的**未跟踪文件集合**（`git ls-files --others --exclude-standard`）。
+
+    "--out 必须落临时目录"与"跑完仓库根零新增文件"的判据 = 该集合**前后逐条相等**。
+    """
+    return tuple(
+        line.strip()
+        for line in _git(["ls-files", "--others", "--exclude-standard"], repo_root).splitlines()
+        if line.strip()
+    )
+
+
+def changed_files(baseline_ref: str, *, repo_root: Path = REPO_ROOT) -> tuple[ChangedFile, ...]:
+    """由 git **派生**改动集合：`git diff --name-status <ref>` ∪ `git ls-files --others`。
+
+    **不手工列举** ⇒ "自报漏项"在机制上不可能发生。未跟踪的新增文件（新形态配置与新插件在
+    接入时通常是**未跟踪**文件——它们只出现在 `git ls-files --others` 一侧，`git diff` 看不见）
+    **必须在内**——漏了它们，"新增"整类会消失、越界计数反而"看起来干净"（这是最常见的漏项模式）。
+    """
+    rev_parse(baseline_ref, repo_root=repo_root)
+    found: dict[str, str] = {}
+    for line in _git(["diff", "--name-status", baseline_ref], repo_root).splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        found[parts[-1]] = _normalize_status(parts[0])
+    for line in _git(["ls-files", "--others", "--exclude-standard"], repo_root).splitlines():
+        path = line.strip()
+        if path and path not in found:
+            found[path] = "A"
+    return tuple(ChangedFile(path=path, status=found[path]) for path in sorted(found))
+
+
+def classify(path: str, status: str) -> str:
+    """按**类别**判定（**不是**按路径前缀）：配置 / 插件 / 测试与文档 / 越界。
+
+    `agents/<agent>/evaluators/` 前缀下，**新增**插件文件放行、**修改**该前缀下的既有文件越界
+    ——前缀判定**无法区分这两件事**，故必须同时看 `status` 与类别。`ops/**` 的**任何**改动
+    （新增或修改）都判 `out_of_scope`：一旦给 `ops/` 开放行面，本清单就再也证明不了
+    "新形态接入 = 仅新增配置 + 插件"。
+    """
+    code = _normalize_status(status)
+    if code == "A" and path.startswith(_CONFIG_PREFIX) and path.endswith(".yaml"):
+        return "config"
+    if code == "A" and (
+        path.startswith(_PLUGIN_TARGET_PREFIX)
+        or (path.startswith("agents/") and "/evaluators/" in path)
+    ):
+        return "plugin"
+    if path.startswith(_TEST_DOC_PREFIXES):
+        return "test_doc"
+    return "out_of_scope"
+
+
+def _reason(change: ChangedFile, category: str) -> str:
+    if category == "config":
+        return "新增形态配置（形态以配置文件为唯一载体）"
+    if category == "plugin":
+        return "新增插件（经 impl 声明才生效——目录不决定可用性、配置声明才决定）"
+    if category == "test_doc":
+        return f"{'新增' if change.status == 'A' else '修改/删除'}登记点同步与文档"
+    if change.status in ("M", "D"):
+        return f"{'修改' if change.status == 'M' else '删除'}既有模块 {change.path}（越界）"
+    return f"三类放行面之外的新增文件 {change.path}（越界：新增 core 机制模块 / 新增 ops CLI 等）"
+
+
+def config_fingerprint(config_path: str | Path) -> str:
+    """该形态配置文件的 BLAKE3 十六进制摘要**前 12 位**（口径沿用 `fingerprint_of`）。"""
+    from core.orchestration.models import fingerprint_of
+
+    path = Path(config_path)
+    if not path.is_file():
+        raise OnboardingError(f"形态配置不可读：{path}")
+    return fingerprint_of(path.read_bytes())[:12]
+
+
+def _form_of(config_path: Path) -> str:
+    try:
+        document = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise OnboardingError(f"形态配置不可读：{config_path}（{exc}）") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("form"), str):
+        raise OnboardingError(f"形态配置缺顶层 form 键：{config_path}")
+    form = document["form"]
+    if config_path.stem != form:
+        raise OnboardingError(
+            f"配置文件名 stem 必须逐字等于 form 取值（{config_path.stem!r} != {form!r}）"
+            "——形态 id 与配置路径必须一一对应"
+        )
+    return form
+
+
+def build_manifest(
+    config_path: str | Path,
+    baseline_ref: str,
+    *,
+    mechanism_ledger_ref: str | None = None,
+    repo_root: Path = REPO_ROOT,
+) -> dict:
+    """产出完整清单（逐条路径 + 类别 + 越界标记 + 计数 + 回溯字段）。
+
+    **两个 ref 并排落产物头部且必须不相等**：`baseline_ref`（接入前）与
+    `mechanism_ledger_ref`（机制落地后）。两者相等 ⇒ **基线取错**（机制侧改动会被算成接入越界，
+    判据自相矛盾）⇒ 报错，不"取最接近的一个"兜底。
+    """
+    if not isinstance(baseline_ref, str) or not baseline_ref.strip():
+        raise OnboardingError("baseline_ref 必须非空（缺 --baseline 即用法错误，不默认取 HEAD）")
+    if not isinstance(mechanism_ledger_ref, str) or not mechanism_ledger_ref.strip():
+        raise OnboardingError("mechanism_ledger_ref 必须非空（机制落地后的提交 ref）")
+    path = Path(config_path)
+    resolved_root = Path(repo_root)
+    resolved_path = path if path.is_absolute() else resolved_root / path
+    form = _form_of(resolved_path)
+    baseline_hash = rev_parse(baseline_ref, repo_root=resolved_root)
+    mechanism_hash = rev_parse(mechanism_ledger_ref, repo_root=resolved_root)
+    if mechanism_hash == baseline_hash:
+        raise OnboardingError(
+            f"baseline_ref == mechanism_ledger_ref（{baseline_ref}）：基线取错，"
+            "机制侧改动会被算成接入越界、判据自相矛盾"
+        )
+    changes = tuple(
+        {
+            "path": change.path,
+            "status": change.status,
+            "category": (category := classify(change.path, change.status)),
+            "violation": category == "out_of_scope",
+            "reason": _reason(change, category),
+        }
+        for change in changed_files(baseline_ref, repo_root=resolved_root)
+    )
+    counts = {key: 0 for key in COUNTS_KEYS}
+    for change in changes:
+        counts[_CATEGORY_COUNTS_KEY[change["category"]]] += 1
+    counts["既有模块被修改"] = sum(
+        1 for change in changes if change["violation"] and change["status"] in ("M", "D")
+    )
+    violations = tuple(change["path"] for change in changes if change["violation"])
+    return {
+        "schema": SCHEMA,
+        "baseline_ref": baseline_ref,
+        "mechanism_ledger_ref": mechanism_ledger_ref,
+        "form": form,
+        "config_path": resolved_path.relative_to(resolved_root).as_posix(),
+        "config_fingerprint": config_fingerprint(resolved_path),
+        "changes": list(changes),
+        "counts": counts,
+        "violations": list(violations),
+        "mechanism_changes_included": False,
+        "zero_code_onboarding": not violations,
+        "exit_code": EXIT_FAILED if violations else EXIT_OK,
+        "uncalibrated": True,
+        "uncalibrated_reason": UNCALIBRATED_REASON,
+    }
+
+
+def write_manifest(manifest: dict, out_dir: str | Path) -> Path:
+    """**append-only** 落盘：清单文件写后不回改（同内容重跑产生**新序号**），
+    `index.jsonl` 追加一行。"""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    form = str(manifest["form"])
+    prefix = f"onboarding-{form}-"
+    seq = 1 + max(
+        (
+            int(path.stem[len(prefix) :])
+            for path in out.glob(f"{prefix}*.json")
+            if path.stem[len(prefix) :].isdigit()
+        ),
+        default=0,
+    )
+    target = out / f"{prefix}{seq:04d}.json"
+    target.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
+    )
+    line = {
+        "baseline_ref": manifest["baseline_ref"],
+        "form": form,
+        "config_path": manifest["config_path"],
+        "config_fingerprint": manifest["config_fingerprint"],
+        "change_count": len(manifest["changes"]),
+        "violations": list(manifest["violations"]),
+        "exit_code": manifest["exit_code"],
+    }
+    with (out / "index.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, ensure_ascii=False) + "\n")
+    return target
+
+
+# ---------------------------------------------------------------------------
+# 机制侧总账（C13）：FR-013 的六项 + `MECHANISM_LEDGER_PATHS`（路径并集，**不写死条数**）
+# ---------------------------------------------------------------------------
+
+_A1_FIXTURE_SYNC_FACE: tuple[str, ...] = (
+    # A1 夹具同步面：**实测改动集**（`tests/**` 内内联配置字典夹具补 `evaluators` 段）。
+    # 派生口径是"凡在 `tests/**` 内调用六个 `build_*_evaluators` 的测试文件"（由符号调用反查）——
+    # 但**符号命中面 ⊋ 改动面**：实测命中 16 个文件里，只有下面 5 个（+ `tests/conftest.py`，归 ⑤）
+    # 真的需要补声明段；其余 10 个从**真实形态配置**取 `evaluators` 段 ⇒ 未改动、**不登记**
+    # （本表以 git 实测改动集为准，`NOT_LEDGER_ITEMS` 逐条登记剔除面）。
+    "tests/unit/test_dev_composite.py",
+    "tests/unit/test_editing_composite.py",
+    "tests/unit/test_screenplay_cli.py",
+    "tests/unit/test_screenplay_composite.py",
+    "tests/unit/test_storyboard_composite.py",
+)
+
+MECHANISM_LEDGER: tuple[dict, ...] = (
+    {
+        "ordinal": "①",
+        "step": "A1/A4",
+        "summary": "配置驱动的插件声明与唯一装配点（声明面 + importlib 解析 + 通用参数通道 + "
+        "既有装配面改委派 + 声明面承载 + 测试侧夹具/存根 + A1 夹具同步面 + cadence 收口的加载面）",
+        "items": (
+            *(
+                {"path": path, "kind": "new"}
+                for path in (
+                    "agents/dev/config.py",
+                    "agents/dev/evaluators/plugins.py",
+                    "agents/editing/config.py",
+                    "agents/editing/evaluators/plugins.py",
+                    "agents/screenplay/config.py",
+                    "agents/screenplay/evaluators/plugins.py",
+                    "agents/sound/config.py",
+                    "agents/sound/evaluators/plugins.py",
+                    "agents/storyboard/config.py",
+                    "agents/storyboard/evaluators/plugins.py",
+                    "agents/visual/config.py",
+                    "agents/visual/evaluators/plugins.py",
+                    "core/evaluators/plugin.py",
+                    "tests/contract/test_plugin_contracts.py",
+                    "tests/plugin_fixtures.py",
+                    "tests/plugin_stubs.py",
+                    "tests/unit/fixtures/dependency_baseline.json",
+                    "tests/unit/fixtures/evaluator_assembly_baseline.json",
+                    "tests/unit/test_evaluator_plugin_assembly.py",
+                    "tests/unit/test_form_no_new_dependency.py",
+                )
+            ),
+            *(
+                {"path": path, "kind": "modified"}
+                for path in (
+                    "agents/dev/evaluators/__init__.py",
+                    "agents/editing/evaluators/__init__.py",
+                    "agents/screenplay/evaluators/__init__.py",
+                    "agents/sound/evaluators/__init__.py",
+                    "agents/storyboard/evaluators/__init__.py",
+                    "agents/visual/loop.py",
+                    "configs/movie.yaml",
+                    "configs/shortdrama.yaml",
+                    "core/calibration/config.py",
+                    "core/evaluators/errors.py",
+                    *_A1_FIXTURE_SYNC_FACE,
+                )
+            ),
+        ),
+    },
+    {
+        "ordinal": "②",
+        "step": "A2",
+        "summary": "扫描面补面（字面量与判断分支两层均覆盖 core/ + agents/ **含 agents/pilot**、"
+        "锚点改符号名）",
+        "items": (
+            {"path": "ops/form_guard.py", "kind": "new"},
+            {"path": "tests/unit/test_form_guard.py", "kind": "new"},
+            {"path": "tests/unit/test_billing_core_purity.py", "kind": "modified"},
+            {"path": "tests/unit/test_dev_core_degraded_purity.py", "kind": "modified"},
+            {"path": "tests/unit/test_form_switch.py", "kind": "modified"},
+        ),
+    },
+    {
+        "ordinal": "③",
+        "step": "A2/A3",
+        "summary": "形态名由 configs/*.yaml 派生 + 三副本收敛为单一实现（副本数 ⇒ 1）+ "
+        "全仓同族「两形态枚举」副本（T2146/T2196 普查）逐处委派",
+        "items": (
+            {"path": "ops/form_guard.py", "kind": "new"},
+            {"path": "ops/demo_shortdrama_feedback.py", "kind": "modified"},
+            {"path": "ops/dev.py", "kind": "modified"},
+            {"path": "ops/screenplay.py", "kind": "modified"},
+            {"path": "tests/contract/test_billing_contracts.py", "kind": "modified"},
+            {"path": "tests/contract/test_llm_profile_contracts.py", "kind": "modified"},
+            {"path": "tests/contract/test_pilot_contracts.py", "kind": "modified"},
+            {"path": "tests/contract/test_pilot_film_contracts.py", "kind": "modified"},
+            {"path": "tests/contract/test_transfer_contracts.py", "kind": "modified"},
+            {"path": "tests/unit/test_billing_channels.py", "kind": "modified"},
+            {"path": "tests/unit/test_billing_config.py", "kind": "modified"},
+            {"path": "tests/unit/test_billing_gateway_cells.py", "kind": "modified"},
+            {"path": "tests/unit/test_billing_peak_windows.py", "kind": "modified"},
+            {"path": "tests/unit/test_calibration_transfer.py", "kind": "modified"},
+            {"path": "tests/unit/test_dev_policy_loader.py", "kind": "modified"},
+            {"path": "tests/unit/test_no_vendor_literals.py", "kind": "modified"},
+            {"path": "tests/unit/test_pilot_backend_selection.py", "kind": "modified"},
+            {"path": "tests/unit/test_pilot_rehearsal.py", "kind": "modified"},
+            {"path": "tests/unit/test_smoke_llm_profile.py", "kind": "modified"},
+        ),
+    },
+    {
+        "ordinal": "④",
+        "step": "A3/A4",
+        "summary": "agents/pilot/pilot.py 的裸形态词收敛 + 020 口径逐项机检"
+        "（form_clause_completeness：七项 + 不适用显式声明 + 三层未标定标注）",
+        "items": (
+            {"path": "agents/pilot/pilot.py", "kind": "modified"},
+            {"path": "tests/unit/test_form_clause_completeness.py", "kind": "new"},
+        ),
+    },
+    {
+        "ordinal": "⑤",
+        "step": "A3",
+        "summary": '"恰好两份"升级为**登记完备**口径（禁止删除）',
+        "items": (
+            {"path": "tests/conftest.py", "kind": "modified"},
+            {"path": "tests/unit/test_config_integrity.py", "kind": "modified"},
+            {"path": "tests/unit/test_form_registration.py", "kind": "new"},
+            {"path": "tests/unit/test_form_switch.py", "kind": "modified"},
+            {"path": "tests/unit/test_pilot_chain_seven.py", "kind": "modified"},
+        ),
+    },
+    {
+        "ordinal": "⑥",
+        "step": "A5",
+        "summary": "接入改动清单机检与 CLI/演示（A5 同批创建；演示**形态无关**）",
+        "items": (
+            {"path": "ops/demo_form_plugin.py", "kind": "new"},
+            {"path": "ops/form_onboarding.py", "kind": "new"},
+            {"path": "ops/form_plugin.py", "kind": "new"},
+            {"path": "tests/contract/test_form_onboarding_contracts.py", "kind": "new"},
+            {"path": "tests/unit/test_form_onboarding.py", "kind": "new"},
+        ),
+    },
+)
+
+# 路径并集（**条数由本常量给出、不写死**；判据 = 与 quickstart 的"机制侧总账"表**集合相等**）
+MECHANISM_LEDGER_PATHS: tuple[str, ...] = tuple(
+    sorted({item["path"] for entry in MECHANISM_LEDGER for item in entry["items"]})
+)
+
+# 排除面（机检在做集合比较前**必须逐条剔除**；否则"文档表与常量集合相等"会被行文引用污染）：
+# ① **不存在**的路径：`tests/unit/test_visual_composite.py` 与
+#    `tests/contract/test_{screenplay,storyboard,editing,sound}_contracts.py` 一族
+#    （实测：visual 的装配调用点在 `tests/unit/test_visual_consistency.py`；
+#    `tests/contract/` 下只有 `test_dev_contracts.py` 命中）——不为凑数保留不存在的路径；
+# ② **符号命中但实测未改动**的夹具（契约 C13 的 15 行子表把"调用 `build_*_evaluators` 的文件面"
+#    当成了"改动面"，实测**只有 5 个**真的需要补声明段）：下面 10 条为剔除面；
+# ③ `tests/unit/test_calibration_config.py` 是"明确不动的既有文件"（cadence 越界新用例落在
+#    `tests/unit/test_form_clause_completeness.py`）；
+# ④ **注释/文档面**：`agents/pilot/{stages,run_report}.py` 与 `docs/三期立项书.md` 承载的是
+#    019 构造点普查事实（13 → 14）的**更正**（注释与文档数字），无语义变更、不服务 FR-013 的
+#    任一项；C13 明文"不新造第 7 项"且 `docs/**` 的文档变更**不重复登记** ⇒ 一律不入账；
+# ⑤ 设计件（plan/research/quickstart/data-model/spec）与**裸文件名片段**是行文引用，不是条目。
+NOT_LEDGER_ITEMS: tuple[str, ...] = (
+    "agents/pilot/run_report.py",
+    "agents/pilot/stages.py",
+    "docs/三期立项书.md",
+    "tests/contract/test_dev_contracts.py",
+    "tests/contract/test_editing_contracts.py",
+    "tests/contract/test_screenplay_contracts.py",
+    "tests/contract/test_sound_contracts.py",
+    "tests/contract/test_storyboard_contracts.py",
+    "tests/unit/test_calibration_config.py",
+    "tests/unit/test_dev_compare_adopt.py",
+    "tests/unit/test_screenplay_compare_adopt.py",
+    "tests/unit/test_sound_composite.py",
+    "tests/unit/test_visual_composite.py",
+    "tests/unit/test_visual_consistency.py",
+    "tests/unbiasedness/test_dev_unbiased.py",
+    "tests/unbiasedness/test_editing_unbiased.py",
+    "tests/unbiasedness/test_screenplay_unbiased.py",
+    "tests/unbiasedness/test_sound_unbiased.py",
+    "tests/unbiasedness/test_storyboard_unbiased.py",
+    "plan.md",
+    "research.md",
+    "quickstart.md",
+    "data-model.md",
+    "spec.md",
+    "__init__.py",
+)
+
+
+def ledger_paths_of(entry: dict) -> tuple[str, ...]:
+    """一项总账的路径（保序；重复路径只在**首次归属项**计数，此处按项内去重返回）。"""
+    seen: dict[str, None] = {}
+    for item in entry["items"]:
+        seen.setdefault(item["path"], None)
+    return tuple(seen)
+
+
+def mechanism_ledger_of(path: str) -> tuple[dict, ...]:
+    """该路径归属的总账项（可能多项：`ops/form_guard.py` 服务 ②③；无归属 ⇒ 空元组）。"""
+    return tuple(
+        entry for entry in MECHANISM_LEDGER if any(item["path"] == path for item in entry["items"])
     )

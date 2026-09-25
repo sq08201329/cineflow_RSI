@@ -195,6 +195,28 @@ def assemble(
     return assembled
 
 
+def implementation_version_of(
+    declaration: PluginDeclaration,
+    *,
+    agent_config: Any,
+    gateway: Any = None,
+    artifacts: Any = None,
+) -> str:
+    """单条声明对应实现的**实现身份版本**（"应该写什么"）。
+
+    `sync-versions` 的差集报告与 `--write` 回写读它——解析与注入**复用装配点的同一实现**
+    （`_build_instance`），本函数**不注册**、不做声明一致性校验、不改写任何权威数据面；
+    **装配期的三方一致性校验（`assemble`）仍是唯一判据**。
+    """
+    provided = {
+        "agent_config": agent_config,
+        "gateway": gateway,
+        "artifacts": artifacts,
+        "registry": None,
+    }
+    return implementation_identity_version(_build_instance(declaration, provided))
+
+
 def _locate_in_document(document: Mapping, agent: str) -> Mapping:
     section = document.get("evaluators")
     if not isinstance(section, Mapping):
@@ -262,6 +284,15 @@ def _parse_leaf(agent: str, slot: str, evaluator_id: Any, leaf: Any) -> PluginDe
 
 
 def _instantiate(declaration: PluginDeclaration, provided: Mapping, registry: Any) -> Evaluator:
+    return _validate_result(declaration, _build_instance(declaration, provided), registry)
+
+
+def _build_instance(declaration: PluginDeclaration, provided: Mapping) -> Any:
+    """解析 `impl` → 按签名注入槽位 → 纯关键字调用（**解析与注入的唯一实现**）。
+
+    一致性校验与注册在 `_validate_result`；本函数只负责"把实例造出来"，
+    故 `sync-versions` 与装配点共用它而不产生第二条解析路径。
+    """
     target = _resolve(declaration)
     signature = inspect.signature(target)
     variadic = sorted(
@@ -298,7 +329,7 @@ def _instantiate(declaration: PluginDeclaration, provided: Mapping, registry: An
         )
 
     result = target(**declaration.params, **injected)
-    return _validate_result(declaration, result, registry)
+    return result
 
 
 def _resolve(declaration: PluginDeclaration) -> Any:

@@ -97,6 +97,27 @@ def _with_rehearsal(**rehearsal: Any):
     return _mutate
 
 
+#: 未标定形态必须逐段给出的**段层标注**（021 T2152 / C11：五段非空 `note` 含「未标定」）
+UNSTANDARDIZED_NOTE_SEGMENTS: tuple[str, ...] = (
+    "promo",
+    "budget",
+    "calibration",
+    "pilot",
+    "evaluators",
+)
+
+
+def _mark_uncalibrated(payload: dict) -> None:
+    """按**新口径**补齐未标定形态的三层标注（夹具同步，不是放宽断言）。
+
+    形态层声明 `status == "unstandardized"` 的配置**必须**同时带：五段段级 `note`（含「未标定」）
+    与 `calibration.cadence_note`（含「近似」与「未标定」）——缺任一段即拒绝启动。
+    """
+    for segment in UNSTANDARDIZED_NOTE_SEGMENTS:
+        payload[segment]["note"] = f"未标定（业务数字待运营给定）：{segment} 段"
+    payload["calibration"]["cadence_note"] = "所取档位与业务侧真实节律为近似关系；未标定"
+
+
 def _config_with(
     tmp_path: Path,
     form: str,
@@ -114,9 +135,14 @@ def _config_with(
         rehearsal["work_kind"] = work_kind
     if scale is not None:
         rehearsal["scale"] = scale
-    return _derived(
-        _real_config(tmp_path, form), tmp_path, name=name, mutate=_with_rehearsal(**rehearsal)
-    )
+
+    def _mutate(payload: dict) -> None:
+        _with_rehearsal(**rehearsal)(payload)
+        if status == "unstandardized":
+            # 未标定形态 ⇒ 段层与 cadence_note 的标注**必须**齐备（021 T2152）
+            _mark_uncalibrated(payload)
+
+    return _derived(_real_config(tmp_path, form), tmp_path, name=name, mutate=_mutate)
 
 
 def _runtime(config_path: Path, tmp_path: Path, form: str):

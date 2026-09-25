@@ -490,6 +490,31 @@ NOT_APPLICABLE_SITES: dict[str, tuple[str, ...]] = {
     "calibration.transfer": ("source_forms", "target_forms"),
     "budget": ("channels",),
 }
+# 三层"未标定"标注（C11）之**段层**：承载业务数字的五段——**未标定形态**必须逐段给出
+# **非空** `note` 且含「未标定」字样（缺任一段即报错并点名段名）；已标定形态不作要求
+# （对已裁决的形态强贴"未标定"标签是与形态层自相矛盾的）。
+UNCALIBRATED_NOTE_SEGMENTS: tuple[str, ...] = (
+    "promo",
+    "budget",
+    "calibration",
+    "pilot",
+    "evaluators",
+)
+# `calibration.cadence_note` 的禁列（该键只登记**近似关系**，不得用它宣称已达标/已投产）
+CALIBRATION_CLAIM_WORDS: tuple[str, ...] = ("已标定", "已达标", "已投产")
+# 020 口径逐项机检的**项名清单**（C11 的七项表 + "不适用"显式声明面）：返回清单必须逐字等于它
+# （漏一项即"声明完备性"出现盲区）——常量与返回同处本模块，测试直接读常量比对。
+FORM_CLAUSE_CHECKS: tuple[str, ...] = (
+    "cadence",
+    "window_semantics",
+    "window_change_date",
+    "channels",
+    "attribution_date",
+    "transfer",
+    "runs",
+    "not_applicable",
+    "uncalibrated",
+)
 
 
 def _clause(document: Mapping, path: str) -> Any:
@@ -547,10 +572,13 @@ def form_clause_completeness(config_path: str | Path) -> tuple[str, ...]:
     逐项（契约 C11 的逐项表）：`calibration.period_days ∈ SUPPORTED_CADENCES`、窗口口径
     取值域单元素、窗口口径生效日非空 ISO 日期、`budget.channels.<id>.tiers` 非空且**档位不跨
     渠道串用**、`promo.attribution_date_required_since` 存在、`calibration.transfer` **六键**
-    齐备、"**不适用**必须显式声明"（留空/省略即报错）。
+    齐备、`budget.runs` 两键为约定下限内的整数、"**不适用**必须显式声明"（留空/省略即报错），
+    以及**三层"未标定"标注**（形态层取值域 / 段层五段 `note` / `calibration.cadence_note`
+    的近似关系——未标定形态必填且须同时含「近似」与「未标定」，已标定形态给出时不得含「近似」）。
 
     **按配置路径通用**（形态值只作参数透传：不按形态名分支决定要不要检查，对新形态无需改代码
     即生效）；**不**给"缺段即回落到码内默认"的兜底——缺段/缺键一律拒绝启动。
+    返回项逐字等于模块常量 `FORM_CLAUSE_CHECKS`（漏项即报错）。
     """
     from datetime import date
 
@@ -652,6 +680,20 @@ def form_clause_completeness(config_path: str | Path) -> tuple[str, ...]:
         apply=not unshared,
     )
     checked.append("transfer")
+    # ⑥′ 运行窗口下限与断档容差（C11 第 ⑦ 项）：`min_window_days >= 1`、`gap_tolerance_days >= 0`
+    # （允许 0 = 不容断档）；缺项 / 留空 / 非整数即报错并点名键路径（不取码内默认）。
+    if not isinstance(_clause(document, "budget.runs"), Mapping):
+        raise PrecheckError(
+            "020 口径：budget.runs 必须为映射（min_window_days / gap_tolerance_days）"
+        )
+    for runs_key, floor in (("min_window_days", 1), ("gap_tolerance_days", 0)):
+        runs_value = _clause(document, f"budget.runs.{runs_key}")
+        if isinstance(runs_value, bool) or not isinstance(runs_value, int) or runs_value < floor:
+            raise PrecheckError(
+                f"020 口径：budget.runs.{runs_key} 必须为 ≥ {floor} 的整数"
+                f"（实测 {runs_value!r}）——缺项/留空即拒绝启动，不取码内默认"
+            )
+    checked.append("runs")
     # ⑦ "不适用"只允许上面两处（其它段出现即报错：防用"不适用"逃避填值）
     for segment in document:
         if segment in NOT_APPLICABLE_SITES:
@@ -663,7 +705,62 @@ def form_clause_completeness(config_path: str | Path) -> tuple[str, ...]:
                 f"（只允许 {sorted(NOT_APPLICABLE_SITES)}）"
             )
     checked.append("not_applicable")
+    # ⑧ 三层"未标定"标注（C11）：形态层取值域 + 段层 note + `calibration.cadence_note` 的近似关系
+    rehearsal_status = _clause(document, "pilot.rehearsal.status")
+    if rehearsal_status not in REHEARSAL_STATUSES:
+        raise PrecheckError(
+            f"未标定标注（形态层）：pilot.rehearsal.status 取值非法（{rehearsal_status!r}）："
+            f"只接受 {' | '.join(REHEARSAL_STATUSES)}（缺项即拒绝启动）"
+        )
+    cadence_note = _clause_optional(document, "calibration.cadence_note")
+    if cadence_note is not None:
+        if not isinstance(cadence_note, str) or not cadence_note.strip():
+            raise PrecheckError(
+                "未标定标注：calibration.cadence_note 给出时必须为非空字符串"
+                "（留空不是声明；近似关系与未标定状态都要写清）"
+            )
+        for word in CALIBRATION_CLAIM_WORDS:
+            if word in cadence_note:
+                raise PrecheckError(
+                    f"未标定标注：calibration.cadence_note 不得出现「{word}」"
+                    "——该键只登记近似关系，不得用它宣称已达标"
+                )
+    if rehearsal_status == "unstandardized":
+        # 段层：承载业务数字的五段逐段点名（缺任一段 ⇒ 报错并点名段名）
+        for segment in UNCALIBRATED_NOTE_SEGMENTS:
+            note = _clause(document, f"{segment}.note")
+            if not isinstance(note, str) or not note.strip() or "未标定" not in note:
+                raise PrecheckError(
+                    f"未标定标注（段层）：{segment}.note 必须为非空且含「未标定」字样的说明"
+                    f"（实测 {note!r}）——缺任一段即拒绝启动"
+                )
+        if cadence_note is None or "近似" not in cadence_note or "未标定" not in cadence_note:
+            raise PrecheckError(
+                "未标定标注：未标定形态（pilot.rehearsal.status == 'unstandardized'）"
+                "必须给出 calibration.cadence_note，且**同时**含「近似」与「未标定」两处字样"
+                "——所取档位与业务侧真实节律的近似关系必须写明"
+            )
+    elif cadence_note is not None and "近似" in cadence_note:
+        raise PrecheckError(
+            "未标定标注：非未标定形态给出 calibration.cadence_note 时不得含「近似」"
+            "（防给已裁决的节律贴近似标签）"
+        )
+    checked.append("uncalibrated")
+    if tuple(checked) != FORM_CLAUSE_CHECKS:  # 逐项机检不得漏项（返回清单与常量同源）
+        raise PrecheckError(
+            f"020 口径机检项与声明清单不一致：{tuple(checked)} != {FORM_CLAUSE_CHECKS}"
+        )
     return tuple(checked)
+
+
+def _clause_optional(document: Mapping, path: str) -> Any:
+    """可省略口径取值的读取（缺段/缺键 ⇒ `None`；与 `_clause` 的"缺项即报错"分工明确）。"""
+    cursor: Any = document
+    for key in path.split("."):
+        if not isinstance(cursor, Mapping) or key not in cursor:
+            return None
+        cursor = cursor[key]
+    return cursor
 
 
 def _as_sequence(value: Any) -> tuple[Any, ...]:
