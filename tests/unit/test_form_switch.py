@@ -158,17 +158,18 @@ class Test差异逐项可归因:
     """
 
     def _pair(self, left: str | None = None, right: str | None = None):
-        """形态对：两个形态名**一律取自派生面**（`declared_forms()`），零人工常量元组。
+        """形态对：**015 的既有对照对**（`movie` × `shortdrama`）——本类的固定差异集断言
+        （15 键）与逐项取值关系都绑定在该对照对上，属 015 的证据面。
 
-        默认取派生面的首末两项——今天即 015 的对照对 `movie × shortdrama`；新增形态时
-        **每一对**形态的差异集另由 `test_逐对形态差异集非空且不含形态无关段` 覆盖（不靠此处）。
+        为何显式点名而不再取"派生面首末两项"：新增形态（021 的 B 阶段接入）会改变派生面的
+        首末两项，而断言体一字不改（**只换对照对的取得方式**，不放宽任何断言）；新形态的
+        **每一对**差异集另由 `test_逐对形态差异集非空且不含形态无关段`（派生面驱动）覆盖。
         """
-        names = FORMS
 
         def _load(form: str) -> dict:
             return yaml.safe_load((CONFIGS_DIR / f"{form}.yaml").read_text(encoding="utf-8"))
 
-        return (_load(left or names[0]), _load(right or names[-1]))
+        return (_load(left or "movie"), _load(right or "shortdrama"))
 
     def test_权重与阈值差异(self):
         from core.evaluators.weights import load_evaluator_weights

@@ -21,6 +21,7 @@
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -196,7 +197,10 @@ class Test派生面:
 
     def test_别名只进名称面不进_id_面(self, tmp_path):
         alias = f"{FORM_NAMES[0]}-alias"
-        configs = _write_configs(tmp_path, [(FORM_NAMES[0], [alias]), (FORM_NAMES[1], [])])
+        # 临时布局覆盖**全部**已声明形态（新增形态自动纳入 ⇒ 本用例不依赖"恰好两份"）
+        configs = _write_configs(
+            tmp_path, [(FORM_NAMES[0], [alias]), *((name, []) for name in FORM_NAMES[1:])]
+        )
         assert declared_forms(configs) == FORM_NAMES
         assert set(form_literals(configs)) == {*FORM_NAMES, alias}
         assert len(form_literals(configs)) == len(FORM_NAMES) + 1
@@ -447,14 +451,18 @@ class Test真实扫描面:
         assert e3 == []
 
     def test_新增_E1_命中点会被计数变化捉住(self, tmp_path):
-        name = FORM_NAMES[0]
-        configs = _write_configs(tmp_path, [(name, [])])
         real = REPO_ROOT / "core" / "deployment" / "evidence.py"
+        source = real.read_text(encoding="utf-8")
+        # 注入用的形态名取自**既有 E1 行里的配置路径字面量**（不写死形态名；派生面之外的取值
+        # 不构成命中 ⇒ 写死形态名会让本用例依赖"派生面首个形态 = 该行形态"这一前提）
+        matched = re.search(r"configs/([0-9A-Za-z_-]+)\.yaml", source)
+        assert matched, "既有 E1 行的配置路径字面量缺失（本用例会空跑）"
+        name = matched.group(1)
+        configs = _write_configs(tmp_path, [(name, [])])
         target = tmp_path / "core" / "deployment" / "evidence.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            real.read_text(encoding="utf-8")
-            + f'\nEXTRA = "configs/{name}.yaml deployment.gate.x=false"\n',
+            source + f'\nEXTRA = "configs/{name}.yaml deployment.gate.x=false"\n',
             encoding="utf-8",
         )
         candidates = literal_violations(configs, sources=(target,), include_exceptions=True)

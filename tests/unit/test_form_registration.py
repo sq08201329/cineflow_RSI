@@ -49,12 +49,23 @@ ID_FACE_IMPLEMENTATION = ("registration_completeness", "registered_forms", "site
 UNCHANGED_SEGMENTS = PAIRWISE_UNCHANGED_SEGMENTS
 
 
-# 注入用的临时形态名（只写进 `tmp_path` 的临时 `configs/`；**不进仓库配置**、不构成形态枚举）
-_TEMP_FORM = "ad"
-_TEMP_FORM_ALT = "animated"
-# 临时三形态布局 = 派生面全部形态 + 一个临时形态（**不写形态集合字面量**）
-_TEMP_THREE_FORMS = (*declared_forms(CONFIGS_DIR), _TEMP_FORM)
-_TEMP_THREE_FORMS_ALT = (*declared_forms(CONFIGS_DIR), _TEMP_FORM_ALT)
+# 注入用的临时形态名（只写进 `tmp_path` 的临时 `configs/`；**不进仓库配置**、不构成形态枚举）。
+# 名称**不得与派生面取值碰撞**：碰撞会让"临时第三形态"变成"既有形态的重复"，注入面失真。
+_TEMP_FORM = "tmp-form-b1"
+_TEMP_FORM_ALT = "tmp-form-b2"
+# 派生面（真实形态；**零人工常量**）：注入布局 = 派生面全部形态 + 一个临时形态
+_DECLARED = declared_forms(CONFIGS_DIR)
+_TEMP_THREE_FORMS = (*_DECLARED, _TEMP_FORM)
+_TEMP_THREE_FORMS_ALT = (*_DECLARED, _TEMP_FORM_ALT)
+
+
+def _literal_enumeration(names: tuple[str, ...]) -> str:
+    """人工枚举的形态集合源码（枚举面 = 派生面全部真实形态；临时形态**不在**其中）。
+
+    写成 `repr` 的元组字面量：临时站点文件里是字面量元组（委派证明必红），而**本源文件**
+    只有一个 f-string（AST 里不构成形态集合容器 ⇒ 反向扫描不命中）。
+    """
+    return f"FORMS = {tuple(names)!r}\n"
 
 
 def _write_config(directory: Path, stem: str, form: str, *, aliases: tuple[str, ...] = ()) -> Path:
@@ -109,17 +120,17 @@ class Test五处登记点逐形态判定:
             assert "已登记 + 已委派" in status.describe()
 
     def test_缺项点名是哪一处缺哪个形态(self, tmp_path):
-        """③ 的注入面：**临时第三形态配置 + 一处人工枚举** ⇒ 双向集合条件逐处点名 `ad`。"""
+        """③ 的注入面：**临时第三形态配置 + 一处人工枚举** ⇒ 双向集合条件逐处点名该临时形态。"""
         configs = tmp_path / "configs"
         for stem in _TEMP_THREE_FORMS:
             _write_config(configs, stem, stem)
-        site = _synthetic_site(tmp_path, 'FORMS = ("movie", "shortdrama")\n', symbol="FORMS")
+        site = _synthetic_site(tmp_path, _literal_enumeration(_DECLARED), symbol="FORMS")
         status = site_registration_status(site, configs_dir=configs, repo_root=tmp_path)
         assert status.registered == declared_forms(CONFIGS_DIR)
         assert status.missing == (_TEMP_FORM,)  # 点名"缺哪个形态"
         assert status.delegated is False  # 委派证明失败（字面量元组）
         assert "tests/unit/tmp_registration_site.py" in status.describe()  # 点名"哪一处"
-        assert "ad" in status.describe()
+        assert _TEMP_FORM in status.describe()
         assert not status.ok
 
     def test_委派证明是AST判定而非文本匹配(self):
@@ -304,7 +315,7 @@ class Test有牙齿自检:
         configs = tmp_path / "configs"
         for stem in _TEMP_THREE_FORMS:
             _write_config(configs, stem, stem)
-        literal = _synthetic_site(tmp_path, 'FORMS = ("movie", "shortdrama")\n')
+        literal = _synthetic_site(tmp_path, _literal_enumeration(_DECLARED))
         delegated = _synthetic_site(
             tmp_path,
             "from ops.form_guard import declared_forms\n\n"
@@ -372,7 +383,7 @@ class Test有牙齿自检:
         assert report.unique and report.at_least_two and report.registered_matches
         # 五处登记点随**给定的**派生面走（真派生）；而人工枚举的那一处在同一布局下必红
         literal = _synthetic_site(
-            tmp_path, 'FORMS = ("movie", "shortdrama")\n', name="tmp_literal_three.py"
+            tmp_path, _literal_enumeration(_DECLARED), name="tmp_literal_three.py"
         )
         literal_status = site_registration_status(literal, configs_dir=configs, repo_root=tmp_path)
         assert literal_status.missing == (_TEMP_FORM_ALT,)

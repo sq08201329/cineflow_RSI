@@ -119,9 +119,16 @@ def run_round(
 
     # 评估器装配（版本组合随树快照冻结）
     evaluators = build_evaluators(config, gateway, artifacts)
+    # 声明面必须声明的两个槽位（`compliance` 是门禁、`proxies` 是合成分量）：未声明 ⇒ 闭环
+    # 无法跳过它们 ⇒ **显式报错并指名槽位**（不猜、不补默认）；`judge` 则按"未声明"跳过
+    missing = [slot for slot in ("compliance", "proxies") if slot not in evaluators]
+    if missing:
+        raise VisualLoopError(f"视觉闭环所需的槽位未在声明面声明：{missing}")
     compliance = evaluators["compliance"]
     proxies = evaluators["proxies"]
-    judge = evaluators["judge"]
+    # 最小可行形态（C14）**不声明 judge** ⇒ 装配面不产出该键：此处取 None，并在快照/分支上
+    # 按"该槽位未声明"处理（跳过 judge 工作 + 如实标注），不猜、不补兜底默认
+    judge = evaluators.get("judge")
 
     # ---- 幂等：树锚点已存在 → 直接重建首轮结果返回 ----
     tree = DiscoveryTree(
@@ -227,22 +234,31 @@ def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> Discov
 
 
 def _config_snapshot(config: VisualConfig, compliance, proxies, judge) -> dict:
-    """快照冻结：五评估器版本组合 + 权重 + 观测白名单 + 采样规则。"""
-    return {
+    """快照冻结：评估器版本组合 + 权重 + 观测白名单 + 采样规则。
+
+    `evaluator_versions` **由装配结果派生**（既有两形态的键与顺序逐字不变）；未声明的槽位
+    （`judge` 为 None）不进版本组合，并在 `undeclared_slots` 里如实标注。
+    """
+    assembled = [compliance, *proxies] + ([judge] if judge is not None else [])
+    snapshot = {
         "evaluator_weights": config.evaluator_weights,
-        "evaluator_versions": {
-            "rule.format_compliance": compliance.spec.version,
-            "proxy.aesthetic": proxies[0].spec.version,
-            "proxy.identity_consistency": proxies[1].spec.version,
-            "proxy.flicker": proxies[2].spec.version,
-            "judge.cinematic": judge.spec.version,
-        },
+        "evaluator_versions": {ev.spec.evaluator_id: ev.spec.version for ev in assembled},
         "observation_fields": ["gen_params", "clip_id"],
         "clip_spec": config.clip_spec,
         "frame_sampling": config.frame_sampling,
         # judge 段随树冻结（含单票输出预算：决定实际产出，历史节点不受此后变更影响）
         "judge": config.judge,
     }
+    undeclared = _undeclared_slots(config)
+    if undeclared:
+        snapshot["undeclared_slots"] = undeclared
+    return snapshot
+
+
+def _undeclared_slots(config: VisualConfig) -> list[str]:
+    """声明面未声明的槽位（如实标注用）：本 Agent 的 `SLOT_LAYOUT` 减去声明面已声明的槽位。"""
+    declared = config.plugin_declarations or {}
+    return [slot for slot in SLOT_LAYOUT if slot not in declared]
 
 
 def _root_node(tree_id, root_id, round_id, clips_briefs, policy_version) -> TreeNode:
@@ -432,9 +448,10 @@ def _run_clip(
                 breakdown[evaluator.spec.key] = _fragment(evaluator.evaluate(artifact_ref, ctx))
             score = 0.0
         else:
-            for evaluator in [*proxies, judge]:
+            for evaluator in [*proxies, *([judge] if judge is not None else [])]:
                 breakdown[evaluator.spec.key] = _fragment(evaluator.evaluate(artifact_ref, ctx))
-            judge_cost = judge.last_usage
+            if judge is not None:
+                judge_cost = judge.last_usage
             weights = apply_gate(_weights(config), drift_gate)  # 漂移门禁（合成前一处，012）
             score = quantize_score(
                 composite_score_versioned(
@@ -465,7 +482,7 @@ def _run_clip(
         _mark_ingested(engine, round_id, clip_id, node_id)
         return {"clip_id": clip_id, "status": "ingested", "reason": ""}
     except Exception as exc:  # noqa: BLE001 - 崩溃隔离（SC-006）：FAILED 成本入账轮次继续
-        judge_usage = judge.last_usage
+        judge_usage = judge.last_usage if judge is not None else judge_cost
         cost = CostRecord(
             llm_calls=judge_usage["llm_calls"],
             llm_tokens=judge_usage["llm_tokens"],

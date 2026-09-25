@@ -68,10 +68,13 @@ def evaluate_dev(
 
     返回 (breakdown, score, 代理计费用量)；用量为确定性代理的网关计费增量
     （llm_calls/llm_tokens/cost_usd 恒 0，但**字段仍落盘**，调用方入节点成本，C12）。
+    **槽位未声明**（最小可行形态 C14）：该槽位不产出键 ⇒ 跳过其工作、breakdown 不含该分量、
+    用量里 `undeclared_slots` 如实标注（不伪造分量、不补默认）。
     """
+    undeclared = [slot for slot in ("gates", "proxies") if slot not in evaluators]
     breakdown: dict[str, dict] = {}
     gate_failed = False
-    for gate in evaluators["gates"]:
+    for gate in evaluators.get("gates", []):
         result = gate.evaluate(artifact, context)
         breakdown[gate.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
         if result.score == 0.0:
@@ -80,7 +83,7 @@ def evaluate_dev(
         # gate 短路：门禁分量照常全评（诊断点名全部违规项），代理不跑也不计费、不落键
         return breakdown, 0.0, _empty_usage()
     usage = _empty_usage()
-    for proxy in evaluators["proxies"]:
+    for proxy in evaluators.get("proxies", []):
         result = proxy.evaluate(artifact, context)
         breakdown[proxy.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
         last_usage = getattr(proxy, "last_usage", None)
@@ -88,4 +91,6 @@ def evaluate_dev(
             usage["llm_calls"] += int(last_usage.get("llm_calls", 0))
             usage["llm_tokens"] += int(last_usage.get("llm_tokens", 0))
             usage["cost_usd"] += float(last_usage.get("cost_usd", 0.0))
+    if undeclared:
+        usage["undeclared_slots"] = undeclared
     return breakdown, quantize_score(composite_dev(breakdown, weights)), usage

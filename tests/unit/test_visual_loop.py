@@ -166,7 +166,12 @@ class Test门禁短路与对账:
         result = _run("v-gate", clips, loop_env)
         node = [n for n in loop_env["store"].nodes_of(result.tree_id) if n.parent_id is not None][0]
         assert node.score == 0.0
-        assert node.eval_breakdown["rule.format_compliance@1.0.0"]["score"] == 0.0
+        # 版本号（`id@version`）由装配面按实现身份钉定 ⇒ 断言按**前缀取键**，不写死版本字面量
+        # （021 A3 改版本哈希组成后，写死 `@1.0.0` 会失效；牙齿不变：该规则必须在场且为 0）
+        compliance_key = next(
+            key for key in node.eval_breakdown if key.startswith("rule.format_compliance@")
+        )
+        assert node.eval_breakdown[compliance_key]["score"] == 0.0
         assert not any(k.startswith("judge.cinematic") for k in node.eval_breakdown)
         assert loop_env["gateway"].call_count == gateway_calls_before  # judge 零调用
 

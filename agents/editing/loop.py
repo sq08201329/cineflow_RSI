@@ -29,6 +29,7 @@ from agents.editing.evaluators.composite import (
     composite_editing,
     evaluate_editing,
 )
+from agents.editing.evaluators.plugins import SLOT_LAYOUT
 from agents.editing.platform.base import EditRenderAdapter, RenderError
 from agents.editing.shots import SceneStructure, ShotLibrary
 from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与崩溃可辨
@@ -315,9 +316,13 @@ def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> Discov
 
 
 def _config_snapshot(config: EditingConfig, evaluators: list[Evaluator] | dict) -> dict:
-    """快照冻结：权重 + 评估器版本组合 + 观测白名单 + 剪辑口径配置。"""
+    """快照冻结：权重 + 评估器版本组合 + 观测白名单 + 剪辑口径配置。
+
+    021（C14）：声明面未声明的槽位在 `undeclared_slots` 里**如实标注**（最小可行形态不声明
+    `judge` ⇒ 该分量缺席）；既有两形态全槽位声明 ⇒ 快照逐字不变。
+    """
     all_evaluators = evaluators["all"] if isinstance(evaluators, dict) else evaluators
-    return {
+    snapshot = {
         "evaluator_weights": config.evaluator_weights,
         "evaluator_versions": {e.spec.evaluator_id: e.spec.version for e in all_evaluators},
         "observation_fields": ["gen_params", "edl", "edl_hash", "job_id"],
@@ -330,6 +335,10 @@ def _config_snapshot(config: EditingConfig, evaluators: list[Evaluator] | dict) 
         # judge 段随树冻结（含单票输出预算：决定实际产出，历史节点不受此后变更影响）
         "judge": config.judge,
     }
+    undeclared = [slot for slot in SLOT_LAYOUT if slot not in (config.plugin_declarations or {})]
+    if undeclared:
+        snapshot["undeclared_slots"] = undeclared
+    return snapshot
 
 
 def _root_node(tree_id, root_id, round_id, plans, policy_version, library) -> TreeNode:

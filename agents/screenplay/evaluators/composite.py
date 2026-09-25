@@ -69,23 +69,31 @@ def evaluate_screenplay(
     （llm_calls/llm_tokens/cost_usd），短路时为全 0——调用方入节点成本。
     非大纲阶段的 judge 分量照常评估（入口即标"不适用"、零网关调用），键留在
     breakdown 供合成跳过与审计。
+
+    **槽位未声明（最小可行形态 C14：`judge` 未声明）**：该槽位在装配面**不产出键**（见
+    `agents/<agent>/evaluators/plugins.py` 的 `_to_return_shape`）⇒ 此处**跳过**依赖它的工作、
+    breakdown 不含该分量、`judge_usage["undeclared_slots"]` 如实标注（不伪造分量、不补默认）。
     """
     judge_usage = _empty_usage()
     breakdown: dict[str, dict] = {}
+    undeclared = [slot for slot in ("gates", "proxies", "judge") if slot not in evaluators]
     gate_failed = False
-    for gate in evaluators["gates"]:
+    for gate in evaluators.get("gates", []):
         result = gate.evaluate(artifact, context)
         breakdown[gate.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
         if result.score == 0.0:
             gate_failed = True
-    for proxy in evaluators["proxies"]:
+    for proxy in evaluators.get("proxies", []):
         result = proxy.evaluate(artifact, context)
         breakdown[proxy.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
     if gate_failed:
         # gate 短路：合成 0 且不进入 judge（省 LLM 成本；judge 分量缺席不伪造）
         return breakdown, 0.0, judge_usage
-    judge = evaluators["judge"]
-    result = judge.evaluate(artifact, context)
-    breakdown[judge.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
-    judge_usage = dict(judge.last_usage)
+    judge = evaluators.get("judge")
+    if judge is not None:
+        result = judge.evaluate(artifact, context)
+        breakdown[judge.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
+        judge_usage = dict(judge.last_usage)
+    if undeclared:
+        judge_usage["undeclared_slots"] = undeclared
     return breakdown, quantize_score(composite_screenplay(breakdown, weights)), judge_usage

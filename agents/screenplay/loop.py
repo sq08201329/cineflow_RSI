@@ -42,6 +42,7 @@ from agents.screenplay.evaluators.composite import (
     composite_screenplay,
     evaluate_screenplay,
 )
+from agents.screenplay.evaluators.plugins import SLOT_LAYOUT
 from core.billing.budget import (  # 019（C10/C9）：零成本分支 + 快照冻结
     BudgetRefusedError,
     gateway_budget_snapshot,
@@ -328,9 +329,13 @@ def _score(
 
 
 def _config_snapshot(config: ScreenplayConfig, evaluators) -> dict:
-    """配置快照随树冻结（原则五）：此后配置变更不影响历史节点与得分。"""
+    """配置快照随树冻结（原则五）：此后配置变更不影响历史节点与得分。
+
+    021（C14）：声明面未声明的槽位在 `undeclared_slots` 里**如实标注**（最小可行形态不声明
+    `judge` ⇒ 该分量缺席）；既有两形态全槽位声明 ⇒ 快照逐字不变。
+    """
     all_evaluators = evaluators["all"] if isinstance(evaluators, dict) else evaluators
-    return {
+    snapshot = {
         "evaluator_weights": config.evaluator_weights,
         "evaluator_versions": {
             evaluator.spec.evaluator_id: evaluator.spec.version for evaluator in all_evaluators
@@ -354,6 +359,10 @@ def _config_snapshot(config: ScreenplayConfig, evaluators) -> dict:
         "judge": config.judge,
         "anchor_outlines": [anchor.to_dict() for anchor in config.anchor_outlines],
     }
+    undeclared = [slot for slot in SLOT_LAYOUT if slot not in (config.plugin_declarations or {})]
+    if undeclared:
+        snapshot["undeclared_slots"] = undeclared
+    return snapshot
 
 
 def _root_node(

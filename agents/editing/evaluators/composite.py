@@ -61,23 +61,30 @@ def evaluate_editing(
 
     返回 (breakdown, score, judge_usage)；judge_usage 为网关计费用量
     （llm_calls/llm_tokens/cost_usd），短路时全 0——调用方入节点成本。
+    **槽位未声明**（最小可行形态 C14）：该槽位不产出键 ⇒ 跳过其工作、breakdown 不含该分量、
+    `judge_usage["undeclared_slots"]` 如实标注（不伪造分量、不补默认）。
     """
     judge_usage = {"llm_calls": 0, "llm_tokens": 0, "cost_usd": 0.0}
     breakdown: dict[str, dict] = {}
+    undeclared = [slot for slot in ("gates", "pacing", "judge") if slot not in evaluators]
     gate_failed = False
-    for gate in evaluators["gates"]:
+    for gate in evaluators.get("gates", []):
         result = gate.evaluate(artifact, context)
         breakdown[gate.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
         if result.score == 0.0:
             gate_failed = True
-    pacing = evaluators["pacing"]
-    result = pacing.evaluate(artifact, context)
-    breakdown[pacing.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
+    pacing = evaluators.get("pacing")
+    if pacing is not None:
+        result = pacing.evaluate(artifact, context)
+        breakdown[pacing.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
     if gate_failed:
         # gate 短路：合成 0 且不进入 judge（省 LLM 成本；judge 分量缺席不伪造）
         return breakdown, 0.0, judge_usage
-    judge = evaluators["judge"]
-    result = judge.evaluate(artifact, context)
-    breakdown[judge.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
-    judge_usage = dict(judge.last_usage)
+    judge = evaluators.get("judge")
+    if judge is not None:
+        result = judge.evaluate(artifact, context)
+        breakdown[judge.spec.key] = {"score": result.score, "diagnostics": result.diagnostics}
+        judge_usage = dict(judge.last_usage)
+    if undeclared:
+        judge_usage["undeclared_slots"] = undeclared
     return breakdown, quantize_score(composite_editing(breakdown, weights)), judge_usage

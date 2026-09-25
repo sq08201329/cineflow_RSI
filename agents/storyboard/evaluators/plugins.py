@@ -57,8 +57,13 @@ def script_fit(*, agent_config: StoryboardConfig, gateway: LLMGateway) -> Evalua
 def _to_return_shape(assembled: dict) -> dict:
     """把装配点的槽位映射（每槽位 `list`）还原为该 Agent **既有返回形状**：单评估器槽位取
     首元素，列表槽位（含派生的 `all`）原样——签名与返回形状逐字不变是 021 C2 的兼容承诺。
+
+    **零实例（= 声明面未声明的槽位）不产出该键**：返回形状**如实反映已声明集合**，下游据此
+    把"该槽位未声明"当**明确语义**处理（跳过依赖该槽位的工作并如实标注，或显式报错）——
+    不猜、不补兜底默认。既有两形态全槽位声明 ⇒ 返回形状逐字不变（021 T2111 基线）。
     """
     return {
         slot: (instances[0] if slot in SINGLE_EVALUATOR_SLOTS else instances)
         for slot, instances in assembled.items()
+        if instances
     }

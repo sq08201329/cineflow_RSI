@@ -42,10 +42,24 @@ BASELINE = json.loads(
         encoding="utf-8"
     )
 )
-# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
-FORMS = declared_forms(REPO_ROOT / "configs")
 
 AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "dev")
+
+
+def _declared_pairs(form: str, agent: str) -> list[list[str]]:
+    """声明面给出的 `[[slot, evaluator_id@version], ...]`（`configs/*.yaml` 声明顺序）。"""
+    return [
+        [slot, f"{evaluator_id}@{leaf['version']}"]
+        for slot, entries in _declarations(form, agent).items()
+        for evaluator_id, leaf in entries.items()
+    ]
+
+
+def _declared_all(form: str, agent: str) -> list[str]:
+    """声明面给出的 `all` 序列（= 各槽位声明顺序拼接，未声明槽位不参与）。"""
+    return [key for _, key in _declared_pairs(form, agent)]
+
+
 SYMBOLS = {
     "screenplay": ("agents.screenplay.evaluators", "build_screenplay_evaluators"),
     "storyboard": ("agents.storyboard.evaluators", "build_storyboard_evaluators"),
@@ -114,6 +128,8 @@ def _slots_of(agent: str, value) -> list[list[str]]:
         return [["all", item.spec.key] for item in value]
     pairs = []
     for slot in _layout(agent):
+        if slot not in value:  # 未声明的槽位不产出键（返回形状如实反映已声明集合）
+            continue
         items = value[slot]
         items = items if isinstance(items, list) else [items]
         pairs.extend([slot, item.spec.key] for item in items)
@@ -125,24 +141,36 @@ class Test改前装配序列对照:
 
     @pytest.mark.parametrize("form", FORMS)
     def test_六Agent装配序列与基线逐字相同(self, form, build_env):
+        """基线覆盖的两个既有形态逐字等于**改前基线**；基线之后接入的形态（无"改前"可言）
+        逐字等于**其自己的声明面**——两者都是真断言，无 xfail、无放宽。"""
         gateway, artifacts = build_env
         for agent in AGENTS:
             config = _agent_config(form, agent)
             value = _build(agent, config, gateway, artifacts)
-            assert _slots_of(agent, value) == BASELINE[form][agent]["slots"], f"{form}/{agent}"
+            expected_slots = (
+                BASELINE[form][agent]["slots"] if form in BASELINE else _declared_pairs(form, agent)
+            )
+            assert _slots_of(agent, value) == expected_slots, f"{form}/{agent}"
             all_keys = [
                 item.spec.key for item in (value if isinstance(value, list) else value["all"])
             ]
-            assert all_keys == BASELINE[form][agent]["all"], f"{form}/{agent}"
+            expected_all = (
+                BASELINE[form][agent]["all"] if form in BASELINE else _declared_all(form, agent)
+            )
+            assert all_keys == expected_all, f"{form}/{agent}"
 
     @pytest.mark.parametrize("form", FORMS)
     def test_all键等于按槽位布局顺序拼接(self, form, build_env):
+        """`all` = 按 `SLOT_LAYOUT` 顺序拼接**已装配槽位**；返回键集 == 声明面已声明槽位集
+        （**未声明 ⇒ 不产出该键**，且 `all` 如实只含已声明集合）。"""
         gateway, artifacts = build_env
         for agent in AGENTS:
             if _layout(agent) == ("all",):
                 continue
             value = _build(agent, _agent_config(form, agent), gateway, artifacts)
-            expected = [item for slot in _layout(agent) for item in _as_list(value[slot])]
+            declared = set(_declarations(form, agent))
+            assert set(value) - {"all"} == declared, f"{form}/{agent} 返回键集 != 声明槽位集"
+            expected = [item for slot in _layout(agent) for item in _as_list(value.get(slot, []))]
             assert value["all"] == expected, f"{form}/{agent}"
 
     def test_sound返回扁平列表且下标顺序等于声明顺序(self, build_env):
@@ -158,8 +186,11 @@ class Test改前装配序列对照:
             assert [item.spec.key for item in value] == declared
 
     def test_既有评估器实现文件字节未变(self):
-        """T2121：范围 = `agents/*/evaluators/` 下的既有实现文件（排除 `__init__.py` 与
-        新增的 `plugins.py`）——版本号把实现文件字节并入哈希 ⇒ 改一字节即改 `eval_breakdown`。"""
+        """T2121：范围 = **单评估器实现模块**（版本号把它们各自的字节并入哈希 ⇒ 改一字节即改
+        `eval_breakdown`）。排除三类：`__init__.py`（装配入口）、`plugins.py`（新增薄工厂，
+        属机制改动面）、`composite.py`（**编排件**：不产出 `spec`、字节不进任何版本哈希，且
+        它正是"槽位未声明 ⇒ 跳过并如实标注"这一语义的消费点，021 最小可行形态收口所需）。"""
+
         recorded = BASELINE["implementation_files"]
         assert recorded, "基线必须记录实现文件哈希（否则本断言空跑）"
         changed = sorted(
@@ -538,7 +569,14 @@ class Test既有参数不搬迁:
 
     @pytest.mark.parametrize("form", FORMS)
     def test_薄工厂从agent_config槽位读既有取值(self, form):
-        """声明面点名的每个薄工厂：纯关键字签名、经 `agent_config` 读既有参数、不自行取数。"""
+        """声明面点名的每个薄工厂：纯关键字签名、经 `agent_config` 读既有参数、不自行取数。
+
+        **点名面 = 该 Agent 的绑定薄工厂**（`impl` 指向本 Agent 的 `plugins` 模块）：业务无关的
+        通用件落 `core/evaluators/plugins/`（C3 裁决 2），其同名机检在
+        `tests/contract/test_plugin_contracts.py`（业务无关四条 + "插件文件零孤立"）里承担，
+        故此处不把它误当作本 Agent 的薄工厂。**逐形态逐 Agent 的"本模块薄工厂必须被点名"
+        断言保留**（不因通用件而放宽）。
+        """
         for agent in AGENTS:
             source = (REPO_ROOT / "agents" / agent / "evaluators" / "plugins.py").read_text(
                 encoding="utf-8"
@@ -550,12 +588,14 @@ class Test既有参数不搬迁:
                 for node in ast.parse(source).body
                 if isinstance(node, ast.FunctionDef)
             }
+            own_module = f"agents.{agent}.evaluators.plugins"
             referenced = {
                 leaf["impl"].split(":")[1]
                 for entries in _declarations(form, agent).values()
                 for leaf in entries.values()
+                if leaf["impl"].split(":")[0] == own_module
             }
-            assert referenced, f"{agent} 的声明面必须点名薄工厂"
+            assert referenced, f"{agent} 的声明面必须点名本 Agent 的薄工厂"
             for name in sorted(referenced):
                 node = by_name[name]
                 names = {arg.arg for arg in node.args.kwonlyargs}
