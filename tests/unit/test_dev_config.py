@@ -137,11 +137,18 @@ class Test取值越界即报错:
 
 class Test两形态取值差异:
     def test_段取值确有差异(self):
-        """形态差异由配置承载（原则五）：差异靠值，不靠删段。"""
+        """形态差异由配置承载（原则五）：差异靠值，不靠删段。
+
+        **差异承载点**（功能 018 裁决后）：标记数区间两形态已同值（`(1, 1)`，见下方断言），
+        形态差异由 `slate` 条目数区间、组合约束、信号参数与判据阈值承担——"两形态 `dev` 段
+        取值有差异"这条性质不变，只是换了承载键（且该键在本用例中被更紧地钉死）。
+        """
         movie = DevConfig.from_yaml(MOVIE)
         short = DevConfig.from_yaml(SHORTDRAMA)
         assert movie.slate_entries != short.slate_entries
-        assert movie.production_marks != short.production_marks
+        # 标记数区间两形态均声明为"恰好一条"（功能 018 / FR-005：七环节链一轮产出一部影片，
+        # 交接取数入口要求该标记恰好一条；上界留 2 会让策略标两条、链拒绝启动）
+        assert movie.production_marks == short.production_marks == (1, 1)
         assert movie.max_direction_repeat_rate != short.max_direction_repeat_rate
         assert movie.signals != short.signals
         assert movie.upgrade_criteria != short.upgrade_criteria

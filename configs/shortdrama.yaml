@@ -362,11 +362,16 @@ screenplay:
           - {line_id: b1-l2, scene_id: anchor-b1, kind: action, character: 林静, text: "林静把保温杯拧开又拧上。", key: true, emotion: sorrow}
           - {line_id: b2-l1, scene_id: anchor-b2, kind: dialogue, character: 陈默, text: "字我签，你别管。", key: true, emotion: tense}
 
-# 开发（选题 / IP 评估 / 立项组合）形态参数（功能 017）：短剧差异——一次投多部、方向更多、
+# 开发（选题 / IP 评估 / 立项组合）形态参数（功能 017）：短剧差异——方向更多、
 # 组合更宽、热度分量更高、样本积累更快（min_samples 下调）、漂移带更宽。
 dev:
   slate: {min: 5, max: 10} # 短剧试错快，一轮探索更多方向
-  production_marks: {min: 1, max: 2} # 一次可投多部
+  # "本轮进入生产"标记数区间：**恰好一条**（两形态同值）。七环节链一轮产出一部影片，
+  # 而交接的取数入口（功能 018 / FR-005、契约 C5）要求组合内该标记恰好一条——上界留 2
+  # 会让策略依 017 的判据区间标两条标记，链在短剧形态**直接拒绝启动**（真实矛盾，不是
+  # 测试口径问题）。故该键不再是两形态的差异承载点：`dev` 段的形态差异由 `slate` 条目数
+  # 区间、组合约束、信号参数与判据阈值承担（原则五：差异靠值，不靠删键）。
+  production_marks: {min: 1, max: 1}
   combination:
     max_direction_repeat_rate: 0.5 # 短剧方向池更小，重复率上限放宽
   min_comparable_trees: 3 # 与电影同门槛（少样本不得出报告）

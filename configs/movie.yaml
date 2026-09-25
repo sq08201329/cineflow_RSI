@@ -167,7 +167,7 @@ editing:
   # （功能 018 修 bug：此前的 120 秒是从短剧形态抄来的，与 screenplay.target_duration_min: 90
   #  自相矛盾；两处时长必须同口径，不一致即拒绝启动并点名两处实测值，SC-012①）
   target_duration_s: 5400
-  duration_tolerance_s: 10 # 时长容差：总时长 ∈ [110, 130]s 过 gate
+  duration_tolerance_s: 10 # 时长容差：总时长 ∈ [5390, 5410]s 过 gate（目标 5400 s；功能 018 修口径后同步）
   shot_limits: # 镜头时长限制（rule.shot_distribution 对照）
     min_shot_ms: 500
     max_shot_ms: 20000

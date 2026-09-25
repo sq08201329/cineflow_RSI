@@ -68,8 +68,8 @@ def _demo_config(source: Path, target: Path, *, demo_scale: bool) -> Path:
     **只改排练档声明**（`pilot.rehearsal.scale` 的两处取值），体量键（成片时长/剧本目标/
     页数容差/单镜时长）一个字不动——"缩档只改配置"因此可机检（口径变了即红）。
 
-    另把 `dev.production_marks` 的上界收窄为 1（短剧形态原为 2；**真实配置不动**）：交接契约
-    要求组合级"本轮进入生产"标记**恰好一条**，标记 2 条时交接侧如实拒绝启动（不猜、不取第一条）。
+    交接要求的"本轮进入生产"标记**恰好一条**由形态配置的 `dev.production_marks: {min: 1,
+    max: 1}` 声明（两形态同值），派生副本不再改写该键。
     """
     text = source.read_text(encoding="utf-8")
     assert "root: billing" in text, "派生点存在（账本根不得落仓库）"
@@ -81,11 +81,6 @@ def _demo_config(source: Path, target: Path, *, demo_scale: bool) -> Path:
         ):
             assert text.count(old) == 1, f"排练档取值行缺失或重复（{old}）：配置口径变了即红"
             text = text.replace(old, new)
-    if "production_marks: {min: 1, max: 2}" in text:
-        assert text.count("production_marks: {min: 1, max: 2}") == 1
-        text = text.replace(
-            "production_marks: {min: 1, max: 2}", "production_marks: {min: 1, max: 1}"
-        )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
     return target

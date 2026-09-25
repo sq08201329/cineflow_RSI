@@ -511,6 +511,105 @@ uv run python ops/billing.py runs        --channel llm --window-days 7
 - **不做**：`Decimal` 金额重构（沿用 float + 容差二分）、自动比价路由与汇率引擎、`CostRecord` 增列
   角色/档案（走报告层，历史节点不可按角色/档案回溯，如实登记）、web 侧写入与 billing 看板（前端只读）。
 
+## 电影长片全链路（功能 018）
+
+七环节链 `dev → script → storyboard → visual → sound → editing → promo`：链首插入 017 的开发
+Agent（选题产出 → 剧本输入的**字段级交接**），链路拓扑与交接契约一行不动，体量按形态配置声明的
+**排练档**缩档；样片包补三处证据面（可复现口径不变 / 成本三方对账 / 逐环节评估分量与标注），
+性能画像落**报告侧**。
+
+```bash
+# 单元面（七环节阶段表与清单同步不变量 / 排练档与两处时长一致 / 交接守恒 / 分量与标注入包 /
+# 成本三方 / 性能画像与预算门禁）
+uv run pytest tests/unit -k pilot
+uv run pytest tests/unit -k storyboard   # 索引块网格：容量下界/量子上界、逐镜往返、版本含生效网格参数
+
+# 契约面（C1~C13 聚合 + 本特性的对抗/篡改面）
+uv run pytest tests/contract -k pilot
+
+# 七环节串链（排练档按配置生效；`--minutes` 取**生效档值**，浮点分钟）
+uv run python ops/pilot.py run     --form movie --config configs/movie.yaml \
+    --topic "夜班记录" --minutes 0.5 --characters 林静,陈默 --constraints "单人视角" \
+    --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id film-run
+uv run python ops/pilot.py resume  --form movie --config configs/movie.yaml \
+    --topic "夜班记录" --minutes 0.5 --characters 林静,陈默 --constraints "单人视角" \
+    --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id film-run
+uv run python ops/pilot.py inspect --data-dir pilot --run-id film-run --package
+
+# 性能画像 → pilot/profiles/{run_id}.json（报告侧，不进五件套）；`--clock` 必填无默认
+# 退出码：0 达标 / 1 未达标或不可评价 / 2 用法错误
+uv run python ops/pilot.py perf --form movie --config configs/movie.yaml \
+    --data-dir pilot --run-id film-run --clock system
+
+# 离线七步演示（确定性夹具 + 临时目录 + 固定时钟；零真实花费、零外部网络）
+uv run python ops/demo_pilot.py
+```
+
+`--minutes` 取**生效档值**：须等于**生效**成片时长 ÷ 60（排练档下 = `pilot.rehearsal.scale` 的
+`target_duration_s` ÷ 60，示范 0.5 = 30 秒；形态原值档下长片为 90），与预检的"两处时长一致"
+不变量同批定稿——不一致即拒绝启动并点名两处实测值。`--genre-bounds` / `--audience` 是链首立项
+环节的运行级输入映射，缺项即预检拒绝。
+
+### 七环节与排练档
+
+- **链条与环节不随形态改变**：阶段元组恰为七元组，每环只调对应 Agent 的既有 loop 入口——链首
+  `dev` 只调 017 的轮次入口，编排层**零新增落树路径**（常驻静态断言）。把 `dev` 从阶段表移除
+  （模拟漏同步）即红：阶段元组 / 阶段表 / `AgentConfigs` / 运行时装配含建表 / 预检四处清单 /
+  产物 kind 与内容类型 / 两形态声明**七处同批**，漏一处即多条一致性断言同时红。
+- **缩档只改配置**：`pilot.scene_count` / `pilot.lines_per_scene` / `pilot.rehearsal` 两形态均须
+  声明，**缺项即拒绝启动**（不取码内默认，唯一解析者是 `PilotConfig`，消费侧经参数注入）。
+  `status: declared` 时生效体量为 `scale` 覆盖值；`unstandardized` 时**不覆盖**（形态原值在 force）
+  并如实标注"未标定"；`work_kind` 区分排练与真实作品——排练产物**不得**被标为真实作品。
+- **两处时长一致（SC-012①）**：`screenplay.target_duration_min × 60` 必须等于**生效**
+  `editing.target_duration_s`（容差 `1e-6`），运行级目标时长 ×60 亦然；任一不一致即拒绝启动并
+  点名两处实测值（不静默择一）。长片形态原值此前的 120 秒与 90 分钟矛盾按长片语义修正为 5400 秒。
+- **索引码泛化为 R×C 块网格**：容量 `2**(R·C)`，约束 `2**C ≤ render.width` 与
+  `2**(R·C) ≥ 该形态派生镜头数`（长片原值 2700 镜 ⇒ 如 `rows: 2, cols: 8`；要更少镜头就改
+  `clip_spec.duration_seconds`，**不是**放宽容量校验）；派生镜头数只有一份公式
+  （`agents/pilot/scale.py`）；网格参数进评估器实现哈希 ⇒ **改网格即升版本**（含仅改配置取值），
+  旧 `evaluator_id@version` 的既有节点与已落盘工件逐字节不变。
+- **`dev → script` 字段级交接**：守恒等式 `下游读取集 == renames(上游 − 丢弃) ∪ 运行级 ∪ 派生`；
+  `reads` 三类（承接含改名 / 运行级 / 派生）每键**恰一类**，`dropped` 是与 `reads` **并列**的独立集，
+  取数依据（`entries`/`production_marks`）单列；取数入口要求"本轮进入生产"标记**恰好一条**且指向
+  组内条目——悬空 / 越界（多条）/ 要点缺失即**下游拒绝启动**并点名（不静默取第一条、不伪装成
+  选题为空）。链上无 `dev` 时回落运行级 `pilot_inputs`，生效来源随机读可见（禁止静默择一）。
+
+### 样片包三处补强（新增字段落既有件内，仍五件套）
+
+1. **可复现口径不变**：仍是 `PACKAGE_FILES` 五件套 + `verify_package`；同输入同配置、独立工件根
+   重跑**五件套逐字节一致**，新增字段（`source` / `channels` / `work_kind` / `eval_breakdown` /
+   `volume`）同样确定性——无墙钟、无绝对路径、无进程内顺序依赖。
+2. **成本三方对账**：`cost.json` 覆盖七环节，口径 = 运行记录阶段成本 ⨯ 各 Agent 落盘账目 ⨯
+   **网关记账增量**（环节边界**只读**采样 `LLMGateway.total_cost_usd`，不构造网关、普查仍 13 处）；
+   可比性分级声明（`dev`/`script` 为 LLM 腿专属 ⇒ 逐项相等；混合腿 ⇒ 至少；`sound` 无 LLM 调用 ⇒ 恒 0）；
+   `FAILED` 照常入账，被预算门禁**拒绝**的那一笔零入账且与已发生花费可分辨；平台腿与 `day`/`period`
+   窗口累计的不可比情形**如实备注**（不静默比对、也不静默跳过）。
+3. **逐环节评估分量与来源标注**：`state.json` 逐环节 `eval_breakdown`（`evaluator_id@version` 与分量值）
+   **取自树节点原文**（不改写、不归一化、不重算；派生产物显式标 `derived: true`，不与缺项混同），
+   缺任一环即**拒绝装配**；`manifest.json` 的 `stages[].source`/`channel` + 顶层 `channels` 汇总 +
+   `work_kind`，预检报告同步 `stages: {stage_id: source}`——取值只来自装配面声明，不推断、不默认。
+
+### 诚实边界（本特性最核心的工程对象）
+
+- **"真实渠道" = LLM 腿真实 + 平台侧按配置（默认模拟）**：今天真实可用的只有 LLM 腿（019 已交付
+  前置预算门禁、账单对账与运行记录）；平台五环节（分镜/视觉/声音/剪辑/宣发）的真实适配器**代码在位
+  但未交付使用**——`docs/pilot-upgrade-manifest.json` 的 B 路径（视频/音频生成）与 C 路径（真实投放）
+  状态均为 `not_delivered`。**禁止**产出"真实渠道全链路已跑通"这类结论（该表述只在七环节 `source`
+  全为 `real` 时成立，机检）；全模拟（默认）与部分真实（如 `llm: http` 而平台模拟）都必须如实分层
+  标注，模拟被标为真实的次数恒为 0。
+- **真实生成的账号、凭证、平台名与预算档属运营侧前置输入**：本特性不发明凭证名、平台名与额度数字，
+  也不重写适配器协议、不新开凭证面；未具备期间保留"模拟生成"标注与预检报告 `credentials_checked: false`
+  （不假装验过凭证）。渠道失败**禁止**静默回落模拟并照常计费。
+- **排练档与性能阈值的数字属运营侧输入**：表达机制全部落地（配置声明 + `work_kind` + 未标定如实
+  登记），**待给定的是数字**；未给定期间按"未标定"登记、不发明数字，也不把排练产物标为真实作品。
+- **性能画像的边界**：墙钟只进报告侧 `pilot/profiles/{run_id}.json`、**不进**逐字节比对的五件套；
+  **固定时钟运行恒 `not_evaluable`**（那组时间戳是常量，只能证明可复现），各环节时间戳全等时即便
+  声明系统时钟也被证据推翻；「专用基准环境下的绝对标定」属三期 WS3 第 3 项，**不在本特性**。
+  单次运行无法自证用过系统时钟，故口径由"入口显式声明 + 退化时间戳交叉核验"两层承担，残余风险如实登记。
+- **`dev` 仍是人工策略驱动的降级模式**：策略来源是人、必须过静态检查、必须人工采纳；例外三项替代
+  约束（装载即静态检查 / 执行超时 / 策略零环境对象·不触网关）落机检，**不升级为自动进化**。
+- **测试与演示全走模拟后端 + 夹具 + 确定性时钟**：零真实花费、零外部网络；真实运行属运营动作。
+
 ## 做梦层（功能 005）
 
 ```bash
@@ -827,19 +926,23 @@ uv run python ops/demo_deploy_gate.py    # 端到端六步演示（退出码 0�
 
 ## 短剧形态试水作品（功能 015）
 
-**一句话**：形态差异全部在 `configs/*.yaml`（零代码切换），六阶段链式交接 + 通用轻量 DAG
-执行器 + 可复现样片包；全链路由**确定性模拟生成器**产出。
+**一句话**：形态差异全部在 `configs/*.yaml`（零代码切换），链式交接 + 通用轻量 DAG
+执行器 + 可复现样片包；全链路由**确定性模拟生成器**产出。（功能 018 起链首插入 `dev`，
+链条为**七环节**——见「电影长片全链路（功能 018）」。）
 
 ```bash
-# 端到端六步演示（配置完整性 → 短剧运行出样片包 → 可复现对照 → movie 对照 → 断点续跑 → 拒绝语义）
+# 端到端七步演示（配置完整性 → 七环节串链出样片包 → 可复现对照 → movie 对照 → 断点续跑 →
+# 拒绝语义 → 排练档标注）
 uv run python ops/demo_pilot.py
 
-# 单次试水运行（预检 → 六阶段 → 样片包 pilot/packages/{run_id}/）
+# 单次试水运行（预检 → 七环节 → 样片包 pilot/packages/{run_id}/）
 uv run python ops/pilot.py run --form shortdrama --config configs/shortdrama.yaml \
-    --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run --fixed-clock
+    --topic 夜班记录 --minutes 2 --characters 林静,陈默 --constraints 单场景为主 \
+    --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id demo-run --fixed-clock
 uv run python ops/pilot.py inspect --data-dir pilot --run-id demo-run --package
 uv run python ops/pilot.py resume  --form shortdrama --config configs/shortdrama.yaml \
-    --topic 夜班记录 --minutes 2 --characters 林静,陈默 --data-dir pilot --run-id demo-run
+    --topic 夜班记录 --minutes 2 --characters 林静,陈默 --constraints 单场景为主 \
+    --genre-bounds 悬疑,夜戏 --audience 都市女性 --data-dir pilot --run-id demo-run
 
 # 后端切换（A → B 是一行命令，不是改装配代码）：缺省取配置 pilot 段，此处为运行时覆盖
 uv run python ops/pilot.py run ... --backend http --llm-backend http   # 缺凭证 → 装配期明确报错，零落树零扣费
@@ -853,7 +956,7 @@ uv run python ops/pilot.py precheck ... --backend http                 # prechec
 先于落树/生成，**不静默回落模拟**）；取值非法同样装配期拒绝。
 
 **分层**（宪章原则五）：`core/orchestration/` 通用执行器（**零业务概念**：DAG/状态机/断点续跑
-/账目，静态断言机检）→ `agents/pilot/` 四段交接纯映射 + 六阶段定义 + 样片包装配 →
+/账目，静态断言机检）→ `agents/pilot/` 交接纯映射 + 七环节定义 + 样片包装配 →
 `configs/{movie,shortdrama}.yaml` 形态配置（权重/阈值/节奏曲线/预算/规格/外环频率）。
 
 **样片包五件套**：`manifest.json`（**「模拟生成」标注** + 形态 + 配置指纹 + 产物清单 + 阶段状态）、
@@ -955,7 +1058,7 @@ uv run python ops/smoke_llm.py --config configs/shortdrama.yaml --round --dry-ru
 | --- | --- |
 | `visual.simulated_gen.fps` 必须 = `visual.clip_spec.fps` | 模拟视频生成器编码档固定 8fps；不一致 → `rule.format_compliance` 全判 0 |
 | 片段/渲染尺寸需**被 16 整除**且 9:16（现 144x256） | 否则 ffmpeg 会改尺寸（如 216→224），合规门禁逐字段对照失败 |
-| 镜头数 ≤ **16** | 分镜预演渲染器的镜头索引位编码上限 |
+| 派生镜头数 ≤ **`2**(R·C)`** 且 **`2**C ≤ render.width`** | 分镜预演渲染器的索引块网格容量（功能 018 起由 `storyboard.render.index_grid` 声明，短剧现 `{rows: 1, cols: 4}` ⇒ 容量 16；缺项即拒绝启动） |
 | `镜头数 × 单镜时长` 须落在 `editing.target_duration_s ± duration_tolerance_s` | EDL 时长合规门禁 |
 | `promo` 单轮投放上限 = `exploration_per_round_usd × promo_pilot_ratio` ≥ 物料申请额之和 | 超限即拒投（不静默超投） |
 | 转场为**出向**语义（同分区前一镜须带 dissolve） | `forbid_jump_cut_within_scene` |

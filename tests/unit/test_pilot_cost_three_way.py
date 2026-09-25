@@ -58,7 +58,6 @@ def _demo_config(tmp_path: Path) -> Path:
     for old, new in (
         ("target_duration_s: 120.0", "target_duration_s: 30.0"),
         ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
-        ("production_marks: {min: 1, max: 2}", "production_marks: {min: 1, max: 1}"),
     ):
         assert text.count(old) == 1, old
         text = text.replace(old, new)

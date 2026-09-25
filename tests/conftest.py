@@ -3063,7 +3063,7 @@ def pilot_form_config_path(tmp_path):
 
 @pytest.fixture()
 def pilot_demo_config_path(tmp_path):
-    """pilot 演示档形态配置：真实短剧配置的派生副本，**只改排练档声明、标记区间与账本根**。
+    """pilot 演示档形态配置：真实短剧配置的派生副本，**只改排练档声明与账本根**。
 
     缩档口径（功能 018 / FR-013/014、契约 C10）：**只经形态配置声明的排练档**——派生副本把
     `pilot.rehearsal.scale` 的取值改成**演示档**（成片 30 秒 / 剧本 0.5 分钟），体量键
@@ -3071,10 +3071,9 @@ def pilot_demo_config_path(tmp_path):
     `visual.clip_spec.duration_seconds`）**一个字都不动**——脚本/夹具不再改写体量键，
     排练档因此是缩档的唯一表达处（"缩档只改配置"可机检）。
 
-    标记区间收窄（功能 018 / FR-005、契约 C5）：交接的取数入口要求组合级"本轮进入生产"标记
-    **恰好一条**，而短剧形态的 `dev.production_marks` 上界为 2（017 的形态差异面，**真实配置
-    不动**）；派生副本把该区间声明为 `{min: 1, max: 1}`，使"取数入口唯一"在演示与端到端用例上
-    成立（真实配置下标记 2 条时交接侧如实**拒绝启动**并点名——那是契约规定的行为）。
+    交接的取数入口要求组合级"本轮进入生产"标记**恰好一条**（功能 018 / FR-005、契约 C5）：
+    短剧真实配置的 `dev.production_marks` 已是 `{min: 1, max: 1}`，派生副本**不再改写该键**
+    （原派生点随 018 裁决消失——上界 2 与"一轮产出一部影片"矛盾）。
 
     用途：把端到端试水运行的镜头数压到 4（派生镜头数 = `max(场景数, ceil(成片时长 / 单镜时长))`
     = `max(4, ceil(30/7.5))` = 4），避开连续 16 次 ffmpeg 编码在本机负载下的偶发抖动。
@@ -3087,7 +3086,6 @@ def pilot_demo_config_path(tmp_path):
     for old, new in (
         ("target_duration_s: 120.0", "target_duration_s: 30.0"),
         ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
-        ("production_marks: {min: 1, max: 2}", "production_marks: {min: 1, max: 1}"),
     ):
         assert text.count(old) == 1, f"派生点缺失或重复（{old}）：配置口径变了即红"
         text = text.replace(old, new)

@@ -73,14 +73,13 @@ def pilot_run(tmp_path_factory):
 
 
 def _demo_config(tmp_path: Path) -> Path:
-    """短剧演示档派生配置（排练档 + 标记区间收窄，同 `pilot_demo_config_path` 夹具口径）。"""
+    """短剧演示档派生配置（只改排练档声明与账本根，同 `pilot_demo_config_path` 夹具口径）。"""
     text = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
     assert "root: billing" in text
     text = text.replace("root: billing", f"root: {tmp_path / 'billing'}")
     for old, new in (
         ("target_duration_s: 120.0", "target_duration_s: 30.0"),
         ("script_target_minutes: 2.0", "script_target_minutes: 0.5"),
-        ("production_marks: {min: 1, max: 2}", "production_marks: {min: 1, max: 1}"),
     ):
         assert text.count(old) == 1, old
         text = text.replace(old, new)
