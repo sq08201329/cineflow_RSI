@@ -1,8 +1,12 @@
-"""calibration_anchors 表定义与 INSERT-only 触发器（对齐迁移 0004 DDL）。
+"""calibration_anchors 表定义与 INSERT-only 触发器（对齐迁移 0004 DDL + 0011 扩列）。
 
 原始锚点属存储层冻结对象（宪章原则一/二，FR-003）：UPDATE/DELETE 由双方言
 触发器拒绝——SQLite 用 SELECT RAISE(ABORT)，PostgreSQL 用 plpgsql RAISE EXCEPTION
 （正式 DDL 另含应用账号权限回收，见 ops/migrations/versions/0004_calibration_anchors.py）。
+
+功能 020 只加**一列可空** `metric_date`（归属日，迁移 `0011_daily_feedback`）：
+既有唯一键 `(node_id, reviewer, round_id)` 与 INSERT-only 触发器**一律不动**，
+历史行该列恒 `NULL`、永不回填。
 """
 
 from sqlalchemy import (
@@ -37,6 +41,11 @@ calibration_anchors = Table(
     Column("reviewer", Text, nullable=False),
     Column("round_id", Text, nullable=False),
     Column("created_at", Text, nullable=False),
+    # 归属日（功能 020，迁移 0011 的可空新增列）：非空时必须是合法 ISO `YYYY-MM-DD`。
+    # **可空**是硬要求——历史行恒 `NULL`、永不回填（原则一/二）；新采集写入路径非空
+    # （缺失即显式失败，见 `agents/promo/platform/base.py` 的 `validate_metrics`）。
+    # 采集墙钟**不**在本表（由 `promo_daily_metrics.collected_at` + 覆盖视图 `days[]` 承载）。
+    Column("metric_date", Text, nullable=True),
     # 同键重复录入在 DB 层拒绝（FR-003 幂等）
     UniqueConstraint("node_id", "reviewer", "round_id", name="uq_anchor_node_reviewer_round"),
 )

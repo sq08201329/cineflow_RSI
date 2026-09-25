@@ -2,10 +2,17 @@
 
 以 blake3(material.artifact_hash + budget + 平台 salt) 为种子产出指标：
 同物料同参数逐字节可复现；内部账本记录每次扣费供对账（SC-003）。
+
+归属日（功能 020）：模拟平台的指标归属日**缺省**取自身固定 `platform_timestamp`
+（`_PLATFORM_TIMESTAMP`）的 **UTC 日期**——与指标本身同源 ⇒ 逐字节可复现（确定性纪律）；
+可用构造参数 `metric_date` 显式注入以推进跨日夹具。**禁止由 `now()` 派生**：
+归属日必须是"平台指标所描述的日期"，不是"我们跑模拟的时刻"。
 """
 
 import random
+import re
 from dataclasses import replace
+from datetime import UTC, date, datetime
 
 import blake3
 
@@ -15,20 +22,47 @@ from agents.promo.platform.base import (
     InvalidRequestError,
     MetricSnapshot,
     MetricsNotReadyError,
+    MetricValidationError,
     PlatformError,
     PromoMaterial,
 )
 from core.tree.models import new_id
 
 _SALT = "simulated-platform-v1"
+# 固定平台时间戳（真值产生时刻）：逐字节可复现的模拟基线；归属日缺省由其 UTC 日期派生
+_PLATFORM_TIMESTAMP = 1700000000.0
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _utc_date_of(timestamp: float) -> str:
+    """时间戳 → UTC 日期（ISO YYYY-MM-DD）；**只**用于模拟平台的确定性基线。"""
+    return datetime.fromtimestamp(timestamp, UTC).date().isoformat()
 
 
 class SimulatedPlatform:
     """确定性模拟投放平台：幂等键去重、状态机逐次推进、哈希种子指标。"""
 
-    def __init__(self, distribution: dict, *, data_version: str = "sim-v1") -> None:
+    def __init__(
+        self,
+        distribution: dict,
+        *,
+        data_version: str = "sim-v1",
+        metric_date: str | None = None,
+    ) -> None:
         self._dist = distribution
         self._data_version = data_version
+        if metric_date is not None:
+            if not isinstance(metric_date, str) or not _ISO_DATE_RE.fullmatch(metric_date):
+                raise MetricValidationError(
+                    f"指标归属日非法：{metric_date!r}（必须为 ISO 日期 YYYY-MM-DD）"
+                )
+            try:
+                date.fromisoformat(metric_date)
+            except ValueError as exc:
+                raise MetricValidationError(
+                    f"指标归属日非法：{metric_date!r}（非真实日历日：{exc}）"
+                ) from exc
+        self._metric_date = metric_date
         self._campaigns: dict[str, Campaign] = {}
         self._ticks: dict[str, int] = {}  # external_id → get_status 调用次数
         self._by_idempotency: dict[str, str] = {}
@@ -107,8 +141,10 @@ class SimulatedPlatform:
             conversions=int(clicks * rng.betavariate(2, 20)),
             impressions=impressions,
             clicks=clicks,
-            platform_timestamp=1700000000.0,  # 固定时间戳：逐字节可复现
+            platform_timestamp=_PLATFORM_TIMESTAMP,  # 固定时间戳：逐字节可复现
             data_version=self._data_version,
+            # 归属日：缺省取自身固定时间戳的 UTC 日期（同源、可复现）；显式注入推进跨日夹具
+            metric_date=self._metric_date or _utc_date_of(_PLATFORM_TIMESTAMP),
         )
 
     def pause(self, external_id: str) -> None:

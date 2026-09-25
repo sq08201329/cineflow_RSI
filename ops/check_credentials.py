@@ -121,7 +121,8 @@ ADAPTER_HINTS = {
         has_from_env=True,
         extra=(
             "生产回流链路亦会构造它："
-            "uv run python ops/ingest_metrics.py --round-id <round> --dsn $CINEFLOW_PG_DSN"
+            "uv run python ops/ingest_metrics.py --source real --round-id <round> "
+            "--dsn $CINEFLOW_PG_DSN"
             "（缺凭证即报错退出，不静默回落模拟平台）"
         ),
     ),

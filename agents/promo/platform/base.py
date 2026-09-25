@@ -4,7 +4,9 @@
 错误统一映射 PlatformError 族，不泄漏 SDK/HTTP 异常类型。
 """
 
+import re
 from dataclasses import dataclass, field
+from datetime import date
 from enum import StrEnum
 from typing import Protocol
 
@@ -69,7 +71,17 @@ class Campaign:
 
 @dataclass(frozen=True)
 class MetricSnapshot:
-    """指标快照：平台真值（写入即冻结为常数）。"""
+    """指标快照：平台真值（写入即冻结为常数）。
+
+    `metric_date`（功能 020）是**归属日**——平台指标所描述的日期（ISO `YYYY-MM-DD`），
+    周期归属的唯一依据。它**末位可选**（`None` = 平台未提供）：数据类不承担必填，
+    理由是兼容历史落盘 payload 的 dict 重建（`agents/promo/evaluators/platform_metrics.py`）；
+    **存在性检查与格式检查落在写入路径**（本模块的 `validate_metrics` + 两个适配器的
+    采集出口）——历史 payload 重建不会构造期抛错，而**新采集写入路径产生 `None` 的次数恒 0**。
+
+    命名约束（不得复用）：`platform_timestamp` 是**真值产生时刻**（语义不变）、
+    `data_version` 是**平台数据版本**；三者**不等同**（迟到/回补时归属日与平台时间戳必然不同）。
+    """
 
     ctr: float
     completion_rate: float
@@ -78,10 +90,18 @@ class MetricSnapshot:
     clicks: int
     platform_timestamp: float
     data_version: str
+    metric_date: str | None = None
 
 
-def validate_metrics(snapshot: MetricSnapshot) -> None:
-    """指标越界校验（FR-006）：比率 ∈ [0,1]、计数 ≥ 0，越界拒绝。"""
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_metric_ranges(snapshot: MetricSnapshot) -> None:
+    """指标越界校验（FR-006）：比率 ∈ [0,1]、计数 ≥ 0，越界拒绝。
+
+    只做**值域**校验、**不**检查归属日存在性——读取/重建路径（历史 payload 无该键）
+    必须继续可用（存在性检查只在写入路径强制，见 `validate_metrics`）。
+    """
     for name in ("ctr", "completion_rate"):
         value = getattr(snapshot, name)
         if not 0.0 <= value <= 1.0:
@@ -90,6 +110,32 @@ def validate_metrics(snapshot: MetricSnapshot) -> None:
         value = getattr(snapshot, name)
         if not isinstance(value, int) or value < 0:
             raise MetricValidationError(f"{name} 非法：{value}（必须为 ≥ 0 的整数）")
+
+
+def validate_metrics(snapshot: MetricSnapshot) -> None:
+    """**写入路径**校验：值域（同 `validate_metric_ranges`）+ 归属日存在性/格式。
+
+    缺失 ⇒ `MetricValidationError`「平台未提供指标归属日」；形态非法/非真实日历日
+    ⇒「指标归属日非法：…」。调用点 = 两个适配器的采集出口与回流写入
+    （`agents/promo/{ingest,daily}.py`）；读取/重建路径走 `validate_metric_ranges`。
+    """
+    validate_metric_ranges(snapshot)
+    metric_date = snapshot.metric_date
+    if metric_date is None:
+        raise MetricValidationError(
+            "平台未提供指标归属日（metric_date）：归属日是周期归属的唯一依据，缺失即失败、"
+            "不以拉取/采集时刻兜底——该条不落锚点、不落日级回流记录"
+        )
+    if not isinstance(metric_date, str) or not _ISO_DATE_RE.fullmatch(metric_date):
+        raise MetricValidationError(
+            f"指标归属日非法：{metric_date!r}（必须为 ISO 日期 YYYY-MM-DD）"
+        )
+    try:
+        date.fromisoformat(metric_date)
+    except ValueError as exc:
+        raise MetricValidationError(
+            f"指标归属日非法：{metric_date!r}（非真实日历日：{exc}）"
+        ) from exc
 
 
 class PlatformAdapter(Protocol):

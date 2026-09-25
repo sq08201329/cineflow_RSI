@@ -1,4 +1,4 @@
-"""每周信度报告（功能 010 US2 契约 C6；功能 020 起口径进产物，契约 C5）。
+"""每周信度报告（功能 010 US2 契约 C6；功能 020 起口径进产物 + 按轮并留存零覆盖）。
 
 build_report 从台账（ledger/{agent_id}/{evaluator_id}.jsonl）取本周期记录，
 产出 `reports/{period}-{run_id}.json`（**同周期多轮并留存、零覆盖**；缺省 `run_id`
@@ -9,12 +9,18 @@ build_report 从台账（ledger/{agent_id}/{evaluator_id}.jsonl）取本周期�
 窗口口径（`window_semantics` / `period_days` / `window{start,end,period_days}` /
 `window_semantics_change_date` / `note`）随产物回写：口径**取值域外一律拒绝落盘**，
 跨"口径变更日"的窗口在 `note` 显式标注（禁止静默比较两段不同口径的窗口）。
+
+**零覆盖（功能 020，契约 C3/C5 的产物层规则）**：任何**已存在**路径
+（轮级报告与兼容别名**同规则**）的改写一律抛错——同内容重复调用是幂等的（不写、不报错），
+内容不同则拒绝（"后写覆盖前写"次数恒 0）；兼容别名因此只在**首次**落盘时写出，此后永不改写。
+"同周期多轮"的每轮各落 `reports/{period}-{run_id}.json` ⇒ 文件数 == 轮数、两者都保留。
 """
 
 import json
 from datetime import date
 from pathlib import Path
 
+from core.calibration.errors import CalibrationReportConflictError
 from core.calibration.periods import WINDOW_SEMANTICS, cadence_of, period_start, period_window
 from core.evaluators.errors import ValidationError
 
@@ -59,6 +65,22 @@ def latest_report_path(data_dir: str | Path, period: str) -> Path | None:
     return alias if alias.is_file() else None
 
 
+def _current_record(records: list[dict], period: str, run_id: str | None) -> dict | None:
+    """取本周期**本轮**的台账行（"同周期取末行" → "**按轮并留存**"）。
+
+    `run_id` 给定时优先取 `round_id == run_id` 的行（本轮证据）；历史行无 `round_id`
+    或该轮无行 ⇒ 退回本周期末行（兼容 010 落地前的历史台账，如实呈现而不静默空报告）。
+    """
+    scoped = [record for record in records if record.get("period") == period]
+    if not scoped:
+        return None
+    if run_id is not None:
+        matched = [record for record in scoped if record.get("round_id") == run_id]
+        if matched:
+            return matched[-1]
+    return scoped[-1]
+
+
 def _window_of(period: str) -> tuple[int, date, date]:
     """窗口端点：`period_days` + 半开 `[start, start + period_days)`（端点只来自 periods）。"""
     period_days = cadence_of(period)
@@ -92,6 +114,9 @@ def build_report(
     既有四键（`period`/`agents`/`target`/`alerts`）**逐字保留**；窗口口径键
     （`period_days`/`window_semantics`/`window_semantics_change_date`/`run_id`/
     `window{start,end,period_days}`/`note`）为功能 020 新增。
+
+    **零覆盖**：目标路径已存在时，同内容 ⇒ 幂等返回既有产物（零字节写入）；
+    内容不同 ⇒ 抛 `CalibrationReportConflictError`（"覆盖成功"路径不存在）。
     """
     if window_semantics != WINDOW_SEMANTICS:
         raise ValidationError(
@@ -119,11 +144,10 @@ def build_report(
                     for line in ledger_file.read_text(encoding="utf-8").splitlines()
                     if line.strip()
                 ]
-                # 本周期最新一条（同周期多轮各自留存于台账，报告按轮落盘故取末行）
-                current = [r for r in records if r.get("period") == period]
-                if not current:
+                # 本周期**本轮**一条（同周期多轮各自留存于台账；报告按轮落盘，两者配对）
+                record = _current_record(records, period, run_id)
+                if record is None:
                     continue
-                record = current[-1]
                 metric, value = _correlation_of(record)
                 meets_target = value is not None and value >= target
                 entry = {
@@ -155,6 +179,14 @@ def build_report(
         "note": _note_of(start_day, open_end, change_date),
     }
     path = report_path(data_dir, period, run_id)
+    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    if path.is_file():
+        if path.read_text(encoding="utf-8") == payload:
+            return report  # 同内容 ⇒ 幂等（零字节写入，mtime 与字节均不变）
+        raise CalibrationReportConflictError(
+            f"信度报告不可改写：{path}（已存在且内容不同）——"
+            "同周期多轮必须各带 run_id 落轮级报告，兼容别名只在首次落盘时写出、此后永不改写"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(payload, encoding="utf-8")
     return report

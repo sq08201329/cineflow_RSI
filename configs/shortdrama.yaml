@@ -77,6 +77,10 @@ replay:
 promo:
   exploration_per_round_usd: 120 # 单轮总预算（投放上限 = 本值 × promo_pilot_ratio）
   promo_pilot_ratio: 0.02 # 单轮 ≤ 总预算 2%（预算门禁，FR-002）
+  # 归属日**必填口径生效日**（功能 020）：该日及之后的真实采集写入路径缺归属日 ⇒ 显式失败、
+  # 该条不落锚点；`created_at` 的日期早于该日的历史行允许按日期回退（如实登记计数）。
+  # 两形态 schema 齐备（缺键即报错，不取码内默认）。
+  attribution_date_required_since: 2026-09-25
   default_model: mock-copy-v1
   materials_per_round: 2
   material_spec:
@@ -407,7 +411,7 @@ calibration:
   self_pairing_exclusions: # 防自循环：平台真值锚点不与自身来源分量配对
     platform_truth: ["human.platform_metrics"]
   drift: # judge 漂移自动检测（功能 012 F7）：滑动窗口基线 + PSI/分位数偏移双维判定
-    window: 3 # 滑动窗口基线周期数（日级外环 → 3 天窗口）
+    window: 3 # 滑动窗口基线周期数（**单位 = cadence 同量纲**：日级 = 3 天、周级 = 3 周）
     buckets: 10 # 分桶数（[0,1] 等宽；须与 010 快照分桶数一致，缺/错即报错）
     psi_threshold: 0.2 # 分布距离（PSI）超阈线：> 该值判漂移（主指标）
     quantile_threshold: 0.1 # 分位数最大位移超阈线（辅指标，p25/p50/p75/p90）

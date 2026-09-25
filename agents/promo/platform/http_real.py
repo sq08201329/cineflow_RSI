@@ -15,7 +15,7 @@ POST {base}/campaigns {"material": {...}, "budget_usd": 5.0, "idempotency_key": 
   幂等：同 key 必返回同一活动（external_id/campaign_id 由平台返回，适配器不编造）
 GET  {base}/campaigns/{id}          → {"status": "created|delivering|delivered|paused|failed"}
 GET  {base}/campaigns/{id}/metrics  → {ctr, completion_rate, conversions, impressions,
-                                        clicks, platform_timestamp, data_version}
+                                        clicks, platform_timestamp, data_version, metric_date}
                                       指标未就绪 → 409
 POST {base}/campaigns/{id}/pause    → 202（已结束/已暂停为无操作）
 GET  {base}/health（只读探测，ops/check_credentials.py 的 PROBE_PATHS 口径）
@@ -52,7 +52,9 @@ GET  {base}/health（只读探测，ops/check_credentials.py 的 PROBE_PATHS 口
 """
 
 import os
+import re
 from dataclasses import asdict
+from datetime import date
 
 from agents.promo.platform.base import (
     Campaign,
@@ -97,6 +99,7 @@ DEFAULT_REQUEST_TIMEOUT_S = 30.0
 # 指标字段（比率 / 计数 / 元数据）——按契约口径声明，缺失或类型不符即 MetricValidationError
 _RATE_FIELDS = ("ctr", "completion_rate")
 _COUNT_FIELDS = ("conversions", "impressions", "clicks")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _status_of(value: object, *, where: str) -> CampaignStatus:
@@ -124,6 +127,26 @@ def _count_of(payload: dict, field: str) -> int:
     value = payload.get(field)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise MetricValidationError(f"指标字段 {field!r} 非 ≥0 整数：{value!r}")
+    return value
+
+
+def _attribution_date_of(payload: dict, *, where: str) -> str:
+    """归属日字段：**缺失即拒**（不补零、不以拉取时刻或 `platform_timestamp` 兜底）。
+
+    格式不符亦拒（ISO `YYYY-MM-DD` + 真实日历日）。
+    """
+    value = payload.get("metric_date")
+    if value is None:
+        raise MetricValidationError(
+            f"平台未提供指标归属日（{where} 缺字段 'metric_date'）：归属日是周期归属的唯一依据，"
+            "缺失即拒、不以拉取/采集时刻兜底"
+        )
+    if not isinstance(value, str) or not _ISO_DATE.fullmatch(value):
+        raise MetricValidationError(f"指标归属日非法：{value!r}（必须为 ISO 日期 YYYY-MM-DD）")
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise MetricValidationError(f"指标归属日非法：{value!r}（非真实日历日：{exc}）") from exc
     return value
 
 
@@ -206,7 +229,11 @@ class HttpRealPlatform:
     # ---- 内部 ----
 
     def _snapshot(self, payload: dict, *, where: str) -> MetricSnapshot:
-        """指标快照解析：字段缺失/类型不符即 MetricValidationError（不猜、不补零）。"""
+        """指标快照解析：字段缺失/类型不符即 MetricValidationError（不猜、不补零）。
+
+        **归属日（`metric_date`）缺失即拒**（「平台未提供指标归属日」）：归属日是周期归属的
+        唯一依据，**禁止**以拉取/采集时刻兜底——兜底会把"采集日"混成"归属日"。
+        """
         try:
             timestamp = payload["platform_timestamp"]
             if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
@@ -224,6 +251,7 @@ class HttpRealPlatform:
                 clicks=_count_of(payload, "clicks"),
                 platform_timestamp=float(timestamp),
                 data_version=data_version,
+                metric_date=_attribution_date_of(payload, where=where),
             )
         except KeyError as exc:
             raise MetricValidationError(

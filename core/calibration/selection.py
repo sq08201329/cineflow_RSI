@@ -10,7 +10,8 @@
 """
 
 import json
-from datetime import date
+import re
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from core.calibration.models import CalibrationRound
@@ -24,6 +25,8 @@ BLIND_LIST_KEYS = frozenset({"node_id", "artifact_hash", "round_id"})
 
 # 仅采用人评盲评锚点的 Agent 之外的黑名单（promo 锚点走平台真值回流）
 _NO_BLIND_AGENTS = frozenset({"promo"})
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _period_window(period_start: str, period_end: str, period_days: int) -> tuple[float, float]:
@@ -48,6 +51,28 @@ def _period_window(period_start: str, period_end: str, period_days: int) -> tupl
             f"{(end_day - start_day).days + 1} 天，period_days={period_days}"
         )
     return window_timestamps(start_day, period_days)
+
+
+def _attribution_ts(node) -> float:
+    """节点的**周期归属时刻**（UTC 零点）：归属日优先、缺则按 `created_at` 回退。
+
+    归属日来自节点自描述（`observation_context["metric_date"]`，由
+    `agents/promo/{ingest,daily}.py` 在落节点时写入）。**回退只作用于历史节点**
+    （无该键的既有节点）——它们的归属日未标定，按 `created_at` 的**日期**参与过滤，
+    缺失数由 `agents/promo/daily.py` 的 `attribution_fallback_count` 在覆盖视图
+    `attribution_missing_anchors` 里如实登记（不冒充已标定）。
+
+    为什么等价于逐字节保留周级判定：窗口端点本就是 UTC 零点（`window_timestamps`），
+    故 `start_ts <= <某日 UTC 零点> < end_ts` 与 `start_ts <= node.created_at < end_ts`
+    在 `created_at` 的日期落在窗口内时**完全同真**。
+    """
+    raw = (getattr(node, "observation_context", None) or {}).get("metric_date")
+    if isinstance(raw, str) and _ISO_DATE_RE.fullmatch(raw):
+        try:
+            return datetime.combine(date.fromisoformat(raw), time.min, tzinfo=UTC).timestamp()
+        except ValueError:
+            pass  # 非真实日历日 ⇒ 按 created_at 回退（写入路径已拒，此路只兜历史脏值）
+    return node.created_at
 
 
 def round_path(data_dir: str | Path, agent_id: str, round_id: str) -> Path:
@@ -128,7 +153,7 @@ def build_blind_list(
     candidates = []
     for tree in store.trees_by(agent_id=agent_id):
         for node in store.nodes_of(tree.tree_id):
-            if node.score is None or not start_ts <= node.created_at < end_ts:
+            if node.score is None or not start_ts <= _attribution_ts(node) < end_ts:
                 continue
             if observation_match and not all(
                 node.observation_context.get(key) == value

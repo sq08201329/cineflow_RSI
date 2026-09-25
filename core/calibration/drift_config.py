@@ -1,10 +1,13 @@
-"""漂移检测配置解析（configs/*.yaml → DriftConfig，功能 012 / T1106）。
+"""漂移检测配置解析（configs/*.yaml → DriftConfig，功能 012 / T1106；功能 020：窗口同量纲）。
 
 - 配置即形态：滑动窗口 N / 分桶数 / 双维阈值（PSI + 分位数位移）/ 样本下限 /
   分级处置系数（suspect 降权、confirmed_drift 排除）/ 检测范围 / 双信号规则
   全走 configs（宪章原则五），core 零硬编码；
 - 缺段/缺字段/非法值即报错（CalibrationConfigError）——**不允许静默用默认值**
   （误用默认阈值会让判定口径悄悄变化，违背原则一"口径即版本"）；
+- **功能 020 新增 `period_days`**（取自 `calibration.period_days`，缺项即报错）：
+  `window` 的**单位与 cadence 同量纲**（日级 = 天、周级 = 周），单位经
+  `window_unit` / `thresholds_snapshot()` 写进产物并进制 `detector_version`；
 - scope_kinds 为 evaluator_id 前缀（judge/proxy/rule/human）：默认仅 judge 类，
   proxy/rule 需显式纳入（其分布变化更可能是输入分布变化的镜像，噪声大）；
 - 独立模块（不并入 010 CalibrationConfig）：010 段缺 drift 段仍可用，
@@ -18,6 +21,7 @@ from pathlib import Path
 import yaml
 
 from core.calibration.errors import CalibrationConfigError
+from core.calibration.periods import CADENCE_UNIT, SUPPORTED_CADENCES
 
 _INT_FIELDS = (("window", 1), ("buckets", 2), ("min_samples", 1))
 _POSITIVE_FIELDS = ("psi_threshold", "quantile_threshold")
@@ -94,7 +98,11 @@ class DoubleSignalRule:
 
 @dataclass(frozen=True)
 class DriftConfig:
-    """calibration.drift 段配置（滑动窗口/分桶/双维阈值/样本下限/分级处置/范围/双信号）。"""
+    """calibration.drift 段配置（滑动窗口/分桶/双维阈值/样本下限/分级处置/范围/双信号）。
+
+    `period_days`（功能 020）取自 `calibration.period_days`——**窗口的单位与 cadence 同量纲**
+    （日级 `window: 3` = **3 天**、周级 = 3 周），缺项即报错、不取码内默认。
+    """
 
     window: int
     buckets: int
@@ -105,6 +113,12 @@ class DriftConfig:
     confirmed_exclude: bool
     scope_kinds: tuple
     double_signal: DoubleSignalRule
+    period_days: int
+
+    @property
+    def window_unit(self) -> str:
+        """窗口单位（由 cadence 派生，取值域 `{1: "day", 7: "week"}`）。"""
+        return CADENCE_UNIT[self.period_days]
 
     @classmethod
     def from_dict(cls, config: dict) -> "DriftConfig":
@@ -114,6 +128,19 @@ class DriftConfig:
         if not isinstance(calibration.get("drift"), dict):
             raise CalibrationConfigError("形态配置缺少 calibration.drift 段（映射）")
         section = calibration["drift"]
+
+        # 量纲**必需读取**（取自 calibration.period_days；缺项即报错、不取码内默认）
+        period_days = calibration.get("period_days")
+        if (
+            not isinstance(period_days, int)
+            or isinstance(period_days, bool)
+            or period_days not in SUPPORTED_CADENCES
+        ):
+            raise CalibrationConfigError(
+                "calibration.period_days 缺失或取值域外"
+                f"（漂移窗口单位与 cadence 同量纲，取值域 {SUPPORTED_CADENCES}），"
+                f"实际为 {period_days!r}"
+            )
 
         def req(key):
             if key not in section:
@@ -171,6 +198,7 @@ class DriftConfig:
             confirmed_exclude=confirmed_exclude,
             scope_kinds=tuple(raw_kinds),
             double_signal=DoubleSignalRule.from_dict(req("double_signal")),
+            period_days=period_days,
         )
 
     @classmethod
@@ -183,10 +211,16 @@ class DriftConfig:
         return cls.from_dict(data)
 
     def thresholds_snapshot(self) -> dict:
-        """判定阈值快照（进检测记录 thresholds，供报表与审计自描述口径）。"""
+        """判定阈值快照（进检测记录 thresholds，供报表与审计自描述口径）。
+
+        `window_unit` / `period_days`（功能 020）使**窗口单位与 cadence 同量纲**可见：
+        `window: 3` 在日级形态下是 3 天、周级形态下是 3 周——单位不写清则读者无法判断。
+        """
         return {
             "psi": self.psi_threshold,
             "quantile": self.quantile_threshold,
             "min_samples": self.min_samples,
             "window": self.window,
+            "window_unit": self.window_unit,
+            "period_days": self.period_days,
         }

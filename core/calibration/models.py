@@ -8,16 +8,36 @@
 
 import re
 from dataclasses import dataclass, field, replace
+from datetime import date
 from enum import StrEnum
 
 from core.evaluators.errors import ValidationError
 
 _ARTIFACT_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _require_optional_iso_date(name: str, value: str | None) -> None:
+    """可空归属日校验：非空时必须是**合法且真实存在**的 ISO `YYYY-MM-DD`。"""
+    if value is None:
+        return
+    if not isinstance(value, str) or not _ISO_DATE_RE.fullmatch(value):
+        raise ValidationError(f"{name} 必须为 ISO 日期（YYYY-MM-DD）或 None，实际为 {value!r}")
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValidationError(f"{name} 非法（非真实日历日）：{value!r}（{exc}）") from exc
 
 
 def _require_non_empty(name: str, value: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValidationError(f"{name} 必须为非空字符串")
+
+
+def _require_optional_non_empty(name: str, value: str | None) -> None:
+    if value is None:
+        return
+    _require_non_empty(name, value)
 
 
 def _require_score(name: str, value: float) -> None:
@@ -68,7 +88,13 @@ class ProposalStatus(StrEnum):
 
 @dataclass(frozen=True)
 class AnchorScore:
-    """锚点评分：人评或平台真值对某节点工件的打分，写入即冻结。"""
+    """锚点评分：人评或平台真值对某节点工件的打分，写入即冻结。
+
+    `metric_date`（功能 020）为**末位可选**归属日（= 平台指标所描述的日期）：
+    取可选的理由只有一个——兼容历史 payload 的 dict 重建；存在性检查在**写入路径**
+    （`agents/promo/anchors.py` 的采集出口与 `validate_metrics`），不在数据类上。
+    `human_blind` 行不填该列（该列只对 `source == platform_truth` 有语义）。
+    """
 
     anchor_id: str
     node_id: str
@@ -79,6 +105,7 @@ class AnchorScore:
     reviewer: str
     round_id: str
     created_at: str
+    metric_date: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("anchor_id", self.anchor_id)
@@ -95,6 +122,7 @@ class AnchorScore:
         _require_non_empty("reviewer", self.reviewer)
         _require_non_empty("round_id", self.round_id)
         _require_non_empty("created_at", self.created_at)
+        _require_optional_iso_date("metric_date", self.metric_date)
 
 
 _ROUND_TRANSITIONS = {
@@ -162,7 +190,14 @@ class PairingRecord:
 @dataclass(frozen=True)
 class BiasRecord:
     """单评估器单周期偏差台账行：连续口径（mean_shift + pearson_r）或
-    judge 口径（kendall_tau）；样本不足时不产偏差值并在 note 注明。"""
+    judge 口径（kendall_tau）；样本不足时不产偏差值并在 note 注明。
+
+    功能 020 新增五个**可空**溯源字段（历史行为 `None`，写入端经
+    `core.calibration.ledger.with_provenance` 在 `append_ledger` 之前补全）：
+    `period_days` / `window_semantics` / `round_id`（口径与轮次自描述）、
+    `anchor_count` / `snapshot_fingerprint`（**快照物化的自描述指针**：该周期该评估器
+    计入分布的锚点数 + 所物化快照的指纹，二者配对定位"读的是哪一份"）。
+    """
 
     evaluator_key: str
     period: str
@@ -171,6 +206,11 @@ class BiasRecord:
     pearson_r: float | None = None
     kendall_tau: float | None = None
     note: str = ""
+    period_days: int | None = None
+    window_semantics: str | None = None
+    round_id: str | None = None
+    anchor_count: int | None = None
+    snapshot_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("evaluator_key", self.evaluator_key)
@@ -183,6 +223,37 @@ class BiasRecord:
             raise ValidationError(f"mean_shift 必须为数值，实际为 {self.mean_shift!r}")
         _optional_correlation("pearson_r", self.pearson_r)
         _optional_correlation("kendall_tau", self.kendall_tau)
+        if self.period_days is not None and (
+            not isinstance(self.period_days, int)
+            or isinstance(self.period_days, bool)
+            or self.period_days < 1
+        ):
+            raise ValidationError(
+                f"period_days 必须为 ≥ 1 的整数或 None，实际为 {self.period_days!r}"
+            )
+        _require_optional_non_empty("window_semantics", self.window_semantics)
+        _require_optional_non_empty("round_id", self.round_id)
+        if self.anchor_count is not None:
+            if (
+                not isinstance(self.anchor_count, int)
+                or isinstance(self.anchor_count, bool)
+                or self.anchor_count < 0
+            ):
+                raise ValidationError(
+                    f"anchor_count 必须为 ≥ 0 的整数或 None，实际为 {self.anchor_count!r}"
+                )
+            if self.anchor_count != self.samples:
+                raise ValidationError(
+                    "anchor_count 必须等于 samples（该周期快照所依据的锚点数即本行样本量），"
+                    f"实际为 anchor_count={self.anchor_count} / samples={self.samples}"
+                )
+        if self.snapshot_fingerprint is not None and not _ARTIFACT_HASH_RE.match(
+            self.snapshot_fingerprint
+        ):
+            raise ValidationError(
+                "snapshot_fingerprint 必须为 64 位小写十六进制（BLAKE3）或 None，"
+                f"实际为 {self.snapshot_fingerprint!r}"
+            )
 
 
 @dataclass(frozen=True)

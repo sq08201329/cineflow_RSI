@@ -77,6 +77,10 @@ replay:
 promo:
   exploration_per_round_usd: 500
   promo_pilot_ratio: 0.02 # 单轮 ≤ 总预算 2%（预算门禁，FR-002）
+  # 归属日**必填口径生效日**（功能 020）：该日及之后的真实采集写入路径缺归属日 ⇒ 显式失败、
+  # 该条不落锚点；`created_at` 的日期早于该日的历史行允许按日期回退（如实登记计数）。
+  # 两形态 schema 齐备（缺键即报错，不取码内默认）。
+  attribution_date_required_since: 2026-09-25
   default_model: mock-copy-v1
   materials_per_round: 4
   material_spec:

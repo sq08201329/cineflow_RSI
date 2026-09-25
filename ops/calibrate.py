@@ -401,6 +401,9 @@ def _cmd_drift(args) -> int:
     summary = {
         "period": args.period,
         "detector_version": detector_version(config),
+        # 窗口口径并列可见（功能 020）：单位与 cadence 同量纲
+        "period_days": config.period_days,
+        "window_unit": config.window_unit,
         "detected": detected,
         "registered_suspect": registered,
         "skipped": skipped,

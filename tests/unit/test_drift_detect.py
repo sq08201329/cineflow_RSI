@@ -276,18 +276,23 @@ class Test快照读取与口径:
             "psi",
             "quantile_shifts",
             "samples",
+            "snapshot_fingerprint",  # 功能 020 新增：所读快照的指纹（判定类必非空）
             "thresholds",
             "verdict",
         }
         assert record["evaluator_key"] == _KEY
         assert record["detector_version"].startswith("drift_detector@1.0.0+")
+        # 阈值快照：既有四键**逐字保留**，功能 020 只加 `window_unit` / `period_days` 两键
         assert record["thresholds"] == {
             "psi": 0.2,
             "quantile": 0.1,
             "min_samples": 3,
             "window": 5,
+            "window_unit": "week",
+            "period_days": 7,
         }
         assert set(record["quantile_shifts"]) == {"p25", "p50", "p75", "p90"}
+        assert len(record["snapshot_fingerprint"]) == 64
 
     def test_分桶数与配置不一致报错(self, drift_data_dir, drift_config, drift_sequence_writer):
         drift_sequence_writer("stable", agent_id=_AGENT, evaluator_key=_KEY)

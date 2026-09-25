@@ -216,6 +216,21 @@ class Test差异逐项可归因:
         # ② 运转：漂移窗口单位与 cadence 同量纲（日级 window: 3 ⇒ 量纲 = 天）
         assert CADENCE_UNIT[cadence_of(daily_label)] == "day"
         assert CADENCE_UNIT[cadence_of(weekly_label)] == "week"
+        # ②′ 直接断言（不是经映射间接断言）：DriftConfig 的 period_days / window_unit /
+        # thresholds_snapshot 三处都随 cadence 派生 ⇒ "窗口 3" 在日级下是 3 天（不是 3 周）
+        from core.calibration.drift_config import DriftConfig
+
+        short_drift = DriftConfig.from_yaml(REPO_ROOT / "configs" / "shortdrama.yaml")
+        movie_drift = DriftConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+        assert short_drift.period_days == short.period_days == 1
+        assert movie_drift.period_days == movie.period_days == 7
+        assert short_drift.window_unit == "day"
+        assert movie_drift.window_unit == "week"
+        assert short_drift.thresholds_snapshot()["window_unit"] == "day"
+        assert short_drift.thresholds_snapshot()["period_days"] == 1
+        assert movie_drift.thresholds_snapshot()["window_unit"] == "week"
+        assert movie_drift.thresholds_snapshot()["period_days"] == 7
+        assert short_drift.window == 3  # 窗口数不变，变的是单位（日级 = 3 天）
 
         # ③ 运转：同一日级周期内两轮收口 —— 台账与报告并留存、零覆盖
         from core.calibration.anchors import intake_anchors

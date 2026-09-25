@@ -43,6 +43,16 @@ from core.calibration.drift_stats import (
     quantile_shifts,
 )
 from core.calibration.errors import DriftOutOfScopeError, DriftRecordConflictError
+from core.calibration.ledger import snapshot_fingerprint as fingerprint_of
+from core.calibration.periods import (
+    cadence_of,
+)
+from core.calibration.periods import (
+    period_label as label_of,
+)
+from core.calibration.periods import (
+    period_start as start_of,
+)
 from core.evaluators.errors import ValidationError
 
 DETECTOR_ID = "drift_detector"
@@ -50,37 +60,67 @@ DETECTOR_SEMVER = "1.0.0"
 # 算法标识 = 分布距离口径 + 分位数合并口径（进口径哈希；算法变更必须改此串）
 ALGORITHM = "psi+quantile.merged_weighted_mean.v1"
 
+# 周级标签正则：**逐字节等于** `core.calibration.periods.period_regex(7)`（既有机检常驻）
 _PERIOD_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-_WEEK = timedelta(days=7)
 
 
 def _period_start(period: str) -> date:
-    """周期标签（YYYY-Www）→ ISO 周首日（缺周/非法标签即报错，不禁默解析）。"""
-    match = _PERIOD_RE.match(period) if isinstance(period, str) else None
-    if match is None:
-        raise ValidationError(f"周期标签必须为 YYYY-Www 形态，实际为 {period!r}")
+    """周期标签 → 周期首日（**cadence 由标签形态派生**，不再恒为 ISO 周）。
+
+    标签形态与 cadence 在 `{1,7}` 上双射 ⇒ 本函数无需新增 cadence 参数即可支持日级
+    （`period_days == 1` 时标签是日期）；非法标签/不存在的 ISO 周 ⇒ `ValidationError`。
+    """
+    if not isinstance(period, str):
+        raise ValidationError(f"周期标签必须为字符串，实际为 {period!r}")
     try:
-        return date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1)
-    except ValueError as exc:
-        raise ValidationError(f"周期标签非法（ISO 周不存在）：{period}") from exc
+        cadence = cadence_of(period)  # 非法标签在此报错（不静默解析）
+        return start_of(period, cadence)
+    except ValidationError as exc:
+        raise ValidationError(f"周期标签非法（形态或 ISO 周不存在）：{period!r}（{exc}）") from exc
 
 
-def _period_label(day: date) -> str:
-    iso = day.isocalendar()
-    return f"{iso.year}-W{iso.week:02d}"
+def _period_label(day: date, period_days: int) -> str:
+    """日期 → 周期标签（**由 cadence 派生**：日级 ⇒ 日期、周级 ⇒ ISO 周）。"""
+    return label_of(day, period_days)
+
+
+def _step(period_days: int) -> timedelta:
+    """周期步长（**由 cadence 派生**，不再恒为 7 天）。"""
+    return timedelta(days=period_days)
 
 
 def missing_periods(periods: tuple[str, ...] | list[str]) -> tuple[str, ...]:
-    """序列中缺失的周期标签（相邻周期之间的 ISO 周缺口），升序；不插值不编造。"""
+    """序列中缺失的周期标签（相邻周期之间的缺口），升序；不插值不编造。
+
+    cadence 由标签序列本身派生（同序列必须同量纲，混量纲即报错——不静默比较）。
+    """
     ordered = sorted(periods, key=_period_start)
+    if not ordered:
+        return ()
+    cadence = cadence_of(ordered[0])
     missing: list[str] = []
     for previous, current in zip(ordered, ordered[1:], strict=False):
-        cursor = _period_start(previous) + _WEEK
+        cursor = _period_start(previous) + _step(cadence)
         end = _period_start(current)
         while cursor < end:
-            missing.append(_period_label(cursor))
-            cursor += _WEEK
+            missing.append(_period_label(cursor, cadence))
+            cursor += _step(cadence)
     return tuple(missing)
+
+
+def _require_cadence(period: str, cfg: DriftConfig) -> int:
+    """标签量纲与配置 cadence 必须**一致**（不一致即拒绝静默比较，不猜）。
+
+    机检不变量：`thresholds["period_days"] == cfg.period_days == cadence_of(record.period)`
+    ——"日级形态产出 `window_unit == "week"`"因此不可能发生。
+    """
+    cadence = cadence_of(period)
+    if cadence != cfg.period_days:
+        raise ValidationError(
+            f"周期标签 {period!r} 的 cadence 为 {cadence}，与 calibration.period_days="
+            f"{cfg.period_days} 不一致（窗口单位与 cadence 同量纲：不一致即拒绝静默比较）"
+        )
+    return cadence
 
 
 def kind_of(evaluator_key: str) -> str:
@@ -114,13 +154,16 @@ def _split_key(evaluator_key: str) -> tuple[str, str, str]:
 
 
 def metric_hash(cfg: DriftConfig) -> str:
-    """口径哈希：算法标识 + 窗口 + 分桶 + 双维阈值 + 样本下限 + 检测范围。
+    """口径哈希：算法标识 + **周期量纲** + 窗口 + 分桶 + 双维阈值 + 样本下限 + 检测范围。
 
     不含处置侧参数（suspect_weight / confirmed_exclude / double_signal）——那些属于
     门禁与报表口径，不改变"如何判漂移"；判定口径变更必须体现为新 detector_version。
+    `period_days` 进口径 ⇒ **日级与周级不共用同一口径版本**（窗口同量纲可追溯，
+    口径变更即新版本、历史判定不回溯）。
     """
     payload = {
         "algorithm": ALGORITHM,
+        "period_days": cfg.period_days,
         "buckets": cfg.buckets,
         "window": cfg.window,
         "psi_threshold": cfg.psi_threshold,
@@ -369,6 +412,7 @@ def detect_drift(
     """
     _split_key(evaluator_key)
     _period_start(period)
+    _require_cadence(period, cfg)
     if not in_scope(evaluator_key, cfg):
         raise DriftOutOfScopeError(
             f"评估器 {evaluator_key} 的类别 {kind_of(evaluator_key)!r} 未纳入漂移检测范围"
@@ -391,6 +435,8 @@ def detect_drift(
     shifts: dict[str, float] = {}
     baseline_ref: str | None = None
     note_parts: list[str] = []
+    # 所读快照的指纹：**只有判定类**（normal|drift）登记（标注类一律 None，见 C4/T2041⑧）
+    read_fingerprint: str | None = None
 
     if snapshot is None:
         verdict = DriftVerdict.NO_DATA
@@ -431,6 +477,9 @@ def detect_drift(
             if triggered:
                 verdict = DriftVerdict.DRIFT
                 note_parts.append(f"{triggered}；检测只判分布变化，不判原因（需结合人评锚点）")
+        if verdict in (DriftVerdict.NORMAL, DriftVerdict.DRIFT):
+            # 判定类必须登记**所读快照的指纹**："读的是哪一份"可追溯（契约 C4）
+            read_fingerprint = fingerprint_of(snapshot)
 
     if gap_note:
         note_parts.append(gap_note)
@@ -449,6 +498,7 @@ def detect_drift(
         baseline_ref=baseline_ref,
         thresholds=thresholds,
         note="；".join(note_parts),
+        snapshot_fingerprint=read_fingerprint,
     )
     write_record(data_dir, metrics)
     return metrics

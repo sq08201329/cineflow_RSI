@@ -167,6 +167,7 @@ class TestC1一轮检测:
             "psi",
             "quantile_shifts",
             "samples",
+            "snapshot_fingerprint",  # 功能 020 新增：所读快照的指纹（判定类必非空）
             "thresholds",
             "verdict",
         }
@@ -186,6 +187,8 @@ class TestC2口径版本化:
         upgraded = DriftConfig.from_dict(
             {
                 "calibration": {
+                    # 量纲必需读取（功能 020：漂移窗口单位与 cadence 同量纲）
+                    "period_days": 7,
                     "drift": {
                         "window": 5,
                         "buckets": 10,
@@ -201,7 +204,7 @@ class TestC2口径版本化:
                             "base_level": "warning",
                             "escalated_level": "critical",
                         },
-                    }
+                    },
                 }
             }
         )
@@ -502,6 +505,9 @@ class TestC7双信号与附注:
             target=0.6,
             window_semantics=calibration.window_semantics,
             window_semantics_change_date=calibration.window_semantics_change_date,
+            # 功能 020：已存在路径**永不改写**（零覆盖）⇒ 同周期第二轮必须带轮标识
+            # （否则轮级报告数量无法表达"轮数"，且"后写覆盖前写"会被拒绝）
+            run_id="round-1",
         )
 
         escalated = build_report(_PERIOD, drift_config, drift_data_dir)
@@ -521,6 +527,7 @@ class TestC7双信号与附注:
             target=0.6,
             window_semantics=calibration.window_semantics,
             window_semantics_change_date=calibration.window_semantics_change_date,
+            run_id="round-2",
         )
         regular = build_report(_PERIOD, drift_config, drift_data_dir)
         alert = next(alert for alert in regular.alerts if alert["evaluator_key"] == _KEY)

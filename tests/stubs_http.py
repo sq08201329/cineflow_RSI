@@ -487,6 +487,8 @@ class _StubHandler(BaseHTTPRequestHandler):
                     "clicks": 144,
                     "platform_timestamp": 1700000000.0,
                     "data_version": "stub-v1",
+                    # 归属日（功能 020）：平台必须显式给出，缺失即拒（不兜底）
+                    "metric_date": "2026-09-25",
                 }
             )
         self._send_json(200, payload)

@@ -14,10 +14,14 @@ from sqlalchemy import Connection
 from core.calibration.anchors import load_anchors
 from core.calibration.bias import compute_bias
 from core.calibration.config import CalibrationConfig
-from core.calibration.ledger import append_ledger, write_anchor_snapshots
+from core.calibration.ledger import (
+    append_ledger,
+    materialize_anchor_snapshots,
+    with_provenance,
+)
 from core.calibration.models import RoundStatus
 from core.calibration.pairing import pair_anchors
-from core.calibration.periods import iso_week_label, period_label
+from core.calibration.periods import cadence_of, iso_week_label, period_label
 from core.calibration.report import build_report
 from core.calibration.selection import load_round, save_round
 from core.evaluators.errors import ValidationError
@@ -48,6 +52,19 @@ def compute_bias_records(pairs: list, period: str, config: CalibrationConfig) ->
     ]
 
 
+def _with_snapshot_provenance(record, by_evaluator, period_days, round_id, config):
+    """给台账行补全口径与快照溯源（无该评估器快照 ⇒ 锚点数 0、指纹 None，如实标注）。"""
+    materialization = by_evaluator.get(record.evaluator_key.split("@")[0])
+    return with_provenance(
+        record,
+        period_days=period_days,
+        window_semantics=config.window_semantics,
+        round_id=round_id,
+        anchor_count=materialization.anchor_count if materialization else 0,
+        snapshot_fingerprint=(materialization.snapshot_fingerprint if materialization else None),
+    )
+
+
 def close_round(
     store: TreeStore,
     anchors_conn: Connection,
@@ -65,12 +82,19 @@ def close_round(
     pairs = pair_anchors(anchors, store, config.self_pairing_exclusions)
     period = period_label(round_.period_end, config.period_days)
 
-    records = compute_bias_records(pairs, period, config)
+    # 快照 = **周期物化**（主键（评估器, 周期））：先物化取得锚点数与内容指纹，
+    # 再由台账行登记溯源——"内容变了但无人知道"的次数恒为 0（契约 C3）。
+    materializations = materialize_anchor_snapshots(data_dir, round_.agent_id, period, pairs)
+    by_evaluator = {item.evaluator_id: item for item in materializations}
+    period_days = cadence_of(period)
+    records = [
+        _with_snapshot_provenance(record, by_evaluator, period_days, round_.round_id, config)
+        for record in compute_bias_records(pairs, period, config)
+    ]
 
-    # 派生产物同轮次落盘：台账（append-only）+ 锚点分布快照 + 信度报告
+    # 派生产物同轮次落盘：台账（append-only，已带口径与快照溯源）+ 信度报告
     # 报告按**轮标识**落盘（同周期多轮并留存、零覆盖；缺省 run_id 才走兼容别名路径）
     append_ledger(data_dir, round_.agent_id, records)
-    write_anchor_snapshots(data_dir, round_.agent_id, period, pairs)
     report = build_report(
         data_dir,
         period,

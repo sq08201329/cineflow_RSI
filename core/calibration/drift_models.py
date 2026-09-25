@@ -23,6 +23,8 @@ from core.evaluators.errors import ValidationError
 QUANTILE_NAMES = ("p25", "p50", "p75", "p90")
 # 口径版本格式：drift_detector@语义版本+{算法与阈值哈希前 12 位}（哈希长度 12~64）
 _DETECTOR_VERSION_RE = re.compile(r"^drift_detector@\d+\.\d+\.\d+\+[0-9a-f]{12,64}$")
+# 快照指纹：BLAKE3（64 位小写十六进制）
+_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _TOLERANCE = 1e-6
 
@@ -181,8 +183,13 @@ class DriftMetrics:
 
     - verdict ∈ DriftVerdict；判定类必须携带 psi + quantile_shifts + baseline_ref，
       标注类（insufficient/no_baseline/no_data）不得携带指标——"不伪造结论"的模型层约束；
-    - thresholds：本次判定所用阈值快照（口径自描述：psi/quantile > 0，min_samples/window ≥ 1）；
-    - note：如实标注（首周期无基线 / 样本不足 / 序列缺口 / 触发指标）——只陈述不判断。
+    - thresholds：本次判定所用阈值快照（口径自描述：psi/quantile > 0，min_samples/window ≥ 1，
+      功能 020 起另含 `period_days` / `window_unit`——窗口单位与 cadence 同量纲）；
+    - note：如实标注（首周期无基线 / 样本不足 / 序列缺口 / 触发指标）——只陈述不判断；
+    - snapshot_fingerprint（功能 020）：**所读快照的内容指纹**（64 位小写十六进制）；判定类记录
+      由 `detect_drift` **必填**（自描述率 100%、"读的是哪一份"可追溯），如实标注类**必须为 `None`**
+      （模型层禁止标注类冒充已记账的判定溯源）；所读快照的**锚点数**即既有 `samples` 字段
+      （语义澄清为该周期快照所依据的锚点数，不新增重复字段）。
     """
 
     evaluator_key: str
@@ -196,6 +203,7 @@ class DriftMetrics:
     baseline_ref: str | None = None
     thresholds: dict = field(default_factory=dict)
     note: str = ""
+    snapshot_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("evaluator_key", self.evaluator_key)
@@ -225,6 +233,18 @@ class DriftMetrics:
                 raise ValidationError(
                     f"verdict={self.verdict} 不判定，quantile_shifts 必须为空（禁止伪造指标）"
                 )
+            if self.snapshot_fingerprint is not None:
+                raise ValidationError(
+                    f"verdict={self.verdict} 为如实标注类，snapshot_fingerprint 必须为 None"
+                    "（不冒充已记账的判定溯源）"
+                )
+        if self.snapshot_fingerprint is not None and not _FINGERPRINT_RE.match(
+            self.snapshot_fingerprint
+        ):
+            raise ValidationError(
+                "snapshot_fingerprint 必须为 64 位小写十六进制（BLAKE3）或 None，"
+                f"实际为 {self.snapshot_fingerprint!r}"
+            )
         if self.psi is not None:
             _require_number("psi", self.psi, minimum=0.0)
         for name, value in self.quantile_shifts.items():

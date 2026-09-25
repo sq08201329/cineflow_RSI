@@ -19,3 +19,7 @@ class DriftOutOfScopeError(CalibrationError):
 
 class DriftRecordConflictError(CalibrationError):
     """漂移记录已存在且内容不同：只增不改（历史判定不回溯改写）。"""
+
+
+class CalibrationReportConflictError(CalibrationError):
+    """信度报告已存在且内容不同：零覆盖（同周期多轮必须各带轮标识落轮级报告）。"""

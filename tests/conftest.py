@@ -439,11 +439,15 @@ def make_anchor_entry():
 
 @pytest.fixture()
 def make_platform_backfill(campaigns_engine):
-    """promo 回流数据工厂（功能 010）：ingested 运营记录 + 指标快照落库。
+    """promo 回流数据工厂（功能 010 / 020）：ingested 运营记录 + 指标快照落库。
 
     metrics 对齐 ops/ingest_metrics.py 的真实落盘结构：
     {"platform_metrics": MetricSnapshot asdict, "material": {...}}；
     渠道标识取 material.platform，字段可覆盖。
+
+    功能 020：快照**含归属日** `metric_date`（默认 `2026-09-25`）；
+    `legacy=True` 时**去掉该键**（模拟 020 之前的落盘 payload），用于"归属日缺失 ⇒
+    按 created_at 回退并如实登记计数"与"新写入路径不得产生 None"两组机检。
     """
     from sqlalchemy import insert
 
@@ -453,6 +457,7 @@ def make_platform_backfill(campaigns_engine):
 
     def _make(**overrides):
         counter["n"] += 1
+        legacy = bool(overrides.pop("legacy", False))
         snapshot = {
             "ctr": 0.05,
             "completion_rate": 0.6,
@@ -461,8 +466,11 @@ def make_platform_backfill(campaigns_engine):
             "clicks": 50,
             "platform_timestamp": 1000.0 + counter["n"],
             "data_version": "v1",
+            "metric_date": "2026-09-25",
         }
         snapshot.update(overrides.pop("snapshot", {}))
+        if legacy or snapshot.get("metric_date") is None:
+            snapshot.pop("metric_date", None)  # 历史 payload：**键不存在**（不是 None 值）
         material = {
             "platform": "douyin",
             "artifact_hash": f"{counter['n']:064x}",
@@ -3223,6 +3231,8 @@ replay:
 promo:
   exploration_per_round_usd: 500
   promo_pilot_ratio: 0.02
+  # 归属日必填口径生效日（功能 020；缺键即报错，不取码内默认）
+  attribution_date_required_since: 2026-09-25
   default_model: mock-copy-v1
   materials_per_round: 4
   material_spec: {max_copy_chars: 120, poster_size: "1080x1920", max_duration_seconds: 30}

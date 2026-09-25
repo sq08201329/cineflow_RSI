@@ -159,11 +159,14 @@ class TestC6场景1_items齐全:
             set(entry) >= {"psi", "quantile_shifts", "samples"} for entry in judge["metrics"]
         )
         assert judge["baseline"] == "2026-W34..2026-W38"  # 基线引用（最近一条）
+        # 阈值快照：既有四键**逐字保留**，功能 020 只加 `window_unit` / `period_days`
         assert judge["thresholds"] == {
             "psi": 0.2,
             "quantile": 0.1,
             "min_samples": 3,
             "window": 5,
+            "window_unit": "week",
+            "period_days": 7,
         }
         assert judge["status"]["status"] == "normal"  # 未登记 → 默认 normal
         assert judge["dispositions"] == []

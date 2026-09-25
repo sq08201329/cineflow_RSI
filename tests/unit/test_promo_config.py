@@ -38,6 +38,30 @@ class TestPromoConfig:
         with pytest.raises(PromoConfigError, match="sensitive_words"):
             PromoConfig.from_dict(config)
 
+    def test_缺归属日生效日即报错(self):
+        """功能 020：`promo.attribution_date_required_since` 必需读取（缺项即报错）。"""
+        config = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text())
+        del config["promo"]["attribution_date_required_since"]
+        with pytest.raises(PromoConfigError, match="attribution_date_required_since"):
+            PromoConfig.from_dict(config)
+        for bad in ("2026/09/25", "", 20260925):
+            broken = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text())
+            broken["promo"]["attribution_date_required_since"] = bad
+            with pytest.raises(PromoConfigError, match="attribution_date_required_since"):
+                PromoConfig.from_dict(broken)
+
+    def test_缺_cadence_即报错(self):
+        """功能 020：`calibration.period_days`（日级量纲）必需读取、取值域 `{1,7}`。"""
+        config = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text())
+        del config["calibration"]["period_days"]
+        with pytest.raises(PromoConfigError, match="period_days"):
+            PromoConfig.from_dict(config)
+        for bad in (2, 30, "7", True):
+            broken = yaml.safe_load((REPO_ROOT / "configs" / "movie.yaml").read_text())
+            broken["calibration"]["period_days"] = bad
+            with pytest.raises(PromoConfigError, match="period_days"):
+                PromoConfig.from_dict(broken)
+
 
 class TestHttpRealPlatform骨架:
     def test_缺凭证构造即不可用(self, monkeypatch):

@@ -790,6 +790,7 @@ class Test宣发投放协议:
             {"impressions": 12.5},  # 计数非整数（口径不符即拒，不四舍五入）
             {"conversions": True},  # bool 冒充计数
             {"data_version": ""},  # 缺版本
+            {"metric_date": None},  # 归属日缺失（功能 020：缺失即拒、不以采集时刻兜底）
         ],
     )
     def test_指标字段非法_拒绝(self, stub_factory, bad_metrics):
@@ -801,6 +802,7 @@ class Test宣发投放协议:
             "clicks": 144,
             "platform_timestamp": 1700000000.0,
             "data_version": "stub-v1",
+            "metric_date": "2026-09-25",  # 归属日：本条用例只验其它字段的越界/缺失
         }
         base.update(bad_metrics)
         server = stub_factory(metrics_provider=lambda campaign: base)

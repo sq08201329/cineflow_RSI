@@ -3,9 +3,15 @@
 平台回流指标（完播率/CTR/转化）按 configs 权重归一化合成；
 diagnostics 保留原始指标；越界指标校验拒绝；
 human 锚点——产出写入即冻结为常数（deterministic=False 注册例外）。
+
+**读路径 vs 写路径**（功能 020）：本评估器是 010/015 的**读取/重建路径**
+（从落盘 payload 重建 `MetricSnapshot`），故只做**值域**校验
+（`validate_metric_ranges`）——历史 payload 无 `metric_date` 键时重建得 `None`，
+**不抛构造期异常、行仍可计分**；归属日的存在性检查只在**写入路径**强制
+（`validate_metrics`，见 `agents/promo/{ingest,daily}.py`）。
 """
 
-from agents.promo.platform.base import MetricSnapshot, validate_metrics
+from agents.promo.platform.base import MetricSnapshot, validate_metric_ranges
 from core.evaluators.base import (
     ArtifactRef,
     EvalResult,
@@ -51,9 +57,13 @@ class PlatformMetricsEvaluator(Evaluator):
             clicks=int(raw["clicks"]),
             platform_timestamp=float(raw.get("platform_timestamp", 0.0)),
             data_version=str(raw.get("data_version", "")),
+            # 归属日：历史 payload 缺该键 ⇒ None（构造成功，不抛构造期异常）。
+            # 存在性检查只落在**写入路径**（`validate_metrics`）；本评估器是读取/重建路径，
+            # 故只做值域校验（`validate_metric_ranges`），历史行因此仍可计分。
+            metric_date=raw.get("metric_date"),
         )
         try:
-            validate_metrics(snapshot)
+            validate_metric_ranges(snapshot)
         except Exception as exc:
             raise ValidationError(f"回流指标越界拒绝：{exc}") from exc
 

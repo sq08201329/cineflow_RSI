@@ -7,6 +7,10 @@
 
 insert_anchor 是锚点写入的唯一接口：平台真值适配（agents/promo/anchors.py）
 与人评录入共用同一条 INSERT 路径与幂等语义。
+
+归属日（`metric_date`，功能 020）只对平台真值行有语义：本模块的人评录入通道
+**不填**该列（人评的"归属日"即评价发生日，已由 `created_at` 承载，不另造第二套语义），
+故 `intake_anchors` 的行为与行内容**逐字节不变**（该列恒 `NULL`）。
 """
 
 from datetime import UTC, datetime
@@ -23,7 +27,11 @@ from core.tree.models import new_id
 
 
 def insert_anchor(conn: Connection, anchor: AnchorScore) -> bool:
-    """写入一条锚点；同键冲突（唯一约束）→ 返回 False（幂等拒绝），不中断事务。"""
+    """写入一条锚点；同键冲突（唯一约束）→ 返回 False（幂等拒绝），不中断事务。
+
+    `metric_date`（归属日，可空）随行写入：**新采集写入路径必须非空**（`platform_truth`），
+    历史行与 `human_blind` 行为 `NULL`——存储层只冻结、不补值。
+    """
     try:
         with conn.begin_nested():
             conn.execute(
@@ -37,6 +45,7 @@ def insert_anchor(conn: Connection, anchor: AnchorScore) -> bool:
                     reviewer=anchor.reviewer,
                     round_id=anchor.round_id,
                     created_at=anchor.created_at,
+                    metric_date=anchor.metric_date,
                 )
             )
     except IntegrityError:
@@ -45,7 +54,7 @@ def insert_anchor(conn: Connection, anchor: AnchorScore) -> bool:
 
 
 def load_anchors(conn: Connection, round_id: str) -> list[AnchorScore]:
-    """读取一轮的全部锚点（DB 行 → AnchorScore 内存形态）。"""
+    """读取一轮的全部锚点（DB 行 → AnchorScore 内存形态）；归属日 `NULL` 读出 `None`。"""
     from sqlalchemy import select
 
     rows = conn.execute(
@@ -62,6 +71,7 @@ def load_anchors(conn: Connection, round_id: str) -> list[AnchorScore]:
             reviewer=row.reviewer,
             round_id=row.round_id,
             created_at=row.created_at,
+            metric_date=row.metric_date,
         )
         for row in rows
     ]

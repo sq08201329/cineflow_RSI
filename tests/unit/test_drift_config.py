@@ -41,8 +41,12 @@ def _write(tmp_path: Path, data: dict) -> Path:
     return path
 
 
-def _write_drift(tmp_path: Path, drift: dict) -> Path:
-    return _write(tmp_path, {"calibration": {"drift": drift}})
+def _write_drift(tmp_path: Path, drift: dict, *, period_days: int | None = 7) -> Path:
+    """写一份最小形态配置：`calibration.drift` + **cadence**（功能 020 起必需读取）。"""
+    calibration: dict = {"drift": drift}
+    if period_days is not None:
+        calibration["period_days"] = period_days
+    return _write(tmp_path, {"calibration": calibration})
 
 
 def _with(**overrides) -> dict:
@@ -73,12 +77,34 @@ class Test读取真实配置:
         assert rule.escalated_level != rule.base_level  # 级别升级（双信号强化告警）
 
     def test_阈值快照形态(self):
-        assert DriftConfig.from_yaml(MOVIE_YAML).thresholds_snapshot() == {
+        """阈值快照全等断言：功能 020 **只加键不删键**（`window_unit` / `period_days`）。"""
+        snapshot = DriftConfig.from_yaml(MOVIE_YAML).thresholds_snapshot()
+        # 既有四键逐字保留（判定口径未变）
+        assert {key: snapshot[key] for key in ("psi", "quantile", "min_samples", "window")} == {
             "psi": 0.2,
             "quantile": 0.1,
             "min_samples": 3,
             "window": 5,
         }
+        # 新增键：窗口单位与 cadence 同量纲
+        assert snapshot["window_unit"] == "week"
+        assert snapshot["period_days"] == 7
+        assert set(snapshot) == {
+            "psi",
+            "quantile",
+            "min_samples",
+            "window",
+            "window_unit",
+            "period_days",
+        }
+
+    def test_短剧态窗口单位与_cadence_同量纲(self):
+        """短剧态（`period_days: 1`）⇒ `window: 3` 的单位是**天**（不是 3 周）。"""
+        short = DriftConfig.from_yaml(REPO_ROOT / "configs" / "shortdrama.yaml")
+        assert short.period_days == 1
+        assert short.window_unit == "day"
+        assert short.thresholds_snapshot()["window_unit"] == "day"
+        assert short.thresholds_snapshot()["period_days"] == 1
 
     def test_数据目录约定存在(self):
         for sub in ("metrics", "status", "dispositions", "reports"):
@@ -90,6 +116,19 @@ class Test缺段与缺字段:
     def test_缺_calibration_段报错(self, tmp_path):
         path = _write(tmp_path, {"form": "movie"})
         with pytest.raises(CalibrationConfigError, match="calibration"):
+            DriftConfig.from_yaml(path)
+
+    def test_缺_cadence_即报错(self, tmp_path):
+        """T2042：`calibration.period_days` 必需读取 ⇒ 缺项即报错、不取码内默认。"""
+        path = _write_drift(tmp_path, _VALID, period_days=None)
+        with pytest.raises(CalibrationConfigError, match="period_days"):
+            DriftConfig.from_yaml(path)
+
+    @pytest.mark.parametrize("bad", [2, 3, 30, 0, -7, "1", True])
+    def test_cadence_取值域外即报错(self, tmp_path, bad):
+        """取值域只有 `{1, 7}`；其余值（含布尔）一律拒绝、不发明第三档量纲。"""
+        path = _write_drift(tmp_path, _VALID, period_days=bad)
+        with pytest.raises(CalibrationConfigError, match="period_days"):
             DriftConfig.from_yaml(path)
 
     def test_缺_drift_段报错(self, tmp_path):
