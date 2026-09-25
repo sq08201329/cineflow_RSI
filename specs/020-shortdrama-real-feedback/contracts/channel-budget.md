@@ -30,25 +30,38 @@ budget:
       tiers:                   # 019 的扁平 budget.tiers 归位到这里；键 = 环节 id = .chat(stage=)
         screenplay: {limit_usd: 2.0, window: {kind: day}, on_exhausted: refuse, note: "未标定…"}
     media:                     # C 路径投放渠道：**只登记在短剧态**（投放属短剧线 C 路径，movie 不登记）
-      adapter: promo_platform  # 按该渠道**真实装配入口**命名（agents/pilot/backends.py:399-406）
+      adapter: promo_platform  # **权威定名**：本特性投放渠道的 adapter 取值 = `promo_platform`
       bill: {…}                # 投放平台账单导入面（复用 019 的 bill / reconcile，不新造）
       tiers:
         promo_launch: {limit_usd: <未标定>, window: {kind: day}, on_exhausted: refuse, note: "未标定…"}
 ```
 
-- **`adapter` 的取值域与语义不变**（019 原样：该渠道"真实调用面的装配入口"标识）——既有取值
-  `pilot_llm` **原样保留、不重命名**；新增投放渠道按其**真实装配入口**命名（如 `promo_platform`，
-  指向 `agents/pilot/backends.py:399-406`）。渠道解析按**装配入口 id**（C12 的
-  `channel_for_adapter(cfg, adapter_id)`），**歧义即报错**；`adapter` 在快照/报告/运行记录里仍作可读引用
-  （`core/billing/runlog.py` 的 `adapter_ref` 语义不变）。
+**示例占位（不得照抄，不改 019 现形状）**：上例 `media.tiers.promo_launch.limit_usd: <未标定>` 里的尖括号
+取值只是"此处须填**数值**"的位置标记——**实际配置必须写数值**（`limit_usd` > 0、非 bool、有限），并配
+`note: "未标定（…最小规模档）：运营给定后只改本值"`（沿用 019 现形状与"未标定"标注口径，
+`configs/shortdrama.yaml:546-549`）。`<…>` 尖括号占位**不是**合法配置取值，**不得**出现在任何真实配置
+文件里（机检：`configs/*.yaml` 内不出现 `<`/`>` 占位；`BudgetConfigError` 对非数值 `limit_usd` 恒报错）。
+同理，示例里的 `bill: {…}` 表示"019 原样、不展开"，**不是**可照抄的取值。
+
+- **`adapter` 的取值域与语义不变**（019 原样：该渠道"真实调用面的装配入口"标识）；**权威定名**：
+  LLM 渠道沿用既有 `pilot_llm`（**不重命名**），**本特性投放渠道的 `adapter` 取值 = `promo_platform`**
+  （指 `agents/pilot/backends.py:399-406` 的投放适配器装配面；以**配置为权威**，此处给出的是唯一合法定名，
+  **不是**"例如"）。渠道解析按**装配入口 id**（C12 的 `channel_for_adapter(cfg, adapter_id)`），
+  **歧义即报错**；`adapter` 在快照/报告/运行记录里仍作可读引用（`core/billing/runlog.py` 的
+  `adapter_ref` 语义不变）。
   **口径张力（如实登记 + 机检兜住）**：装配入口 id 因此会以字面量出现在装配层
   （`agents/pilot/backends.py`）、而它同时是配置取值。故加一条静态断言：**代码里传出的 adapter id 必须
-  能在两形态之一的 `budget.channels.*.adapter` 声明中逐字找到**——改配置的 adapter 取值即须同步改装配点，
-  反之新增装配入口而不登记配置即红。
+  能在两形态配置的 `budget.channels.*.adapter` 声明中逐字找到**（本特性的两个取值即 `pilot_llm` /
+  `promo_platform`）——改配置的 adapter 取值即须同步改装配点，反之新增装配入口而不登记配置即红。
 - `ChannelSpec` 扩 **1** 键：`tiers`（必填非空映射，键 = 环节 id）；`core/billing/budget.py:1016` 的
   `_parse_channels` 逐键校验：缺 `tiers`、`tiers` 为空、`adapter` 缺失或为空串、`tiers` 内某档缺
   `limit_usd` / `window.kind` / `on_exhausted` 一律 `BudgetConfigError`（**缺项即报错、不取码内默认**，FR-014）；
-  `bill` 与档位 `note` 的口径可追溯纪律逐字沿用 019（`core/billing/budget.py:1081-1084`）。
+  档位 `note` 的口径可追溯纪律逐字沿用 019（`core/billing/budget.py:1081-1084`）。
+- **每个登记渠道必须声明 `bill`（账单导入面）**：形状**复用 019 不新造**——格式 id + 来源形态
+  （`export|api`）+ 语义列映射 + 分类驱动列取值域（`line_kind` → 六类、`amount_sign` → 符号），
+  缺任一键即 `BudgetConfigError`。**投放渠道的 `bill` 面因此可用**：账单导入 → 逐项对账 → 差异分类与
+  告警全部走 019 的 `core/billing/bill.py:321` 与 `core/billing/reconcile.py:233`（验证序列见
+  `quickstart.md` 的 B6），**不新造第二套对账**。
 - **最小规模档 = 该渠道投放环节档位的 `limit_usd`**（不新增额度键）：未标定期间该档即"最小规模档"
   （019 现状注释口径，如短剧态各档 `note` 均标"未标定：运营给定前按最小规模档运行"，`configs/shortdrama.yaml:546-549`）；
   扩量仍是 `raise_tier`（C16）。
@@ -173,7 +186,9 @@ budget:
     `channel_id` 由 `channel_for_adapter(cfg, "pilot_llm")` 解析而来（该形态配置里 LLM 渠道的 adapter 取值
     现为 `pilot_llm`）；`spend_guard=` / `channel_id=` / `peak_windows=` 注入点
     `agents/pilot/backends.py:289-291` 不变。
-  - **投放面**：`agents/pilot/backends.py:399-406` 的 `_promo` 真实分支 → 外层包**投放调用门禁包装**
+  - **投放面**：`agents/pilot/backends.py:399-406` 的 `_promo` 真实分支 → 先
+    `channel_for_adapter(cfg, "promo_platform")` 解析出投放渠道（未登记 ⇒ 报错，不猜），再外层包
+    **投放调用门禁包装**
     （新增 `core/billing/runlog.py` 的 `RecordingChannelCall`，与既有 `RecordingGateway`
     `core/billing/runlog.py:313` 同构、**同处无第二份实现**）：包装在 `create_campaign(...)` **之前**
     取门禁判定、之后结算并落一条运行记录（`source` 由装配面声明，见 C18）；预算拒绝与实测超预估
@@ -182,7 +197,8 @@ budget:
 - **CLI（薄转发，判定全在 `core/`）**：
   - `ops/billing.py:102-110` 的 `_channel_of` 改为**按声明渠道集合分派**：requested ∈ 声明的渠道 id 集
     （`[spec.channel_id for spec in declared_channels(cfg)]`）⇒ 用之；否则 `BudgetConfigError` ⇒
-    **退出码 2**，错误文案**必须保留「不一致」子串**（`tests/contract/test_billing_contracts.py:1291` 依存）。
+    **退出码 2**，错误文案**必须保留「不一致」子串**（`tests/contract/test_billing_contracts.py:1290`
+    的调用点；断言在其下一行，同一用例）。
   - `tiers` 的档位行渲染改 `cfg.tiers_of(channel_id)`（`ops/billing.py:119`）；`calibrate` 的缺档判定改
     `cfg.tier_of(channel_id, args.tier)`（`ops/billing.py:172`，错误文案保留环节名）。
   - 新增只读子命令 `uv run python ops/billing.py channels [--config configs/*.yaml]`：声明渠道集合 →
@@ -200,6 +216,15 @@ budget:
 - **movie 与短剧两条装配路径各自跑通**：movie（单渠道 + 默认模拟）与短剧（`llm` + `media`，投放面
   默认模拟）都能装配；movie 上不因未登记投放渠道而失败（见 C11）。
 - `core/` 与 `agents/` 内**不得**出现渠道 id 字面量（`channel_id == "…"` 形态，纯度断言常驻）。
+- **形态字面量守卫面的落差与补齐（本契约的判断项）**：既有守卫
+  `tests/unit/test_form_switch.py:309` 的**形态字面量**扫描面**显式排除 `agents/pilot`**
+  （`:310-312`：`if "pilot" not in path.parts`——该层允许**读**形态值），而形态**判断**分支扫描面
+  （`:319-324`）是**全覆盖**的（含 `agents/pilot`）。本特性恰在 `agents/pilot/backends.py` **新增渠道
+  解析**，故登记：该处的渠道/adapter 解析**不得**出现形态字面量、也不得出现形态判断（形态差异只经配置）
+  ——"读形态值"的既有例外**不放宽**为"按形态选择渠道或适配器"。**若既有守卫面不覆盖该文件，则由本特性
+  新增一条断言补齐**（`agents/pilot/backends.py` 的渠道解析路径不含形态字面量与形态判断）；
+  **不得删改既有 `:309` 的扫描口径**（排除面是为"配置读取"留的，动它就是削弱既有断言）。
+  该补齐**不新增分支代码**（原则五）。
 
 ### 反例
 
@@ -287,7 +312,8 @@ budget:
 1. 为让多渠道配置通过而删掉 `--channel nope ⇒ 2` 的断言 ⇒ 红（本表 6 行为硬要求）。
 2. 把 `tier_of` 的缺档错误文案改成不含环节名 ⇒ `tests/contract/test_billing_contracts.py:1274` 断言红
    （文案是契约的一部分）。
-3. 把 `_channel_of` 的未声明文案改成不含「不一致」⇒ `tests/contract/test_billing_contracts.py:1291` 红。
+3. 把 `_channel_of` 的未声明文案改成不含「不一致」⇒ `tests/contract/test_billing_contracts.py:1290`
+   的用例红（同一用例下断言错误文案）。
 4. 顺手把 `billing_alerts.yml` 的 `--channel llm` 改成别的取值以"适配新形状" ⇒ 红（未声明的渠道
    会让每日告警非零退出，且该文件本应一字不改）。
 

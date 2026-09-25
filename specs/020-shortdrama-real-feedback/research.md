@@ -73,6 +73,15 @@ import iso_week_label`），使 `ops/screenplay.py:473`、`ops/dev.py:423`、
 **口径变更日从哪来**：由配置声明（`configs/*.yaml` 的 `calibration` 段新增项，**两形态均须声明、缺项即报错**），
 即"新口径自哪一天起生效"。这样"变更日"是一个**可审计的配置事实**，而不是实现里的隐含假设。
 
+**产物签名的口径（与 C5 对齐，含既有调用点同步）**：`core/calibration/report.py:20` 的
+`build_report(data_dir, period, *, target, window_semantics, window_semantics_change_date, run_id=None)`
+——**两个新增必填关键字参数**（`window_semantics` / `window_semantics_change_date`；**缺任一 ⇒ `TypeError`**
+即机检条件）+ **一个可选** `run_id`（`run_id=None` = **兼容别名路径** `reports/{period}.json` 的显式语义，
+**不是**默认值；给定 ⇒ `reports/{period}-{run_id}.json`；路径规则单点见 C5）。
+**签名是破坏性的，故既有调用点必须同批接线**：`core/calibration/rounds.py:76`（`close_round` 内）与
+`ops/calibrate.py:150`（`report` 子命令）两处 `build_report(...)` 都要补两个口径参，`close_round`
+另接 `run_id=round_.round_id`；不接线即既有路径直接 `TypeError`。
+
 **依据/理由**：① 半开是既有代码的**主口径**——`:28` 的返回注释本身就写 `[start, end)`，只是 `+1 天`
 让实际区间变成 `period_days + 1` 天；故这是**兼容性修正**而非口径重设；② `end - start == period_days`
 是唯一能把"含首尾"错误永久挡住的可机检条件（`SC-002` 明确要求"`period_days + 1` 天窗口出现次数恒为 0"）；
@@ -201,7 +210,7 @@ import iso_week_label`），使 `ops/screenplay.py:473`、`ops/dev.py:423`、
 Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/platform/base.py:79` 的 `MetricSnapshot`
 字段只有 `ctr` / `completion_rate` / `conversions` / `impressions` / `clicks` / `platform_timestamp` /
 `data_version`；`agents/promo/anchors.py:22-28` 的 `_snapshot_created_at` 把 `platform_timestamp` 当
-"真值产生时刻"（缺失才以采集时刻兜底）；`core/calibration/selection.py:108` 的周期窗口按节点
+"真值产生时刻"（缺失才以采集时刻兜底）；`core/calibration/selection.py:108-113` 的周期窗口按节点
 `created_at` 过滤，而回流节点的 `created_at` 取**采集墙钟**（`agents/promo/ingest.py:117` 的 `time.time()`）。
 
 **决策**：
@@ -225,7 +234,7 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
 4. `platform_timestamp` **保持**"平台时间戳（真值产生时刻）"语义；平台真值锚点的 `created_at` **保持**
    平台时间戳、回流节点 `created_at` **保持**采集墙钟；**归属日 / 采集墙钟 / 平台时间戳三者并列可见**
    于报告（SC-003）。
-5. 周期窗口**按归属日过滤**（`core/calibration/selection.py:108` 的过滤键改造）；迟到/回补按**归属日**
+5. 周期窗口**按归属日过滤**（`core/calibration/selection.py:108-113` 的过滤键改造）；迟到/回补按**归属日**
    归入对应周期，**不得**静默改写已冻结的历史锚点。
 6. **兼容**：历史锚点无该字段 ⇒ 允许按 `created_at` 的日期**回退**，并在报告登记"**归属日缺失锚点数**"
    （如实标注）；**新写入不得走回退**。
@@ -247,7 +256,7 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
   的次数恒为 0"），且 `platform_timestamp` 是秒级浮点、语义为"真值产生时刻"。
 - *以 `data_version` 或 `external_id` 派生归属日*：语义错位（前者是数据版本、后者是平台活动 id）。
 - *回退口径也写进新锚点*：新写入必须非空，否则"归属日缺失锚点数"永远降不下来。
-- *把归属日只落在文件（报告/快照）而不落锚点表*：周期窗口过滤发生在 DB 侧（`core/calibration/selection.py:108`
+- *把归属日只落在文件（报告/快照）而不落锚点表*：周期窗口过滤发生在 DB 侧（`core/calibration/selection.py:108-113`
   读的是 010 的锚点候选），文件侧无法参与 ⇒ 见决策 9。
 - *为归属日新增一套"平台字段名"配置项*：把协议字段带进配置面会制造"同一平台多种写法"的配置漂移
   （019 决策 5 已就同类问题作出同一判断）。
@@ -257,7 +266,7 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
 （**注意**：该评估器从 `raw` 字典**重建** `MetricSnapshot`，历史行缺该字段 ⇒ 重建路径必须容忍缺失，
 故字段在数据类上取**末位可选**、存在性检查放在**新写入路径**）、`agents/promo/anchors.py:22-28/57-67`、
 `agents/promo/daily.py`（新增：归属日归入与幂等拒绝的落点）、`agents/promo/ingest.py:33/58/117/130`、
-`core/calibration/selection.py:108`、`core/calibration/models.py:70`、
+`core/calibration/selection.py:108-113`、`core/calibration/models.py:70`、
 `core/calibration/db.py:23`；**夹具与既有用例**见决策 10；契约落点 `contracts/daily-ingest.md` **C7/C8**。
 
 ## 决策 6：019 渠道命名空间与 `sole_channel()` 收敛口径（**穷举全部 `--channel` 调用点**）
@@ -454,7 +463,7 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
 
 ## 决策 9：迁移 `0011_*` = **两件 DDL**（① 锚点表加可空归属日列；② 新表 `promo_daily_metrics`）
 
-**问题**：两件事都需要落库，但今天都没有承载面——① 周期窗口过滤发生在 DB 侧（`core/calibration/selection.py:108`
+**问题**：两件事都需要落库，但今天都没有承载面——① 周期窗口过滤发生在 DB 侧（`core/calibration/selection.py:108-113`
 从 010 的锚点候选里过滤），而 `AnchorScore`（`core/calibration/models.py:70-96`）与锚点表
 （`core/calibration/db.py:23-42`）**都没有**归属日字段（字段面是 `anchor_id` / `node_id` / `artifact_hash` /
 `agent_id` / `source` / `score` / `reviewer` / `round_id` / `created_at`，**无 JSON 列**）；② 日级分片的唯一性键
@@ -502,7 +511,7 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
 - *把归属日写进 `created_at`（用归属日覆盖平台时间戳）*：破坏 `platform_timestamp` 语义（规格 FR-006
   明文要求它保持"真值产生时刻"），且会让"三者并列可见"无法实现。
 - *新增 JSON 列*：见理由⑤。
-- *只落文件（报告/快照）不落库*：周期窗口过滤读的是 DB（`core/calibration/selection.py:108`）。
+- *只落文件（报告/快照）不落库*：周期窗口过滤读的是 DB（`core/calibration/selection.py:108-113`）。
 - **改 `promo_campaigns` 的唯一键为含周期（本决策初稿方案，已由裁决作废）**：该表刻意无触发器
   （`agents/promo/db.py:1-5`）⇒ 冻结纪律无处落地；且改既有唯一键会让运营状态机与历史行一并承担兼容风险。
 - *新增独立表 `anchor_attribution`*：引入第二张表 + 第二套唯一键，且"锚点与归属日"是一对一属性，
@@ -512,7 +521,7 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
   而归属日是**指标所描述的日期**。
 
 **影响面**：`ops/migrations/versions/0011_*.py`（新，两件 DDL）、`core/calibration/db.py:23`、
-`core/calibration/models.py:70-96`、`core/calibration/anchors.py:25-67`、`core/calibration/selection.py:108`、
+`core/calibration/models.py:70-96`、`core/calibration/anchors.py:25-67`、`core/calibration/selection.py:108-113`、
 `agents/promo/anchors.py:22-28/57-67`、`agents/promo/daily.py`（新表的写入面）；
 `tests/integration/` 的迁移套件（**由父代理在宿主上跑**，本计划只登记其存在）；契约落点
 `contracts/daily-ingest.md` **C6/C8**。
@@ -587,6 +596,18 @@ Clarifications 第 11/15 条），但今天**无从取得**：`agents/promo/plat
   见 spec 开放问题 3）；未给定前按"不容断档"运行，缺口逐段如实报出、**不插值**；
 - 该数字**不是本特性发明**：`docs/三期立项书.md:166` 的 G4 行与 `:212` 的周 9~12 里程碑行明写验收
   "短剧线真实数据回流 ≥2 周"。
+- **判定的单一实现（不得两份口径）**：覆盖 ∧ 连续（`meets` / `max_gap_days` / `gaps` / `continuous` /
+  `coverage_shortfall_days` / `gap_shortfall_days`）的**唯一实现**是
+  `core/calibration/periods.py` 的 `coverage_window(days, *, end, min_window_days, gap_tolerance_days)`
+  ——它把 019 `core/billing/runlog.py:226-311` 的口径**纯函数化**（**不 import `core.billing`**，避免 `core` 内
+  新增 `calibration → billing` 耦合；与 `contracts/period-cadence.md:167` 的"同模块追加、不新增模块"一致）。
+  `agents/promo/daily.py` 的 `daily_coverage` **必须委托**它，**禁止**再写第二份 `meets` / `max_gap` 口径。
+- **覆盖视图的键集以 `contracts/daily-ingest.md` C9 为权威**（含 `end` / `period_days` / `window_semantics` /
+  `attribution_based` / `covered_days` / `covered_dates[]` / `gaps[]` / `max_gap_days` / `continuous` /
+  `min_window_days` / `gap_tolerance_days` / `meets` / `coverage_shortfall_days` / `gap_shortfall_days` /
+  `reasons[]` / `days[]`（三时间并列）/
+  `legacy_single_snapshots` / `attribution_missing_anchors` / `evidence_claim` / `note`）——本文与 plan
+  **不复述键清单**，实现时以 C9 现状**逐键**对齐。
 
 **依据/理由**：① 覆盖判定口径（`covered_days ≥ min_window_days` **∧** `max_gap_days ≤ gap_tolerance_days`）
 是 019 已验证的实现（`core/billing/runlog.py:226`），020 只**填配置值**、**不新造判定**；② 把"≥2 周"写成

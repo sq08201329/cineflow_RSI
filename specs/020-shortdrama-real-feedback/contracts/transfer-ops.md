@@ -23,7 +23,8 @@ import `core/calibration/refit.py`（静态断言）——**权重再拟合仍�
 （`ops/calibrate.py:222-252`），迁移只搬结论。
 
 **迁移件形状**（append-only：`{data_dir}/transfers/{transfer_id}.json`，
-`transfer_id = <evaluator_id>-<period>-<source_form>-<target_form>`；**字段名与 `data-model.md`
+`transfer_id` 形状（**模板**，其中的尖括号是**字段拼接位**、不是配置取值）：
+`<evaluator_id>-<period>-<source_form>-<target_form>`；**字段名与 `data-model.md`
 §10「校准结论迁移件（CalibrationTransfer）」逐字对齐**，`target_form` 是 `source_form` 之外的
 **扩展**——目标是本形态，写出来是为了让"短剧数字出现在电影线证据面"这件事**机检可判**）：
 
@@ -177,10 +178,14 @@ calibration:
 - **最小规模档 = 该渠道投放环节档位的 `limit_usd`**（不新增额度键，见 `channel-budget.md` C11）：
   首轮投放申请额 **≤ 该档 `limit_usd`**（未标定期间该档即"最小规模档"，`note` 如实标注），超出 ⇒
   019 门禁**调用前拒绝**并留痕（平台调用 0 次、零入账）。
-- 账单导入与逐项对账**同样复用 019 不重做**：媒体渠道的账单导入面在
-  `budget.channels.<投放渠道>.bill` 声明（格式 id + 列映射 + 分类取值域），走
-  `core/billing/bill.py:321`（`normalize_bill`）与 `core/billing/reconcile.py:233`（`reconcile`）——
-  每条差异带分类与口径备注、未解释项 100% 告警、报告必引账单批次（019 C13 断言不变）。
+- **投放渠道的账单导入面必须声明**：`budget.channels.<投放渠道>.bill`（格式 id + 来源形态 + 语义列映射 +
+  分类驱动列取值域），**形状复用 019 的 `bill`、不新造**；缺任一键即 `BudgetConfigError`（C11）。
+  导入与逐项对账走 `core/billing/bill.py:321`（`normalize_bill`）与 `core/billing/reconcile.py:233`
+  （`reconcile`）——**每条差异带六类之一** + `delta_usd` 实测偏差 + 口径备注，**无分类即不可解释并告警
+  （100%）**，**报告必引账单批次**（`bill_refs[]` 含 `bill_id` + `source`），网关/内部记账**不得**作
+  "成本已核实"的唯一依据（019 C13 断言**不变**、门禁不放松）。
+  **可复制验证序列见 `quickstart.md` 的 B6**（`import-bill --channel media` → `reconcile --channel media`
+  → `alert-check --channel media`；退出码与 019 的 LLM 渠道口径**逐条一致**，只换渠道）。
 - 校准记录**复用 019 不重做**：`core/billing/calibration.py:57`（`CalibrationRecord`）、`:131`
   （`record_calibration`）、`:226`（`load_calibration`）、`:242`（`require_calibration`）、`:295`
   （`calibration_status`）、`:343`（`raise_tier`）；阈值取 `budget.calibration.*`
@@ -250,6 +255,10 @@ uv run python ops/demo_shortdrama_feedback.py                                   
   缺任一项即拒绝（退出码 2），**不取码内默认**；两形态都声明的是**键的 schema 齐备**，取值随形态不同
   （见 C15）。
 
+- **命令行示例约定（示例参数与配置取值严格分开）**：上列命令里 `<>` 包裹的取值（`<dir>` / `<id>` /
+  `<id@version>` / `<周期>` / `<投放环节>` / `<实测>` / `<人>` / `<理由>`）**一律是示例参数**，须替换为实际
+  取值；它们**不是**配置取值，**不得**出现在 `configs/*.yaml` 里（配置里出现 `<`/`>` 占位即视为非法取值，
+  缺项/非法即报错、不取码内默认）。
 - **退出码语义**（沿用既有工具口径：`ops/billing.py:40-41`、`ops/check_credentials.py:16`）：
   `0` 成功（含 `channels` 全就绪、`transfer-report` 无不可迁移项）｜`1` 执行失败或拒绝
   （迁移被拒 / 扩量被拒 / 窗口未达标 / 有告警 / 装配拒绝）｜`2` 用法或配置错误（缺项即报错：

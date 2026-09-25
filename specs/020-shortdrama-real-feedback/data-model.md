@@ -130,17 +130,24 @@ UNSPECIFIED_WINDOW_SEMANTICS = "unspecified" # 历史行回退值（不冒充 ha
 
 ### 3. 日级回流窗口（DailyCoverageWindow，派生视图；复用 019 口径）
 
-由 `core/calibration/periods.py` 的 `coverage_window(...)` 计算（**不 import `core.billing`**，纯函数化复用）：
+由 `core/calibration/periods.py` 的 `coverage_window(...)` 计算（**不 import `core.billing`**，纯函数化复用）；
+**键集以 `contracts/daily-ingest.md` C9 为权威**（下表与 C9 逐键一致，本文件不另立取舍）：
 
 ```
-{start, end, covered_days, covered_dates[], gaps[{from,to,days}], max_gap_days, continuous,
+{end, period_days, window_semantics, attribution_based: true,
+ covered_days, covered_dates[], gaps[{from,to,days}], max_gap_days, continuous,
  min_window_days, gap_tolerance_days, meets, coverage_shortfall_days, gap_shortfall_days, reasons[],
- period_days, window_semantics, days[{metric_date, collected_at, platform_timestamp, source, campaign_id, period}],
- attribution_missing_anchors, evidence_claim, note}
+ days[{metric_date, collected_at, platform_timestamp, source, campaign_id, period}],
+ legacy_single_snapshots, attribution_missing_anchors, evidence_claim, note}
 ```
 
+- **无 `start` 键**（按 C9 取舍）：窗口起始端点由 `days[]` 的最小归属日派生，
+  `covered_dates[0] == min(days[].metric_date)`；`end` 为窗口端点（判定的右端，半开语义见 C2）。
 - **按归属日聚合**：`days[]` 的排序键与去重键都是 `metric_date`（**不是** `collected_at`）；
   `covered_days` **只计 `source == real`** 的归属日（与 `core/billing/runlog.py:263` 的 `covered_dates` 同构）。
+- **判定的唯一实现（U-01）**：`coverage_window` 是"覆盖 ∧ 连续"（`covered_days` / `max_gap_days` / `continuous` /
+  `meets` / `gaps` / `reasons`）的**唯一实现**；`agents/promo/daily.py` 的 `daily_coverage` **必须委托**它，
+  `agents/promo/` 内**不得**自算 `meets` 或 `max_gap_days`（静态断言见 C9）。
 - **口径来源**：下限/容差取两形态的 `budget.runs.min_window_days / gap_tolerance_days`（`configs/shortdrama.yaml:600-602`、
   `configs/movie.yaml` 同段；与 FR-002 明文"同构"）。**父级裁决的取值**：短剧态 `min_window_days: 14`
   （立项书 G4 原文"短剧线真实数据回流 ≥2 周"，`docs/三期立项书.md:166`）、电影态 **7**；
@@ -156,6 +163,15 @@ UNSPECIFIED_WINDOW_SEMANTICS = "unspecified" # 历史行回退值（不冒充 ha
 | 字段 | 类型 | 约束 | 来源 | 可空 |
 | --- | --- | --- | --- | --- |
 | `metric_date` | `str \| None`（**末位可选**，默认 `None`） | 非空时必须是合法 ISO `YYYY-MM-DD`（`__post_init__` 校验） | 新采集：`agents/promo/anchors.py:30` `collect_platform_anchors` 从 `snapshot["metric_date"]` 读；历史：`None` | **是**（仅历史行/仅 `human_blind` 行） |
+| `collected_at`（**非本表列**，跨件承载） | Float | `> 0` 的采集墙钟（`time.time()`） | **不在 `calibration_anchors`**：由 `promo_daily_metrics.collected_at` + 覆盖视图 `days[].collected_at` 承载 | 否 |
+
+- **FR-004 的"两项标识"与其承载（跨件登记，U-05）**：FR-004 要求锚点携带**归属日**与**采集墙钟**两项标识。
+  本设计的承载分工是：**归属日**落锚点行（`calibration_anchors.metric_date`，见上表第一行）；
+  **采集墙钟**落 `promo_daily_metrics.collected_at`（该活动该周期那一次采集的墙钟）并在覆盖视图 `days[].collected_at`
+  中可见——**锚点行不新增列**（不把 `collected_at` 复制进 `calibration_anchors`，避免同一事实两处漂移）。
+  两项标识因此**可联合检索**：`calibration_anchors.metric_date`（归属日）
+  ↔ `promo_daily_metrics.(campaign_id, period, collected_at)`（周期 + 采集墙钟），
+  连接键 = `(node_id/period)`；契约面见 `contracts/daily-ingest.md` C7（锚点侧）与 C9（视图侧）。
 
 - **形态（父级裁决）**：保持**末位可选** `metric_date: str | None = None`——为兼容
   `agents/promo/evaluators/platform_metrics.py:46` 的**历史 dict 重建**（该处从 `raw.get(...)` 重建快照，
@@ -233,7 +249,10 @@ UNSPECIFIED_WINDOW_SEMANTICS = "unspecified" # 历史行回退值（不冒充 ha
   `period_days` / `window_semantics` / `window_semantics_change_date` / `run_id` / `window{start,end,period_days}` / `note`。
   `note` 在**窗口跨口径变更日**时必须显式标注该变更日（见 C5）。
 - `build_report(data_dir, period, *, target, window_semantics, window_semantics_change_date, run_id=None)`
-  ——新增三个必填关键字参数（口径与变更日**必须来自形态配置**，`run_id=None` 是"兼容别名路径"的显式语义，不是默认值）。
+  ——**两个新增必填关键字参数**（`window_semantics` / `window_semantics_change_date`，口径与变更日**必须来自形态配置**）
+  + **一个可选参数** `run_id`（默认 `None` = 兼容别名路径 `reports/{period}.json`；给定轮标识则走
+  `reports/{period}-{run_id}.json`）。机检：缺 `target` / `window_semantics` / `window_semantics_change_date`
+  ⇒ `TypeError`（必填在语法层面即失败）；不传 `run_id` ⇒ 走兼容别名路径且**不新增**轮次产物。
 
 ### 8. 漂移产物的窗口口径字段（DriftMetrics / DriftConfig，扩展 012）
 

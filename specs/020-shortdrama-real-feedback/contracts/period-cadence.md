@@ -93,6 +93,8 @@ def _period_window(period_start: str, period_end: str, period_days: int) -> tupl
     [start_ts, end_ts)；不一致（(period_end − period_start) + 1 天 != period_days）⇒ ValidationError。"""
 # core/calibration/selection.py（:82 build_blind_list 增必填 period_days，透传给 _period_window）
 def build_blind_list(store, *, agent_id, period_start, period_end, top_k, data_dir, period_days, ...) -> CalibrationRound: ...
+#   候选过滤点即同文件 :108-113（:108 取窗口端点、:113 `start_ts <= node.created_at < end_ts` 过滤）：
+#   半开修正后该过滤的**端点**随 period_window 改变，周级下与今天逐字节相同（见下"机检断言"）。
 # ops/calibrate.py（:41-44 缺省修正）
 period_end = args.period_end or 今天
 period_start = args.period_start or (今天 − timedelta(days=config.period_days - 1))   # 含首尾跨 period_days 天
@@ -127,7 +129,8 @@ period_start = args.period_start or (今天 − timedelta(days=config.period_day
 - 含首尾口径**只**作为**入参语义**保留（`period_end` 仍是"窗口末日"这个人工输入的日期），窗口端点一律由
   `period_window` 计算；故 CLI 的参数名与语义不变（`ops/calibrate.py` 的 `--period-start/--period-end` 不动），
   只修**缺省值**与实现。
-- 既有周级窗口判定（含 `core/calibration/selection.py:113` 的 `start_ts <= node.created_at < end_ts` 过滤）
+- 既有周级窗口判定（含 `core/calibration/selection.py:108-113`：`:108` 的 `_period_window(...)` 取窗口端点、
+  `:113` 的 `start_ts <= node.created_at < end_ts` 过滤候选节点）
   对周级**零变化**；已落盘的 `rounds/*.json` 与由此产生的产物零回改。
 - `ops/dev.py:347-354` 与 `ops/screenplay.py:388-395` 各有一份同名重复实现：**收敛**到
   `core/calibration/periods.py` 的同一函数（不得留第二份口径），二者产出的 `period_window` 元组与今天逐字节相同。
@@ -170,6 +173,20 @@ def with_provenance(record: BiasRecord, *, period_days: int, window_semantics: s
 `period_days` 写进产物（标签与 cadence 在 `{1,7}` 上双射，生产端仍传配置值），`coverage_window` 把 019 的
 `core/billing/runlog.py:226-311` 口径纯函数化，避免 core 内新增 `calibration → billing` 耦合。
 
+- **`coverage_window` 是"覆盖 ∧ 连续"判定的唯一实现（U-01）**：`covered_days` / `gaps` / `max_gap_days` /
+  `continuous` / `meets` / `coverage_shortfall_days` / `gap_shortfall_days` / `reasons` 的口径**只在本函数内**；
+  `agents/promo/daily.py` 的 `daily_coverage` **必须委托**它（只做 DB ⟶ 归属日集合的取数），
+  `agents/promo/` 与 `ops/` 内**不得**再写第二份 `meets` / `max_gap_days` 口径（静态断言见
+  `contracts/daily-ingest.md` C9）。
+- **日级覆盖视图的键集以 `contracts/daily-ingest.md` C9 为权威**（本处为镜像，逐键一致）：
+  `end` / `period_days` / `window_semantics` / `attribution_based` / `covered_days` / `covered_dates[]` /
+  `gaps[{from,to,days}]` / `max_gap_days` / `continuous` / `min_window_days` / `gap_tolerance_days` / `meets` /
+  `coverage_shortfall_days` / `gap_shortfall_days` / `reasons[]` /
+  `days[{metric_date, collected_at, platform_timestamp, source, campaign_id, period}]` /
+  `legacy_single_snapshots` / `attribution_missing_anchors` / `evidence_claim` / `note`。
+  **无 `start` 键**（按 C9 取舍）：起始端点由 `days[]` 的最小归属日派生。
+
+
 - 快照 payload 既有键**逐字保留**（`agent_id`/`evaluator_id`/`period`/`samples`/`bucket_width`/`buckets`/`quantiles`，
   见 `core/calibration/ledger.py:75-83`），**新增** `period_days` 与 `window_semantics`。
 - cadence 由标签派生（`cadence_of(period)`）⇒ `write_anchor_snapshots` 的既有签名不变，
@@ -179,7 +196,10 @@ def with_provenance(record: BiasRecord, *, period_days: int, window_semantics: s
   由 `core/calibration/rounds.py:74` 的 `append_ledger` 之前经 `with_provenance` 补全。
 - 信度报告路径：`core/calibration/report.py` 新增
   `report_path(data_dir, period, run_id) -> Path` 与 `latest_report_path(data_dir, period) -> Path | None`；
-  `build_report(data_dir, period, *, target, window_semantics, window_semantics_change_date, run_id=None) -> dict`。
+  `build_report(data_dir, period, *, target, window_semantics, window_semantics_change_date, run_id=None) -> dict`
+  ——**两个新增必填**（`window_semantics` / `window_semantics_change_date`）+ **一个可选** `run_id`（默认 `None`
+  = 兼容别名路径 `reports/{period}.json`）。机检：缺 `window_semantics` 或 `window_semantics_change_date`
+  ⇒ `TypeError`（语法层面的必填即失败）；不传 `run_id` ⇒ 兼容别名路径且**不新增**轮次产物。
 
 **机检断言**：
 

@@ -163,6 +163,15 @@ def attribution_fallback_count(anchors_conn, *, required_since: str) -> int:
   （`agents/promo/anchors.py:22-28` 的 `_snapshot_created_at` 不变，`:66` 不变）；回流节点的 `created_at`
   **保持**采集墙钟（`agents/promo/ingest.py:117` 不变）；归属日进 `AnchorScore.metric_date`。
   三者**不等同**（迟到/回补时必然不同）且必须并列可见（见 C9）。
+- **FR-004 的"两项标识"与其承载（跨件登记，U-05）**：FR-004 要求锚点携带**归属日**与**采集墙钟**两项标识。
+  本设计的承载分工（**锚点行不新增 `collected_at` 列**）：
+  ① **归属日**落锚点行 `calibration_anchors.metric_date`（本契约 C7 的字段）；
+  ② **采集墙钟**由 **`promo_daily_metrics.collected_at` + 覆盖视图 `days[].collected_at` 共同承载**
+     （该活动该周期那一次采集的墙钟；锚点行不复制它，避免同一事实两处漂移）。
+  两项标识因此**可联合检索**：`calibration_anchors.metric_date`（归属日）↔
+  `promo_daily_metrics.(campaign_id, period, collected_at)`（周期 + 采集墙钟），连接键 = `period`（与节点 id
+  `{material_id}-node@{period}` 同源）。机检：`calibration_anchors` 的列集合在迁移 0011 后**只多 `metric_date` 一列**
+  （`collected_at` **不在**该表）；锚点行的归属日与 `promo_daily_metrics` 对应行的 `collected_at` 都能取到（两者齐备率 100%）。
 - **迟到/回补**：按其**归属日**归入对应周期；命中已存在的 `(campaign_id, period)` ⇒ 幂等拒绝（C6）；
   该周期的快照若因新锚点而内容变化 ⇒ 按 C3 记账（新台账行携带新指纹）；**已冻结锚点不得改写**（C8）。
 
@@ -276,7 +285,7 @@ def attribution_fallback_count(anchors_conn, *, required_since: str) -> int:
 def daily_coverage(engine, *, end, min_window_days, gap_tolerance_days, period_days) -> dict: ...
 ```
 
-输出键（与 019 `core/billing/runlog.py:226-311` 的 `window_coverage` **同构**，便于对照）：
+输出键（**本块即键集的权威清单**；与 019 `core/billing/runlog.py:226-311` 的 `window_coverage` **同构**，便于对照）：
 
 ```
 {end, period_days, window_semantics, attribution_based: true,
@@ -286,6 +295,18 @@ def daily_coverage(engine, *, end, min_window_days, gap_tolerance_days, period_d
  legacy_single_snapshots, attribution_missing_anchors, evidence_claim, note}
 ```
 
+- **键集权威与镜像**：本清单为**唯一权威**；`data-model.md` 实体 3 与 `contracts/period-cadence.md` 的
+  镜像清单必须与本处**逐键一致**（含 `attribution_based`、`legacy_single_snapshots`；**无** `start`）。
+- **无 `start` 键**：窗口起始端点由 `days[]` 的最小归属日派生（`covered_dates[0] == min(days[].metric_date)`），
+  `end` 为窗口右端（半开语义见 C2）；`period_days` + `window_semantics` 使端点口径自描述。
+- **`attribution_based: true`**：显式声明"本窗口按**归属日**聚合"（不是采集日/平台时间戳）；
+  与该字段为 `false`/缺失的窗口**不可直接比较**（口径不同，如实标注）。
+- **`legacy_single_snapshots`**：历史"一次活动一次快照"的行数（归属日未标定、不参与任何归属日、不计入
+  `covered_days`，见 C6）；与 `attribution_missing_anchors`（锚点侧回退计数，见 C7）**各计各的**，不互相顶替。
+- **判定的唯一实现（U-01）**：`core/calibration/periods.py::coverage_window` 是"覆盖 ∧ 连续"判定的**唯一实现**
+  （`covered_days` / `gaps` / `max_gap_days` / `continuous` / `meets` / `coverage_shortfall_days` /
+  `gap_shortfall_days` / `reasons` 的口径只在该函数内）；`agents/promo/daily.py` 的 `daily_coverage`
+  **必须委托**它——自身只做"DB ⟶ 归属日集合 + 三个阈值"的取数与组装，**不得**重算上述任一量。
 - **聚合键 = 归属日**：`days[]` 按 `metric_date` 排序去重；`covered_days` 只计 `source == "real"` 的归属日；
   同一归属日的多条记录合并为一条 `days[]` 条目（`platform_timestamp` 取该日**最新**一次读取值、
   `collected_at` 取该日**最晚**采集墙钟，并保留 `sources` 计数以便"模拟不得冒充真实"的机检）。
@@ -301,6 +322,9 @@ def daily_coverage(engine, *, end, min_window_days, gap_tolerance_days, period_d
   DB 行（`promo_daily_metrics`）与三时间字段的读取面。**为什么不在信度报告里逐条列三时间**：
   `core/calibration/report.py:20` 的 `build_report` 是**文件层**函数（只读台账、无 DB 连接），
   与 019 把 `window_coverage` 放在**读账本的一侧**（`core/billing/runlog.py:226`）同一取舍。
+- **FR-004 的"采集墙钟"在此可见（跨件登记，U-05）**：`days[].collected_at` 就是 FR-004 要求锚点携带的
+  **采集墙钟**的承载面之一（另一承载 = `promo_daily_metrics.collected_at`）；
+  锚点行**不新增** `collected_at` 列，故本视图是"锚点 ↔ 采集墙钟"的唯一并列面（详见 C7 的跨件条目）。
 - **信度报告与台账行承载的是"归属周期 + 快照溯源"**：台账行携带 `period` / `period_days` / `round_id` /
   `snapshot_fingerprint` / `anchor_count`（C3），报告 payload 携带 `period` / `period_days` / `window{start,end}`；
   与锚点行的 `metric_date`（归属日）+ `created_at`（平台时间戳）、回流行的 `collected_at`（采集墙钟）
@@ -311,6 +335,13 @@ def daily_coverage(engine, *, end, min_window_days, gap_tolerance_days, period_d
 
 - **三时间齐备率 100%**：`days[]` 每条同时含 `metric_date`（非空、ISO 日期）、`collected_at`（float>0）、
   `platform_timestamp`（float>0）三键；缺任一键 ⇒ 红。
+- **键集一致（I-03）**：`data-model.md` 实体 3 与 `contracts/period-cadence.md` 的覆盖视图键清单
+  与本 C9 块**逐键相同**（含 `attribution_based` / `legacy_single_snapshots`、无 `start`）；三处任一键增删 ⇒ 红。
+- **判定的唯一实现（U-01，静态断言）**：`agents/promo/` 与 `ops/` 的**非测试**代码内
+  不得出现自算的 `meets` / `max_gap_days` / `continuous` 口径——即不得出现
+  `min_window_days` 与 `max_gap` 在同一表达式/同一函数内参与比较的写法；`daily_coverage` 必须调用
+  `core/calibration/periods.coverage_window`（AST 断言：`agents/promo/daily.py` 内含该调用，
+  且其函数体内**零**比较运算涉及 `"meets"` / `"max_gap_days"` 字面量）。反向扫描命中即红。
 - **按归属日聚合**：夹具构造"归属日全同、采集日跨 3 天" ⇒ `covered_days == 1`、`days` 长度 `== 1`；
   夹具构造"归属日跨 15 天、采集日全同" ⇒ `covered_days == 15`（聚合键是归属日，不是采集日）。
 - **覆盖 ∧ 连续双条件**：`meets == (covered_days >= min_window_days) ∧ (max_gap_days <= gap_tolerance_days)`；
@@ -397,6 +428,9 @@ def ingest_daily(round_id, store, adapter, engine, config, *, source, metric_dat
   `agents/promo/` 内真实渠道失败路径上"回落并照常计费"的调用点数恒 **0**（静态扫描）。
 - **零真实花费**：以 `simulated` 跑完整日级闭环（含覆盖检查）时，任何真实渠道装配点数恒 **0**
   （沿用 019 的"真实装配点清单常驻断言"纪律）；报告结论必须写成"机制已就绪 / 真实回流待运营"。
+- **覆盖口径单点（U-01 在来源纪律侧的落点）**：`covered_days` / `meets` / `evidence_claim` 上的
+  "真实来源"效应**只**经 `coverage_window` 的入参（归属日集合与 `source` 标注）生效；
+  `agents/promo/` 内**不得**在调用 `coverage_window` 之后再对 `covered_days` / `meets` 做二次判定或修正。
 
 **反例**：
 

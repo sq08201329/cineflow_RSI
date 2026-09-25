@@ -49,15 +49,45 @@ uv run python ops/billing.py channels --config configs/shortdrama.yaml   # 渠�
 uv run python ops/billing.py channels --config configs/movie.yaml        # 渠道集合 llm（**movie 不登记投放渠道**；该路径不因投放渠道失败）
 uv run python ops/billing.py tiers --channel media --config configs/shortdrama.yaml   # 投放渠道档位余量（与 llm 各自独立）
 
-# B5 迁移面（独立脚本 ops/transfer.py；离线：只读既有台账/快照/报告/漂移产物）
-uv run python ops/transfer.py transfer --data-dir calibration \
+# B5 迁移面（独立脚本 ops/transfer.py，四个子命令；离线：只读既有台账/快照/报告/漂移产物）
+uv run python ops/transfer.py transfer         --data-dir calibration \
     --from configs/shortdrama.yaml --to configs/movie.yaml \
-    --evaluator <id@version> --period <周期> --dry-run      # 零落盘预览：逐条可比性条件 + 判定
+    --evaluator <id@version> --period <周期> --dry-run     # 零落盘预览：逐条可比性条件 + 判定
 uv run python ops/transfer.py transfer-confirm --data-dir calibration \
-    --transfer <id> --by <人> --reason <理由>               # 人工两键（只采纳结论，不改权重）
-uv run python ops/transfer.py transfer-report --data-dir calibration
+    --transfer <id> --by <人> --reason <理由>              # 人工两键之一：采纳（**只采纳结论，不改权重**）
+uv run python ops/transfer.py transfer-shelve  --data-dir calibration \
+    --transfer <id> --by <人> --reason <理由>              # 人工两键之一：搁置（零变更；不可迁移件只能走这里）
+uv run python ops/transfer.py transfer-report  --data-dir calibration
                                                             # 无可迁移结论时如实标注「无可迁移结论（来源缺失）」
+
+# B6 投放渠道账单对账（复用 019 的 bill / reconcile 面；不联网、零真实花费、零凭证）
+uv run python ops/billing.py import-bill --channel media --file <账单文件> --bill-id <批次> \
+        --period <周期> --config configs/shortdrama.yaml     # 退出码 0；**批次幂等**：同批次重复导入 ⇒ 1（零部分导入）
+uv run python ops/billing.py reconcile --channel media --period <周期> --bill-id <批次> \
+        --gateway-report <网关账目 JSON> --config configs/shortdrama.yaml
+                                                            # 退出码 0 无告警 / 1 有告警（未解释项或超阈值）
+uv run python ops/billing.py alert-check --channel media --config configs/shortdrama.yaml
+                                                            # 退出码 0/1：只读门禁（报告未解释项 + alerts.jsonl 增量）
 ```
+
+**命令行示例约定**：`<>` 包裹的取值（如 `<账单文件>`、`<批次>`、`<周期>`、`<id@version>`、`<id>`、`<人>`、
+`<理由>`、`<网关账目 JSON>`）一律是**示例参数**，须替换为实际取值——它们**不是**配置取值，配置文件里
+（`configs/*.yaml`）**不得**出现 `<>` 占位（配置写数值/字符串，缺项即报错）。
+
+**渠道 `adapter` 的权威定名（B4 的输出按此核对）**：LLM 渠道沿用既有 `pilot_llm`（**不重命名**）；
+**本特性投放渠道的 `adapter` 取值 = `promo_platform`**（以**配置为权威**；代码侧传出的 adapter id 必须能在
+配置声明里**逐字找到**）。故 B4 两行的期望输出：`--config configs/shortdrama.yaml` ⇒ 渠道 `llm`
+（`adapter = pilot_llm`）+ `media`（`adapter = promo_platform`）；`--config configs/movie.yaml` ⇒ 仅 `llm`
+（`adapter = pilot_llm`，**不登记**投放渠道）。输出里若出现别的 adapter 取值，即配置或装配点被改动，
+应先核对配置（不得在代码里另起名字）。
+
+**B6 的期望结果（与 019 既有 LLM 渠道口径**逐条对齐**，`--channel media` 只是换渠道）**：
+① 报告逐项引用**账单批次**（`bill_refs[]` 含 `bill_id` + `source`；网关/内部记账**不得**作"成本已核实"的
+唯一依据）；② 每条差异带**六类之一**的分类（`计费口径` / `未入账` / `时序错位` / `免费额度与折扣` /
+`币种汇率` / `未结账`）+ `delta_usd` 实测偏差 + 口径备注；③ **无分类 ⇒ `unclassified` ⇒ 不可解释 ⇒ 告警
+100%**（`unexplained_delta`）；④ 超 `budget.reconcile.alert_threshold_usd` ⇒ `delta_over_threshold` 告警；
+⑤ 未识别账单格式 ⇒ 报错且**零落盘**；同批次重复导入 ⇒ 拒绝（幂等）；⑥ **无账单批次即拒绝产出**（不产
+"零差异"报告）；⑦ `alert-check` 有告警 ⇒ 退出码 1（每日只读门禁，同 `billing_alerts.yml` 的口径）。
 
 ## 端到端场景（demo 七步，逐条对应契约）
 
@@ -118,12 +148,12 @@ uv run python ops/transfer.py transfer-report --data-dir calibration
 
 | 契约 | 验证命令 | 成功标准 |
 | --- | --- | --- |
-| C11 渠道命名空间配置形状 + 旧扁平形状兼容读 | `pytest tests/unit/test_billing_channels.py`；`ops/billing.py channels`；demo 步 ① | SC-004 |
+| C11 渠道命名空间配置形状 + 旧扁平形状兼容读 | `pytest tests/unit/test_billing_channels.py`；`ops/billing.py channels`（按 `pilot_llm` / `promo_platform` 核对）；投放渠道 `bill` 面 = B6 的 `import-bill`；demo 步 ① | SC-004 |
 | C12 装配与额度按声明渠道集合分派（含投放接入） | `pytest tests/unit/test_billing_channels.py`；`ops/billing.py tiers --channel media`；demo 步 ②⑤ | SC-004 |
 | C13 019 既有断言不削弱清单 | `pytest tests/contract/test_billing_contracts.py`；`ops/billing.py tiers --channel nope`（⇒ 2）；workflow `.github/workflows/billing_alerts.yml:27` 每日跑 | SC-004 |
 | C14 投放受同一门禁 + 与按轮上限分辨 | `pytest tests/unit/test_billing_channels.py`（超限前置拒绝、两腿可辨）；demo 步 ⑤ | SC-004 |
 | C15 迁移件与可比性判定 | `pytest tests/unit/test_calibration_transfer.py` + `tests/contract/test_calibration_contracts.py`；`ops/transfer.py transfer-report`；demo 步 ⑥ | SC-001/007 |
-| C16 凭证矩阵与最小规模先行 | `pytest tests/unit/test_billing_channels.py`（装配拒绝）；`ops/billing.py calibrate --channel media --from-records`；demo 步 ③④ | SC-004/006 |
+| C16 凭证矩阵与最小规模先行 | `pytest tests/unit/test_billing_channels.py`（装配拒绝）；`ops/billing.py calibrate --channel media --from-records`；`ops/billing.py import-bill/reconcile/alert-check --channel media`（B6：六类分类 + 未解释 100% 告警 + 报告必引批次）；demo 步 ③④ | SC-004/005/006 |
 | C17 CLI / 离线演示与退出码 | `ops/demo_shortdrama_feedback.py`（退出码 0）；各入口 `--help` 0 / `--channel nope` 2 | SC-001 |
 | C18 诚实分层机检 | `pytest tests/unit/test_billing_channels.py`（模拟不计入真实覆盖）；demo 步 ⑦；`ops/billing.py runs` 未达标 ⇒ 1 | SC-001/003 |
 
