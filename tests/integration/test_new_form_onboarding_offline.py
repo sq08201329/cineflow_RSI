@@ -60,6 +60,9 @@ EXISTING_EVALUATOR_NA_REASON = (
 #: 新增插件（B 侧接入面的通用件）的 `impl`
 NEW_PLUGIN_IMPL = "core.evaluators.plugins.artifact_metadata:artifact_metadata"
 NEW_PLUGIN_ID = "rule.artifact_metadata"
+#: 既有模块路径前缀（`core/`**/**`agents/`**/**`ops/`**/**`web/`**/**`dreaming/`**/**`policies/`）：
+#: 接入改动集里出现任一即"触碰既有模块逻辑"（C12 的越界目录表）
+_PROTECTED_PREFIXES = ("core/", "agents/", "ops/", "web/", "dreaming/", "policies/")
 #: 形态无关的零成本网关桩：**只**满足注入槽位存在性，调用即报错并计数
 _FORBIDDEN_LEAF_KEYS = ("impl", "version", "params")
 
@@ -148,15 +151,48 @@ def _introducing_commit(relative: str) -> str:
     return lines[-1] if lines else ""
 
 
+def _rev_parse(ref: str) -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def _in_baseline(ref: str, relative: str) -> bool:
+    """该路径是否**已在基线树内**（"接入侧件已在机制落地提交内"的机检）。"""
+    completed = subprocess.run(
+        ["git", "cat-file", "-e", f"{ref}:{relative}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+#: **机制落地 ref**（B 侧接入清单的基线）：本轮机制批次的落地提交。
+#: **重打纪律**：机制批次再动（改 `core/`/`agents/`/`ops/` 的机制件）⇒ 本 ref 必须随批次前移
+#: 并**重跑**接入清单——否则清单会把机制改动算成接入越界（判据自相矛盾，C12/C13）；
+#: 本仓库此时的落地方式是"机制修复与 B 侧接入**同批提交**"，故以本批为基线时清单为空集
+#: （下方用例同时核"接入侧件确在基线树内"，防"基线取早了把接入改动吃掉"）。
+#: `--mechanism-ref` 与之不同：仍取**引入唯一装配点**的提交（与
+#: `tests/contract/test_form_onboarding_contracts.py` 的 `_mechanism_ref()` 同口径）。
+MECHANISM_LANDED_REF = "75181dc"
+
+
 @pytest.fixture(scope="module")
 def refs() -> dict:
     """两个回溯 ref：**机制起点**（`core/evaluators/plugin.py` 的引入提交）与
-    **机制落地 ref**（= B 侧接入的基线；`ops/demo_form_plugin.py` 的引入提交，I-09）。"""
+    **机制落地 ref**（= B 侧接入的基线，见 `MECHANISM_LANDED_REF`）。"""
     mechanism_start = _introducing_commit("core/evaluators/plugin.py")
-    mechanism_landed = _introducing_commit("ops/demo_form_plugin.py")
+    mechanism_landed = _rev_parse(MECHANISM_LANDED_REF)
     if not mechanism_start or not mechanism_landed:
         pytest.skip("机制侧尚未入库（历史被截断）⇒ 接入清单的基线无法取证")
-    return {"baseline": mechanism_landed, "mechanism": mechanism_start}
+    return {"baseline": MECHANISM_LANDED_REF, "mechanism": mechanism_start}
 
 
 @pytest.fixture()
@@ -273,7 +309,14 @@ class Test接入改动清单:
     """T2163④ / T2167 / T2173：越界为空、append-only、回溯字段齐备、CLI 退出码 0。"""
 
     @pytest.mark.parametrize("form", NEW_FORMS)
-    def test_清单越界为空且只含接入侧新增件(self, form, refs):
+    def test_清单越界为空且接入侧件在基线树内(self, form, refs):
+        """机制落地 ref 之后的接入清单：**零越界**。
+
+        本仓库的落地方式是"机制批次（含薄工厂槽位修复）与 B 侧接入**同批提交**" ⇒ 以该批为
+        基线时清单为**空集**（运行面零改动）。空集不等于"没有管辖"：下方同时核**接入侧件确在
+        基线树内**——若基线被取到接入之前，清单会混进接入改动（`configs/<form>.yaml` 等 A 行），
+        这条就会以"路径不在基线树内"报红，从而防住"基线取早了把接入改动吃掉"。
+        """
         manifest = build_manifest(
             CONFIGS_DIR / f"{form}.yaml",
             refs["baseline"],
@@ -293,7 +336,22 @@ class Test接入改动清单:
         assert not [path for path in paths if path.startswith("ops/")], "ops/** 零改动"
         for change in manifest["changes"]:
             assert change["category"] in {"config", "plugin", "test_doc"}, change
-        assert f"configs/{form}.yaml" in paths
+        # 本仓库的落地方式：机制批次（含薄工厂槽位修复）与 B 侧接入**同批提交** ⇒ 以该批为基线时
+        # 清单只可能剩**未提交的测试/文档改动**（`test_doc` 放行类）；**运行面零改动**。
+        # 出现 `config` / `plugin` / 越界行 ⇒ 说明基线早于接入（或基线之后又改了机制件）⇒ 重打基线。
+        assert not [path for path in paths if path.startswith(_PROTECTED_PREFIXES)], (
+            f"既有模块路径出现在接入改动集：{sorted(paths)}"
+        )
+        assert all(change["category"] == "test_doc" for change in manifest["changes"]), [
+            (change["status"], change["category"], change["path"]) for change in manifest["changes"]
+        ]
+        # 空集/仅测试文档的**可解释性**：接入侧件（本形态配置 + 通用插件）确在基线树内
+        # ——防"基线取早了把接入改动吃掉"（那会让"零越界"变成空话）
+        for relative in (
+            f"configs/{form}.yaml",
+            NEW_PLUGIN_IMPL.split(":", 1)[0].replace(".", "/") + ".py",
+        ):
+            assert _in_baseline(refs["baseline"], relative), f"{relative} 不在基线树内"
 
     @pytest.mark.parametrize("form", NEW_FORMS)
     def test_清单落盘_append_only且可回溯(self, form, refs, tmp_path):
