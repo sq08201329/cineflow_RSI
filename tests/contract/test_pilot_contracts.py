@@ -39,8 +39,14 @@ from agents.storyboard.script import ScriptSegment
 from core.orchestration.dag import build_dag
 from core.orchestration.executor import ExecutionContext, run
 from core.orchestration.models import RunStatus, StageOutcome, StageSpec, StageStatus
+from ops.form_guard import form_branch_patterns, form_literals, violations_in
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# 零形态分支的禁用面**唯一**来自守卫派生面（与 `tests/unit/test_form_switch.py` 同源）：
+# 两处扫描面口径一致（消除"口径分叉"这一既有隐患），新增形态配置自动纳入
+CONFIGS_DIR = REPO_ROOT / "configs"
+FORM_LITERALS = form_literals(CONFIGS_DIR)
+FORM_PATTERNS = form_branch_patterns()
 
 
 class _Cfg:
@@ -467,14 +473,18 @@ class TestC10到C13试水运行:
         short_normalized = json.loads(json.dumps(short["deployment"]))
         short_normalized["spot_check"].pop("pending_alert_days")
         assert normalized == short_normalized
-        # 代码侧零形态分支（core/ 与 agents/ 全量扫描）
+        # 代码侧零形态分支（core/ 与 agents/ 全量扫描）：禁用面与 `tests/unit/test_form_switch.py`
+        # 的 `Test零形态分支静态断言` **同源**（都由 `ops/form_guard.py` 派生，逐字相等）
         offenders = []
         for root in ("core", "agents"):
             for path in (REPO_ROOT / root).rglob("*.py"):
                 if "__pycache__" in path.parts:
                     continue
                 source = path.read_text(encoding="utf-8")
-                for banned in ("shortdrama", '"movie"', "'movie'", "form ==", "form is "):
+                for banned in FORM_LITERALS:
+                    for hit in violations_in(source, banned, path=str(path)):
+                        offenders.append(f"{path}:{hit.hit}")
+                for banned in FORM_PATTERNS:
                     if banned in source:
                         offenders.append(f"{path}:{banned}")
         assert not offenders, offenders

@@ -610,7 +610,7 @@ def _require_duration_consistency(
     """两处时长口径一致（SC-012①）：形态原值、排练档生效值、运行级三处同口径。
 
     - 形态原值：`screenplay.target_duration_min × 60 == editing.target_duration_s`
-      （movie ⇒ 5400 s）；
+      （形态值只作参数透传，不绑定具体形态的取值）；
     - 生效值：排练档覆盖后的 `script_target_minutes × 60 == effective_target_duration_s`；
     - 运行级：`inputs.target_duration_min × 60 == effective_target_duration_s`。
 

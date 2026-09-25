@@ -26,13 +26,17 @@ import re
 
 import yaml
 
+from ops.form_guard import form_branch_patterns, form_literals, violations_in
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "core" / "billing"
 FORMS = ("movie", "shortdrama")
 
-# 形态值字面量（同 tests/unit/test_form_switch.py 的 BANNED_LITERALS 口径）
-FORM_LITERALS = ("shortdrama", '"movie"', "'movie'")
-FORM_PATTERNS = ("form ==", "form==", "form !=", "form!=", "form is ", "form in ")
+# 形态值字面量（同 tests/unit/test_form_switch.py 的 BANNED_LITERALS 口径）：**唯一**来源是
+# `ops/form_guard.py` 的派生面（形态名由 `configs/*.yaml` 的 `form:` + `form_aliases` 派生）
+# ⇒ 零人工常量、副本数恒 1、新增形态自动纳入；判定（词边界/子串）与例外（E1/E2/E3）都在守卫内
+FORM_LITERALS = form_literals(REPO_ROOT / "configs")
+FORM_PATTERNS = form_branch_patterns()
 VENDOR_WORDS = ("deepseek", "openai", "qwen")
 # 注册表内置通用格式键（C2）：**唯一**允许出现在 core/billing/ 内的格式字面量
 FORMAT_WHITELIST = ("csv_lines", "json_lines")
@@ -146,7 +150,9 @@ class Test零形态与厂商字面量:
         for path in _sources():
             source = path.read_text(encoding="utf-8")
             for banned in FORM_LITERALS:
-                assert banned not in source, f"{_rel(path)} 不得出现形态字面量：{banned}"
+                assert not violations_in(source, banned, path=_rel(path)), (
+                    f"{_rel(path)} 不得出现形态字面量：{banned}"
+                )
             for pattern in FORM_PATTERNS:
                 assert pattern not in source, f"{_rel(path)} 不得出现形态判断：{pattern}"
 

@@ -2,6 +2,10 @@
 # 形态即配置：评估器组合与权重在此表达，切换形态零代码改动（宪章原则五）。
 # 参照 docs/CineFlow开发文档.md §7 示例；本特性仅落地 evaluator_weights 骨架，供 US3 读取。
 form: movie
+# 该形态的**其余名称**（英文同义词 + 中文别名）：与 `form` 一起构成静态守卫的「名称面」
+# （`ops/form_guard.py` 的 `form_literals`，由配置派生、零人工常量）。**缺键即报错**：
+# 允许显式空列表 `[]`（本形态暂无别名），但不得省略——省略会让新形态名静默逃逸。
+form_aliases: []
 
 evaluator_weights:
   visual:

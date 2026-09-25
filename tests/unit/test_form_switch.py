@@ -25,8 +25,10 @@ from core.orchestration.models import (
     StageSpec,
     fingerprint_of,
 )
+from ops.form_guard import form_branch_patterns, form_literals, iter_sources, violations_in
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+CONFIGS_DIR = REPO_ROOT / "configs"
 FORMS = ("movie", "shortdrama")
 
 # 同一条链读取的三个预算字段（形态差异的真实来源；阶段代码不认识形态）
@@ -411,25 +413,29 @@ class Test差异逐项可归因:
 
 
 class Test零形态分支静态断言:
-    """SC-002：形态分支零代码——`core/` 与 `agents/` 不含形态字面量分支或 form 判断。"""
+    """SC-002：形态分支零代码——`core/` 与 `agents/` 不含形态字面量分支或 form 判断。
 
-    BANNED_LITERALS = ("shortdrama", '"movie"', "'movie'")
-    BANNED_PATTERNS = ("form ==", "form==", "form !=", "form!=", "form is ", "form in ")
+    形态名与分支模式**唯一**来自 `ops/form_guard.py` 的派生面：形态名由 `configs/*.yaml` 的
+    `form:` + `form_aliases` 派生（新增一份形态配置即**自动**纳入禁令面，见契约 C5/C6）——
+    零人工常量、零副本。扫描面由 `ops.form_guard.iter_sources` 给出（`core/` + `agents/`
+    **含 `agents/pilot`**：020 登记过的盲区已补去）。
+    """
+
+    BANNED_LITERALS = form_literals(CONFIGS_DIR)
+    BANNED_PATTERNS = form_branch_patterns()
 
     def _sources(self, root: str):
-        return sorted(
-            path for path in (REPO_ROOT / root).rglob("*.py") if "__pycache__" not in path.parts
-        )
+        return list(iter_sources(root))
 
     def test_core_与_agents_无形态字面量(self):
-        scanned = self._sources("core") + [
-            path for path in self._sources("agents") if "pilot" not in path.parts
-        ]
+        scanned = self._sources("core") + self._sources("agents")
         assert scanned, "未扫描到源码"
         for path in scanned:
             source = path.read_text(encoding="utf-8")
             for banned in self.BANNED_LITERALS:
-                assert banned not in source, f"{path} 不得出现形态字面量：{banned}"
+                assert not violations_in(source, banned, path=str(path)), (
+                    f"{path} 不得出现形态字面量：{banned}"
+                )
 
     def test_全仓_agents_与_core_无形态判断分支(self):
         # agents/pilot 的配置读取允许读形态值，但同样不得按形态分支
@@ -459,7 +465,9 @@ class Test零形态分支静态断言:
         ]
         assert lines, "渠道解析调用点必须仍在本文件（否则本断言空跑）"
         for banned in self.BANNED_LITERALS:
-            assert banned not in source, f"{path} 不得出现形态字面量：{banned}"
+            assert not violations_in(source, banned, path=str(path)), (
+                f"{path} 不得出现形态字面量：{banned}"
+            )
         for banned in self.BANNED_PATTERNS:
             assert banned not in source, f"{path} 不得出现形态判断：{banned}"
 
