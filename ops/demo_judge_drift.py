@@ -28,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 
+from core.calibration.config import CalibrationConfig  # noqa: E402
 from core.calibration.drift_config import DriftConfig  # noqa: E402
 from core.calibration.drift_gate import (  # noqa: E402
     deploy_evidence_verdict,
@@ -307,7 +308,14 @@ def _report(data_dir, cfg):
             )
         ],
     )
-    reliability = build_reliability_report(data_dir, CURRENT, target=0.6)
+    calibration = CalibrationConfig.from_yaml(MOVIE_YAML)
+    reliability = build_reliability_report(
+        data_dir,
+        CURRENT,
+        target=0.6,
+        window_semantics=calibration.window_semantics,
+        window_semantics_change_date=calibration.window_semantics_change_date,
+    )
     report = build_report(CURRENT, cfg, data_dir)
     _assert(report.items, "报表 items 为空")
     required = {"metrics", "baseline", "thresholds", "status", "dispositions"}

@@ -208,13 +208,17 @@ class Test周校准纳入:
     def test_editing_盲评清单正常产出(self, tree_store, make_tree, make_node, calibration_data_dir):
         """C16 场景 4：editing 不触发 promo 特判拒绝，盲评清单正常落盘。"""
         _editing_tree(tree_store, make_tree, make_node)
+        from datetime import UTC, datetime, timedelta
+
+        today = datetime.now(UTC).date()
         round_ = build_blind_list(
             tree_store,
             agent_id="editing",
-            period_start="2020-01-01",
-            period_end="2030-01-01",
+            period_start=(today - timedelta(days=6)).isoformat(),
+            period_end=today.isoformat(),
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert round_.agent_id == "editing"
         assert len(round_.node_ids) >= 1
@@ -230,6 +234,7 @@ class Test周校准纳入:
                 period_end="2030-01-01",
                 top_k=5,
                 data_dir=calibration_data_dir,
+                period_days=7,
             )
 
 

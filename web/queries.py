@@ -25,6 +25,7 @@ calibration 的 010 信度报告与 012 漂移状态/报表）。任何取数都
 
 import json
 import os
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -51,6 +52,11 @@ _COST_FIELDS = (
 # 工件元信息键的前缀口径：001 无工件元信息列，元信息键取自观测白名单中工件相关键
 # （原则四：只给键不给值；无匹配即空列表，不推断）
 _ARTIFACT_METADATA_PREFIXES = ("material_", "artifact_")
+
+# 010 信度报告的文件名形态：`{period}` 或 `{period}-{run_id}`（两种周期标签：ISO 周 / ISO 日期）
+_CALENDAR_REPORT_NAME = re.compile(
+    r"^(?P<period>\d{4}-W\d{2}|\d{4}-\d{2}-\d{2})(?:-(?P<run_id>.+))?$"
+)
 
 # WHERE 子句按"实际给出的过滤条件"拼装（不写恒真式）：既让两种方言都用上索引，也避开
 # "未类型化 NULL 参数"在 PostgreSQL 上的歧义（实测 AmbiguousParameter: 无法确定参数类型）。
@@ -838,8 +844,57 @@ def _latest_report(directory: Path) -> tuple[Path, dict] | None:
     return latest
 
 
+def _latest_calibration_report_path(calibration_dir: Path, period: str) -> Path | None:
+    """该周期**最新一份** 010 信度报告的路径（与 `core/calibration/report.py::latest_report_path`
+    同一命名规则；web 侧按宪章**零 import 应用层模块**，故只按命名规则定位、不读内容、不写）：
+
+    1. 轮级报告 `reports/{period}-{run_id}.json` 优先，取 **`run_id` 字符串序的末者**
+       （`run_id` 由 `core.tree.models.new_id` 产出，uuid7 时间有序 ⇒ 字符串序 == 写入序）；
+    2. 无轮级报告 ⇒ 回退兼容别名 `reports/{period}.json`；
+    3. 两者皆无 ⇒ `None`（如实报"无报告"，不报错、不编造）。
+
+    与 core 侧的一致性由 `tests/unit/test_web_queries.py` 的同源断言固定（防两处口径漂移）。
+    """
+    reports = calibration_dir / "reports"
+    by_run = (
+        sorted(reports.glob(f"{period}-*.json"), key=lambda path: path.name)
+        if reports.is_dir()
+        else []
+    )
+    if by_run:
+        return by_run[-1]
+    alias = reports / f"{period}.json"
+    return alias if alias.is_file() else None
+
+
+def _calendar_report_periods(calibration_dir: Path) -> list[str]:
+    """报告目录内可解析出的周期标签（`{period}.json` 与 `{period}-{run_id}.json` 两种形状）。"""
+    reports = calibration_dir / "reports"
+    if not reports.is_dir():
+        return []
+    periods = set()
+    for path in reports.glob("*.json"):
+        matched = _CALENDAR_REPORT_NAME.match(path.stem)
+        if matched:
+            periods.add(matched.group("period"))
+    return sorted(periods)
+
+
+def _latest_calibration_report(calibration_dir: Path) -> tuple[Path, dict] | None:
+    """最新周期的**最新一份**信度报告：周期按标签字符串序取末者，周期内经上面的路径规则定位。
+
+    周期标签（ISO 周 `YYYY-Www` / ISO 日期 `YYYY-MM-DD`）零填充 ⇒ 同 cadence 下字符串序 ==
+    时间序（混 cadence 不可比，仅按字符串序确定化，不猜）；无可解析报告 ⇒ `None`。
+    """
+    for period in reversed(_calendar_report_periods(calibration_dir)):
+        path = _latest_calibration_report_path(calibration_dir, period)
+        if path is not None:
+            return path, _load_json(path)
+    return None
+
+
 def _calibration_panel(config: WebConfig) -> dict:
-    found = _latest_report(config.data_dir("calibration") / "reports")
+    found = _latest_calibration_report(config.data_dir("calibration"))
     if found is None:
         return {"period": None, "target": None, "meets": None, "agents": [], "alerts": []}
     _path, report = found

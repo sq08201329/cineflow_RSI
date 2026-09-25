@@ -33,6 +33,8 @@ _CFG = CalibrationConfig.from_dict(
             "bias_threshold": 0.15,
             "reliability_target": 0.6,
             "ridge_lambda": 1.0,
+            "window_semantics": "half_open",
+            "window_semantics_change_date": "2026-09-25",
             "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
         }
     }

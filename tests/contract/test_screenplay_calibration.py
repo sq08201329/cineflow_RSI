@@ -108,6 +108,7 @@ class Test盲评清单:
             period_end=_PERIOD[1],
             top_k=3,
             data_dir=calibration_data_dir,
+            period_days=7,
             observation_match=BLIND_REVIEW_OBSERVATION_MATCH,
         )
         assert round_.agent_id == "screenplay"
@@ -127,6 +128,7 @@ class Test盲评清单:
             period_end=_PERIOD[1],
             top_k=3,
             data_dir=calibration_data_dir,
+            period_days=7,
             observation_match=BLIND_REVIEW_OBSERVATION_MATCH,
         )
         _, blind_list = load_round(calibration_data_dir, round_.round_id)
@@ -148,6 +150,7 @@ class Test盲评清单:
             period_end=_PERIOD[1],
             top_k=3,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         stages = {
             tree_store.get_node(node_id).observation_context["stage"] for node_id in round_.node_ids
@@ -165,6 +168,7 @@ class Test盲评清单:
                 period_end=_PERIOD[1],
                 top_k=3,
                 data_dir=calibration_data_dir,
+                period_days=7,
                 observation_match=["stage"],
             )
 
@@ -186,6 +190,7 @@ class Test信度报告含_judge_条目:
             period_end=_PERIOD[1],
             top_k=3,
             data_dir=calibration_data_dir,
+            period_days=7,
             observation_match=BLIND_REVIEW_OBSERVATION_MATCH,
         )
         entries = [
@@ -205,7 +210,11 @@ class Test信度报告含_judge_条目:
             )
         period = iso_week_label(_PERIOD[1])
         report = build_report(
-            calibration_data_dir, period, target=calibration_config.reliability_target
+            calibration_data_dir,
+            period,
+            target=calibration_config.reliability_target,
+            window_semantics=calibration_config.window_semantics,
+            window_semantics_change_date=calibration_config.window_semantics_change_date,
         )
         screenplay_entries = report["agents"]["screenplay"]
         judge_keys = [key for key in screenplay_entries if key.startswith(_JUDGE_ID)]
@@ -218,7 +227,11 @@ class Test信度报告含_judge_条目:
 
     def test_信度报告落盘(self, calibration_data_dir, calibration_config):
         report = build_report(
-            calibration_data_dir, "2026-W38", target=calibration_config.reliability_target
+            calibration_data_dir,
+            "2026-W38",
+            target=calibration_config.reliability_target,
+            window_semantics=calibration_config.window_semantics,
+            window_semantics_change_date=calibration_config.window_semantics_change_date,
         )
         path = calibration_data_dir / "reports" / "2026-W38.json"
         assert path.is_file()
@@ -235,6 +248,7 @@ class Testpromo特判回归:
                 period_end=_PERIOD[1],
                 top_k=3,
                 data_dir=calibration_data_dir,
+                period_days=7,
             )
 
 

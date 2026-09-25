@@ -2,8 +2,9 @@
 
 - 台账 append-only：两轮追加后首轮行逐字节不变；
 - 最新快照读取（供 US3 提案生效时填 calibration 字段）；
-- 报告 schema 四要素：period / agents / target / alerts；per agent per evaluator 的
-  相关系数 + samples + meets_target；负相关入 alerts；target 来自配置。
+- 报告 schema：既有四要素 period / agents / target / alerts（020 起另加窗口口径键
+  period_days / window_semantics / window_semantics_change_date / run_id / window / note）；
+  per agent per evaluator 的相关系数 + samples + meets_target；负相关入 alerts；target 来自配置。
 """
 
 import json
@@ -81,8 +82,25 @@ class Test信度报告:
 
     def test_schema_四要素与达标口径(self, calibration_data_dir):
         self._seed(calibration_data_dir)
-        report = build_report(calibration_data_dir, "2026-W39", target=0.6)
-        assert set(report) == {"period", "agents", "target", "alerts"}
+        report = build_report(
+            calibration_data_dir,
+            "2026-W39",
+            target=0.6,
+            window_semantics="half_open",
+            window_semantics_change_date="2026-09-25",
+        )
+        assert set(report) == {
+            "period",
+            "agents",
+            "target",
+            "alerts",
+            "period_days",
+            "window_semantics",
+            "window_semantics_change_date",
+            "run_id",
+            "window",
+            "note",
+        }
         assert report["period"] == "2026-W39"
         assert report["target"] == 0.6
         visual = report["agents"]["visual"]
@@ -102,7 +120,13 @@ class Test信度报告:
             "visual",
             [_record("proxy.aesthetic@1.0.0", "2026-W39", r=-0.4, note="负相关")],
         )
-        report = build_report(calibration_data_dir, "2026-W39", target=0.6)
+        report = build_report(
+            calibration_data_dir,
+            "2026-W39",
+            target=0.6,
+            window_semantics="half_open",
+            window_semantics_change_date="2026-09-25",
+        )
         assert report["alerts"] == [
             {"evaluator": "proxy.aesthetic@1.0.0", "reason": "negative_correlation"}
         ]
@@ -115,7 +139,13 @@ class Test信度报告:
             "visual",
             [_record("proxy.aesthetic@1.0.0", "2026-W39", samples=2, note="样本不足")],
         )
-        report = build_report(calibration_data_dir, "2026-W39", target=0.6)
+        report = build_report(
+            calibration_data_dir,
+            "2026-W39",
+            target=0.6,
+            window_semantics="half_open",
+            window_semantics_change_date="2026-09-25",
+        )
         entry = report["agents"]["visual"]["proxy.aesthetic@1.0.0"]
         assert entry["pearson_r"] is None
         assert entry["samples"] == 2
@@ -123,7 +153,13 @@ class Test信度报告:
 
     def test_报告落盘(self, calibration_data_dir):
         self._seed(calibration_data_dir)
-        build_report(calibration_data_dir, "2026-W39", target=0.6)
+        build_report(
+            calibration_data_dir,
+            "2026-W39",
+            target=0.6,
+            window_semantics="half_open",
+            window_semantics_change_date="2026-09-25",
+        )
         path = calibration_data_dir / "reports" / "2026-W39.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
         assert payload["period"] == "2026-W39"
@@ -135,5 +171,11 @@ class Test信度报告:
             "visual",
             [_record("proxy.aesthetic@1.0.0", "2026-W38", r=0.3)],
         )
-        report = build_report(calibration_data_dir, "2026-W39", target=0.6)
+        report = build_report(
+            calibration_data_dir,
+            "2026-W39",
+            target=0.6,
+            window_semantics="half_open",
+            window_semantics_change_date="2026-09-25",
+        )
         assert "visual" not in report["agents"]  # 上周期的记录不进本周期报告

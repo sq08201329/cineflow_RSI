@@ -10,10 +10,11 @@
 """
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import date
 from pathlib import Path
 
 from core.calibration.models import CalibrationRound
+from core.calibration.periods import window_timestamps
 from core.evaluators.errors import ValidationError
 from core.tree.models import new_id
 from core.tree.store import TreeStore
@@ -25,14 +26,28 @@ BLIND_LIST_KEYS = frozenset({"node_id", "artifact_hash", "round_id"})
 _NO_BLIND_AGENTS = frozenset({"promo"})
 
 
-def _period_window(period_start: str, period_end: str) -> tuple[float, float]:
-    """ISO 日期（YYYY-MM-DD，含首尾）→ created_at 秒级窗口 [start, end)。"""
+def _period_window(period_start: str, period_end: str, period_days: int) -> tuple[float, float]:
+    """周期窗口的**秒级**半开区间（客户端适配层）。
+
+    `period_end` 是**含首尾口径的窗口末日**（人工输入的日期语义不变）；
+    窗口端点一律由 `core/calibration/periods.window_timestamps` 计算
+    （半开 `[start, start + period_days)`，UTC 零点对齐）——调用方**不得**自行 `+1 天`。
+    跨度与 cadence 不符（`(period_end − period_start) + 1 天 != period_days`）
+    或起点晚于终点 ⇒ `ValidationError`（禁止静默按任一端口径截断）。
+    """
     try:
-        start = datetime.fromisoformat(period_start).replace(tzinfo=UTC)
-        end = datetime.fromisoformat(period_end).replace(tzinfo=UTC) + timedelta(days=1)
-    except ValueError as exc:
+        start_day = date.fromisoformat(period_start)
+        end_day = date.fromisoformat(period_end)
+    except (TypeError, ValueError) as exc:
         raise ValidationError(f"周期必须为 ISO 日期（YYYY-MM-DD）：{exc}") from exc
-    return start.timestamp(), end.timestamp()
+    if start_day > end_day:
+        raise ValidationError(f"周期起点晚于终点：{period_start} > {period_end}（非空窗口才可判）")
+    if (end_day - start_day).days + 1 != period_days:
+        raise ValidationError(
+            f"窗口跨度与 cadence 不符：{period_start} ~ {period_end} 含首尾跨 "
+            f"{(end_day - start_day).days + 1} 天，period_days={period_days}"
+        )
+    return window_timestamps(start_day, period_days)
 
 
 def round_path(data_dir: str | Path, agent_id: str, round_id: str) -> Path:
@@ -87,6 +102,7 @@ def build_blind_list(
     period_end: str,
     top_k: int,
     data_dir: str | Path,
+    period_days: int,
     round_id: str | None = None,
     observation_match: dict | None = None,
 ) -> CalibrationRound:
@@ -94,6 +110,8 @@ def build_blind_list(
 
     按周期内得分节点 score 降序取 top-k（平分按 node_id 字典序保证确定性）；
     样本不足取实际数量并在 round.note 注明。
+    `period_days` = 形态声明的 cadence（**必填**，不取码内默认）：窗口由此派生为
+    半开 `[start, start + period_days)`；跨度的含首尾天数不符即报错。
     observation_match：观测槽精确匹配过滤（键值全等；通用机制——如剧本线
     `{"stage": "outline"}` 只盲评大纲阶段产出；缺省不过滤）。
     """
@@ -105,7 +123,7 @@ def build_blind_list(
         raise ValidationError(
             f"observation_match 必须为 dict 或 None，实际为 {observation_match!r}"
         )
-    start_ts, end_ts = _period_window(period_start, period_end)
+    start_ts, end_ts = _period_window(period_start, period_end, period_days)
 
     candidates = []
     for tree in store.trees_by(agent_id=agent_id):

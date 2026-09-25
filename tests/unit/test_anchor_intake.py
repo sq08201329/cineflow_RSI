@@ -37,6 +37,7 @@ def round_with_list(tree_store, build_calibration_tree, calibration_data_dir):
         period_end="2026-09-20",
         top_k=5,
         data_dir=calibration_data_dir,
+        period_days=7,
     )
     return round_, node_ids
 

@@ -344,28 +344,25 @@ def _decide(args, *, decision: str) -> int:
     return 0
 
 
-def _period_window(args, days: int) -> tuple[str, str]:
-    from datetime import UTC, datetime, timedelta
+def _period_bounds(args, period_days: int) -> tuple[str, str]:
+    """缺省窗口（含首尾跨 period_days 天）+ 端点校验：口径唯一实现见 `core/calibration/periods`。"""
+    from datetime import UTC, datetime
 
-    period_end = args.period_end or datetime.now(UTC).date().isoformat()
-    period_start = (
-        args.period_start or (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
+    from core.calibration.periods import default_period_bounds
+
+    return default_period_bounds(
+        args.period_start, args.period_end, period_days, today=datetime.now(UTC).date()
     )
-    return period_start, period_end
 
 
-def _period_nodes(dsn: str, period_start: str, period_end: str) -> list:
+def _period_nodes(dsn: str, period_start: str, period_end: str, period_days: int) -> list:
     """窗口内已评估节点（判据材料的取数面：门禁违规率 / 代理分布 / 样本量）。"""
-    from datetime import UTC, datetime, timedelta
-
     from sqlalchemy import create_engine
 
+    from core.calibration.periods import window_timestamps
     from core.tree.store import create_tree_store
 
-    start_ts = datetime.fromisoformat(period_start).replace(tzinfo=UTC).timestamp()
-    end_ts = (
-        datetime.fromisoformat(period_end).replace(tzinfo=UTC) + timedelta(days=1)
-    ).timestamp()
+    start_ts, end_ts = window_timestamps(period_start, period_days)
     store = create_tree_store(create_engine(dsn))
     return [
         node
@@ -388,7 +385,7 @@ def _cmd_evidence(args) -> int:
     )
     from core.calibration.config import CalibrationConfig
     from core.calibration.errors import CalibrationConfigError
-    from core.calibration.rounds import iso_week_label
+    from core.calibration.periods import period_label
 
     data_dir = Path(args.data_dir).expanduser()
     if args.override:
@@ -409,18 +406,18 @@ def _cmd_evidence(args) -> int:
     except (DevConfigError, CalibrationConfigError) as exc:
         return _fail(f"形态配置非法：{exc}", 2)
 
-    period_start, period_end = _period_window(args, calibration.period_days)
+    period_start, period_end = _period_bounds(args, calibration.period_days)
     nodes: list = []
     dsn = _resolve_dsn(args)
     if dsn:
-        nodes = _period_nodes(dsn, period_start, period_end)
+        nodes = _period_nodes(dsn, period_start, period_end, calibration.period_days)
     try:
         evidence = build_upgrade_evidence(args.period, config, nodes=nodes, data_dir=data_dir)
     except UpgradeEvidenceError as exc:
         return _fail(str(exc), 2)
     payload = evidence.to_dict()
     payload["period_window"] = [period_start, period_end]
-    payload["week_label"] = iso_week_label(period_end)
+    payload["week_label"] = period_label(period_end, calibration.period_days)
     payload["continuation_conditions"] = continuation_conditions(evidence.threshold_snapshot)
     print(_json.dumps(payload, ensure_ascii=False, indent=2, default=str))
     return 0

@@ -25,6 +25,8 @@ _CONFIG = CalibrationConfig.from_dict(
             "bias_threshold": 0.15,
             "reliability_target": 0.6,
             "ridge_lambda": 1.0,
+            "window_semantics": "half_open",
+            "window_semantics_change_date": "2026-09-25",
             "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
         }
     }
@@ -50,6 +52,7 @@ def round_with_anchors(tree_store, build_calibration_tree, anchors_engine, calib
         period_end="2026-09-20",
         top_k=5,
         data_dir=calibration_data_dir,
+        period_days=7,
     )
     entries = [
         {"node_id": nid, "score": score, "reviewer": "r1"}
@@ -88,15 +91,22 @@ class Test收口管线:
         assert judge_record["kendall_tau"] is not None
         assert judge_record["mean_shift"] is None  # judge 口径不产 mean_shift
 
-        # 快照与报告落盘
+        # 快照与报告落盘（020：报告按**轮标识**落盘，同周期多轮并留存、零覆盖）
+        from core.calibration.report import latest_report_path, report_path
+
         snapshot = (
             calibration_data_dir / "snapshots" / "visual" / "proxy.aesthetic" / f"{period}.json"
         )
         assert snapshot.is_file()
+        assert latest_report_path(calibration_data_dir, period) == report_path(
+            calibration_data_dir, period, round_.round_id
+        )
+        assert not report_path(calibration_data_dir, period).exists()  # 不写兼容别名即不覆盖
         report = json.loads(
-            (calibration_data_dir / "reports" / f"{period}.json").read_text(encoding="utf-8")
+            report_path(calibration_data_dir, period, round_.round_id).read_text(encoding="utf-8")
         )
         assert report["target"] == 0.6
+        assert report["period_days"] == 7 and report["window_semantics"] == "half_open"
         assert report["agents"]["visual"]["proxy.aesthetic@1.0.0"]["samples"] == 3
 
     def test_closed_轮次不可重复收口(
@@ -128,6 +138,7 @@ class Test收口管线:
             period_end="2026-09-20",
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         entries = [
             {"node_id": nid, "score": s, "reviewer": "r1"}

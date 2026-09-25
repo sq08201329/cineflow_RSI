@@ -425,9 +425,19 @@ class TestC6报表:
             ],
             agent_id=_AGENT,
         )
+        from core.calibration.config import CalibrationConfig
         from core.calibration.report import build_report as build_reliability_report
 
-        build_reliability_report(drift_data_dir, _PERIOD, target=0.6)
+        calibration = CalibrationConfig.from_yaml(
+            Path(__file__).resolve().parents[2] / "configs" / "movie.yaml"
+        )
+        build_reliability_report(
+            drift_data_dir,
+            _PERIOD,
+            target=0.6,
+            window_semantics=calibration.window_semantics,
+            window_semantics_change_date=calibration.window_semantics_change_date,
+        )
 
         report = build_report(_PERIOD, drift_config, drift_data_dir)
         required = {
@@ -471,9 +481,13 @@ class TestC7双信号与附注:
     def test_强化与常规两路径(
         self, drift_data_dir, drift_config, drift_sequence_writer, write_calibration_ledger
     ):
+        from core.calibration.config import CalibrationConfig
         from core.calibration.drift_report import build_report
         from core.calibration.report import build_report as build_reliability_report
 
+        calibration = CalibrationConfig.from_yaml(
+            Path(__file__).resolve().parents[2] / "configs" / "movie.yaml"
+        )
         drift_metrics = _detect(
             drift_data_dir, drift_config, drift_sequence_writer, "mean_shift", only=_PERIOD
         )
@@ -482,7 +496,13 @@ class TestC7双信号与附注:
             [{"evaluator_key": _KEY, "period": _PERIOD, "samples": 12, "kendall_tau": 0.3}],
             agent_id=_AGENT,
         )
-        build_reliability_report(drift_data_dir, _PERIOD, target=0.6)
+        build_reliability_report(
+            drift_data_dir,
+            _PERIOD,
+            target=0.6,
+            window_semantics=calibration.window_semantics,
+            window_semantics_change_date=calibration.window_semantics_change_date,
+        )
 
         escalated = build_report(_PERIOD, drift_config, drift_data_dir)
         alert = next(alert for alert in escalated.alerts if alert["evaluator_key"] == _KEY)
@@ -495,7 +515,13 @@ class TestC7双信号与附注:
             [{"evaluator_key": _KEY, "period": _PERIOD, "samples": 12, "kendall_tau": 0.9}],
             agent_id=_AGENT,
         )
-        build_reliability_report(drift_data_dir, _PERIOD, target=0.6)
+        build_reliability_report(
+            drift_data_dir,
+            _PERIOD,
+            target=0.6,
+            window_semantics=calibration.window_semantics,
+            window_semantics_change_date=calibration.window_semantics_change_date,
+        )
         regular = build_report(_PERIOD, drift_config, drift_data_dir)
         alert = next(alert for alert in regular.alerts if alert["evaluator_key"] == _KEY)
         assert alert["double_signal"] is False

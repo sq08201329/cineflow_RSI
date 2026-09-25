@@ -249,13 +249,17 @@ class Test周校准纳入:
         _storyboard_tree(
             tree_store, make_tree, make_node, children=(_shotlist_dict(make_shotlist),)
         )
+        from datetime import UTC, datetime, timedelta
+
+        today = datetime.now(UTC).date()
         round_ = build_blind_list(
             tree_store,
             agent_id="storyboard",
-            period_start="2020-01-01",
-            period_end="2030-01-01",
+            period_start=(today - timedelta(days=6)).isoformat(),
+            period_end=today.isoformat(),
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert round_.agent_id == "storyboard"
         assert len(round_.node_ids) >= 1
@@ -273,6 +277,7 @@ class Test周校准纳入:
                 period_end="2030-01-01",
                 top_k=5,
                 data_dir=calibration_data_dir,
+                period_days=7,
             )
 
 

@@ -8,18 +8,20 @@
 """
 
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import yaml
 
 from core.calibration.errors import CalibrationConfigError
+from core.calibration.periods import WINDOW_SEMANTICS
 
 _INT_FIELDS = ("period_days", "top_k", "min_samples")
 
 
 @dataclass(frozen=True)
 class CalibrationConfig:
-    """calibration 段配置（周期/盲评 top-k/样本量/阈值/信度目标/收缩强度/自循环排除）。"""
+    """calibration 段配置（周期/盲评 top-k/样本量/阈值/信度目标/收缩强度/自循环排除/窗口口径）。"""
 
     period_days: int
     top_k: int
@@ -27,6 +29,8 @@ class CalibrationConfig:
     bias_threshold: float
     reliability_target: float
     ridge_lambda: float
+    window_semantics: str  # 窗口口径（取值域单元素 half_open；缺项即报错，不取码内默认）
+    window_semantics_change_date: str  # 口径生效日（ISO 日期；缺项即报错）
     self_pairing_exclusions: dict = field(default_factory=dict)
 
     @classmethod
@@ -79,6 +83,29 @@ class CalibrationConfig:
                 f"calibration.ridge_lambda 必须为 ≥ 0 的数值，实际为 {ridge_lambda!r}"
             )
 
+        window_semantics = req("window_semantics")
+        if window_semantics != WINDOW_SEMANTICS:
+            raise CalibrationConfigError(
+                "calibration.window_semantics 取值域单元素"
+                f"（唯一取值 {WINDOW_SEMANTICS!r}），实际为 {window_semantics!r}"
+            )
+        change_date = req("window_semantics_change_date")
+        normalized_change_date = (
+            change_date.isoformat() if isinstance(change_date, date) else change_date
+        )
+        if not isinstance(normalized_change_date, str) or not normalized_change_date:
+            raise CalibrationConfigError(
+                "calibration.window_semantics_change_date 必须为 ISO 日期（YYYY-MM-DD），"
+                f"实际为 {change_date!r}"
+            )
+        try:
+            date.fromisoformat(normalized_change_date)
+        except ValueError as exc:
+            raise CalibrationConfigError(
+                "calibration.window_semantics_change_date 必须为 ISO 日期（YYYY-MM-DD），"
+                f"实际为 {change_date!r}"
+            ) from exc
+
         raw_exclusions = req("self_pairing_exclusions")
         if not isinstance(raw_exclusions, dict):
             raise CalibrationConfigError(
@@ -103,6 +130,8 @@ class CalibrationConfig:
             bias_threshold=float(bias_threshold),
             reliability_target=float(reliability_target),
             ridge_lambda=float(ridge_lambda),
+            window_semantics=window_semantics,
+            window_semantics_change_date=normalized_change_date,
             self_pairing_exclusions=exclusions,
         )
 

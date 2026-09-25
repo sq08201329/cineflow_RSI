@@ -8,7 +8,9 @@
 - **树/节点接口以 DB 为权威源**：字段集与类型与 001 落库 schema 一致
   （`tests/contract/test_web_parity.py` 逐列对齐断言）。
 
-比对纯函数、零 import core/agents/dreaming、不读写任何东西；服务与导出不依赖本模块。
+比对纯函数、零 import core/agents/dreaming、不读写任何东西（唯一例外是
+`panel_report_path` 为定位"该周期最新一份报告"而做 `glob`/`is_file` 的**存在性探测**——
+只探测路径、不读内容、不写任何文件）；服务与导出不依赖本模块。
 差异以可读字符串列表返回（空列表 = 同源成立），调用方据此断言。
 """
 
@@ -25,13 +27,32 @@ _COLLAPSE_FIELDS = ("collapsed", "start_round", "threshold", "window")
 _DRIFT_ALERT_FIELDS = ("evaluator_key", "agent_id", "status", "level", "double_signal", "note")
 
 
+def _latest_calibration_report_path(calibration_dir: Path, period: str) -> Path:
+    """该周期**最新一份** 010 信度报告路径（读取口规则；与 `web/queries.py` 同一命名规则，
+    权威实现在 `core/calibration/report.py::latest_report_path`——web 侧按宪章零 import
+    应用层模块，故此处只做命名规则定位：`glob` + `is_file` 探测，**不读内容、不写文件**）。
+
+    1. 轮级报告 `reports/{period}-{run_id}.json` 优先，取 **`run_id` 字符串序的末者**
+       （`run_id` 为 uuid7 ⇒ 字符串序 == 写入序；不依赖目录遍历顺序与 mtime）；
+    2. 无轮级报告 ⇒ 兼容别名 `reports/{period}.json`（缺失也如实返回该路径，调用方按"无报告"处理）。
+    """
+    reports = calibration_dir / "reports"
+    by_run = (
+        sorted(reports.glob(f"{period}-*.json"), key=lambda path: path.name)
+        if reports.is_dir()
+        else []
+    )
+    return by_run[-1] if by_run else reports / f"{period}.json"
+
+
 def panel_report_path(
     panel: str, config, *, agent_id: str | None = None, period: str | None = None
 ) -> Path:
     """面板 → 既有报告文件（或轮次目录）路径映射（同源比对的输入定位）。
 
     - evolution：`{dreaming}/{agent_id}/`（轮次报告逐文件）；
-    - calibration：`{calibration}/reports/{period}.json`（010）；
+    - calibration：该周期**最新**轮级报告 `{calibration}/reports/{period}-{run_id}.json`
+      （`run_id` 字符串序末者；无轮级报告回退兼容别名 `{calibration}/reports/{period}.json`）；
     - drift：`{calibration}/drift/reports/{period}.json`（012）；
     - lineage：`{policies}/`（005 谱系 meta 目录）。
     """
@@ -42,7 +63,7 @@ def panel_report_path(
     if panel == CALIBRATION:
         if not period:
             raise ValueError("calibration 面板需要 period（010 报告按周期落盘）")
-        return Path(config.data_dir("calibration")) / "reports" / f"{period}.json"
+        return _latest_calibration_report_path(Path(config.data_dir("calibration")), period)
     if panel == DRIFT:
         if not period:
             raise ValueError("drift 面板需要 period（012 报表按周期落盘）")

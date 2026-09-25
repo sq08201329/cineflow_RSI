@@ -60,6 +60,7 @@ class TestTopK降序:
             period_end=PERIOD_END,
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert len(round_.node_ids) == 5
         # 期望顺序 = score 降序前五
@@ -83,6 +84,7 @@ class TestTopK降序:
             period_end=PERIOD_END,
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert len(round_.node_ids) == 2
 
@@ -98,6 +100,7 @@ class TestTopK降序:
             period_end=PERIOD_END,
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert len(round_.node_ids) == 1
 
@@ -114,6 +117,7 @@ class Test样本不足:
             period_end=PERIOD_END,
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert len(round_.node_ids) == 3
         assert "样本不足" in round_.note
@@ -132,6 +136,7 @@ class Test零泄露白名单:
             period_end=PERIOD_END,
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         payload = _read_round_file(calibration_data_dir, round_)
         for entry in payload["blind_list"]:
@@ -146,6 +151,7 @@ class Test零泄露白名单:
             period_end=PERIOD_END,
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         payload = _read_round_file(calibration_data_dir, round_)
         leaked = _walk_keys(payload["blind_list"]) & {"score", "eval_breakdown"}
@@ -162,4 +168,5 @@ class TestPromo不盲评:
                 period_end=PERIOD_END,
                 top_k=5,
                 data_dir=calibration_data_dir,
+                period_days=7,
             )

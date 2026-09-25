@@ -1989,9 +1989,13 @@ def calibration_reliability_report(drift_data_dir, write_calibration_ledger):
         samples: int = 12,
         data_dir=None,
     ):
+        from core.calibration.config import CalibrationConfig
         from core.calibration.report import build_report
 
         base = drift_data_dir if data_dir is None else data_dir
+        calibration = CalibrationConfig.from_yaml(
+            Path(__file__).resolve().parents[1] / "configs" / "movie.yaml"
+        )
         write_calibration_ledger(
             [
                 {
@@ -2010,7 +2014,13 @@ def calibration_reliability_report(drift_data_dir, write_calibration_ledger):
             agent_id=agent_id,
             data_dir=base,
         )
-        return build_report(base, period, target=target)
+        return build_report(
+            base,
+            period,
+            target=target,
+            window_semantics=calibration.window_semantics,
+            window_semantics_change_date=calibration.window_semantics_change_date,
+        )
 
     return _make
 
@@ -3389,6 +3399,8 @@ calibration:
   bias_threshold: 0.15
   reliability_target: 0.6
   ridge_lambda: 1.0
+  window_semantics: half_open
+  window_semantics_change_date: 2026-09-25
   self_pairing_exclusions:
     platform_truth: ["human.platform_metrics"]
   drift:

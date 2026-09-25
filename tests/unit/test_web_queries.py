@@ -638,6 +638,88 @@ class Test摘要:
         assert payload["drift"]["alerts"] == []
         assert payload["drift"]["period"] is None
 
+
+class Test信度报告读取点:
+    """020 读取点迁移：该周期**最新**轮级报告优先、无轮级报告回退兼容别名（缺失如实空态）。"""
+
+    def _seed_report(self, web_data_dir, *, run_id, tau=0.3):
+        from core.calibration.config import CalibrationConfig
+        from core.calibration.ledger import append_ledger
+        from core.calibration.models import BiasRecord
+        from core.calibration.report import build_report
+
+        calibration_dir = Path(web_data_dir["calibration"])
+        append_ledger(
+            calibration_dir,
+            "visual",
+            [
+                BiasRecord(
+                    evaluator_key="judge.cinematic@1.0.0",
+                    period="2026-W39",
+                    samples=12,
+                    kendall_tau=tau,
+                )
+            ],
+        )
+        calibration = CalibrationConfig.from_yaml(CONFIG_PATH)
+        return build_report(
+            calibration_dir,
+            "2026-W39",
+            target=calibration.reliability_target,
+            window_semantics=calibration.window_semantics,
+            window_semantics_change_date=calibration.window_semantics_change_date,
+            run_id=run_id,
+        )
+
+    def test_只落轮级报告时面板仍读到(self, web_config, web_data_dir):
+        """`close_round` 只写轮级报告（无别名）⇒ 读取口经路径规则仍能取到（缺口回归）。"""
+        from core.calibration.report import report_path
+
+        report = self._seed_report(web_data_dir, run_id="round-1")
+        calibration_dir = Path(web_data_dir["calibration"])
+        assert not report_path(calibration_dir, "2026-W39").exists()
+        payload = get_summary(web_config)["calibration"]
+        assert payload["period"] == report["period"]
+        assert payload["target"] == report["target"]
+        assert [entry["agent_id"] for entry in payload["agents"]] == sorted(report["agents"])
+
+    def test_轮级报告优先于兼容别名(self, web_config, web_data_dir):
+        """同周期既有别名又有轮级报告 ⇒ 取**最新**轮级报告（别名是先前的兼容产物）。"""
+        from core.calibration.report import report_path
+
+        self._seed_report(web_data_dir, run_id=None)  # 兼容别名：早的一轮
+        self._seed_report(web_data_dir, run_id="round-2", tau=0.9)  # 最新一轮：达标
+        calibration_dir = Path(web_data_dir["calibration"])
+        assert report_path(calibration_dir, "2026-W39").is_file()
+        payload = get_summary(web_config)["calibration"]
+        assert payload["meets"] is True  # 读的是最新一轮（tau 0.9 ≥ 0.6）
+
+    def test_读取点规则与_core_同源(self, web_config, web_data_dir):
+        """web 侧命名规则与 `core.calibration.report.latest_report_path` 逐例一致（防口径漂移）。"""
+        from core.calibration.report import latest_report_path
+        from web import parity
+
+        calibration_dir = Path(web_data_dir["calibration"])
+        # ① 全无 ⇒ core 与 web/queries 都如实"无报告"（`None`）；web/parity 返回兼容别名路径，
+        #    调用方按"文件缺失 = 无报告"处理（不报错、不编造内容）
+        assert latest_report_path(calibration_dir, "2026-W39") is None
+        assert queries._latest_calibration_report_path(calibration_dir, "2026-W39") is None
+        absent = parity.panel_report_path("calibration", web_config, period="2026-W39")
+        assert absent == calibration_dir / "reports" / "2026-W39.json"
+        assert not absent.exists()
+        # ② 只有别名 ⇒ 三处一致指向别名
+        self._seed_report(web_data_dir, run_id=None)
+        alias = calibration_dir / "reports" / "2026-W39.json"
+        assert latest_report_path(calibration_dir, "2026-W39") == alias
+        assert queries._latest_calibration_report_path(calibration_dir, "2026-W39") == alias
+        assert parity.panel_report_path("calibration", web_config, period="2026-W39") == alias
+        # ③ 轮级报告加入 ⇒ 三处一致指向字符串序末者
+        self._seed_report(web_data_dir, run_id="round-2")
+        newest = calibration_dir / "reports" / "2026-W39-round-2.json"
+        assert latest_report_path(calibration_dir, "2026-W39") == newest
+        assert queries._latest_calibration_report_path(calibration_dir, "2026-W39") == newest
+        assert parity.panel_report_path("calibration", web_config, period="2026-W39") == newest
+
     def test_信度面板不重算口径(self, web_config, web_reliability_report, web_data_dir):
         """接口读数 = 010 报告文件逐字段（本查询不重算相关系数）。"""
         report = json.loads(

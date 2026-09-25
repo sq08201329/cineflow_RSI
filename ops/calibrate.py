@@ -11,7 +11,7 @@ CLI 默认面向 PG 库（--dsn 或 CINEFLOW_PG_DSN）；库函数由单测以 S
 import argparse
 import json
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +28,7 @@ def _cmd_round(args) -> int:
     from sqlalchemy import create_engine
 
     from core.calibration.config import CalibrationConfig
+    from core.calibration.periods import default_period_bounds
     from core.calibration.selection import build_blind_list
     from core.tree.store import create_tree_store
 
@@ -37,10 +38,9 @@ def _cmd_round(args) -> int:
         return 2
 
     config = CalibrationConfig.from_yaml(args.config)
-    period_end = args.period_end or datetime.now(UTC).date().isoformat()
-    period_start = (
-        args.period_start
-        or (datetime.now(UTC).date() - timedelta(days=config.period_days)).isoformat()
+    # 缺省窗口：含首尾跨 period_days 天（与半开窗口合成后 end − start == period_days）
+    period_start, period_end = default_period_bounds(
+        args.period_start, args.period_end, config.period_days, today=datetime.now(UTC).date()
     )
     try:
         observation_match = json.loads(args.observation_match) if args.observation_match else None
@@ -60,6 +60,7 @@ def _cmd_round(args) -> int:
         period_end=period_end,
         top_k=args.top_k or config.top_k,
         data_dir=args.data_dir,
+        period_days=config.period_days,
         observation_match=observation_match,
     )
     print(
@@ -147,7 +148,14 @@ def _cmd_report(args) -> int:
     from core.calibration.report import build_report
 
     config = CalibrationConfig.from_yaml(args.config)
-    report = build_report(args.data_dir, args.period, target=config.reliability_target)
+    report = build_report(
+        args.data_dir,
+        args.period,
+        target=config.reliability_target,
+        window_semantics=config.window_semantics,
+        window_semantics_change_date=config.window_semantics_change_date,
+        run_id=args.run_id,
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -170,8 +178,9 @@ def _cmd_propose(args) -> int:
     from core.calibration.anchors import load_anchors
     from core.calibration.config import CalibrationConfig
     from core.calibration.pairing import pair_anchors
+    from core.calibration.periods import period_label
     from core.calibration.refit import gate_keys_of, maybe_propose
-    from core.calibration.rounds import compute_bias_records, iso_week_label
+    from core.calibration.rounds import compute_bias_records
     from core.calibration.selection import load_round
     from core.evaluators.weights import load_evaluator_weights
     from core.tree.store import create_tree_store
@@ -187,7 +196,8 @@ def _cmd_propose(args) -> int:
     with engine.connect() as conn:
         anchors = load_anchors(conn, args.round)
     pairs = pair_anchors(anchors, create_tree_store(engine), config.self_pairing_exclusions)
-    period = iso_week_label(round_.period_end)
+    # 与 close_round 同一函数、同一 cadence（否则台账与提案会看到两个周期）
+    period = period_label(round_.period_end, config.period_days)
     bias_records = compute_bias_records(pairs, period, config)
     proposal = maybe_propose(
         agent_id=round_.agent_id,
@@ -447,6 +457,11 @@ def main() -> int:
 
     report_parser = sub.add_parser("report", help="按周期重建信度报告（读台账）")
     report_parser.add_argument("--period", required=True, help="周期标签（如 2026-W38）")
+    report_parser.add_argument(
+        "--run-id",
+        default=None,
+        help="轮标识：给定 ⇒ reports/{period}-{run_id}.json；缺省 ⇒ 兼容别名 reports/{period}.json",
+    )
     report_parser.add_argument("--config", default=str(REPO_ROOT / "configs" / "movie.yaml"))
     report_parser.add_argument("--data-dir", default=str(REPO_ROOT / "calibration"))
     report_parser.set_defaults(func=_cmd_report)

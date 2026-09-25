@@ -269,7 +269,16 @@ def _seed_reliability(calibration_root: Path) -> dict:
             ),
         ],
     )
-    return build_reliability_report(calibration_root, PERIOD, target=0.6)
+    from core.calibration.config import CalibrationConfig
+
+    calibration = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+    return build_reliability_report(
+        calibration_root,
+        PERIOD,
+        target=0.6,
+        window_semantics=calibration.window_semantics,
+        window_semantics_change_date=calibration.window_semantics_change_date,
+    )
 
 
 def _seed_drift(calibration_root: Path) -> dict:

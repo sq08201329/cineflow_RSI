@@ -30,6 +30,7 @@ _KEY = "judge.cinematic@1.0.0"
 _AGENT = "visual"
 _PERIOD = "2026-W39"
 _AT = "2026-09-21T10:00:00+00:00"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _detect(
@@ -74,7 +75,16 @@ def _reliability(
         ],
         agent_id=agent_id,
     )
-    return build_reliability_report(drift_data_dir, period, target=target)
+    from core.calibration.config import CalibrationConfig
+
+    calibration = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+    return build_reliability_report(
+        drift_data_dir,
+        period,
+        target=target,
+        window_semantics=calibration.window_semantics,
+        window_semantics_change_date=calibration.window_semantics_change_date,
+    )
 
 
 def _item(report, evaluator_key=_KEY, agent_id=_AGENT):
@@ -289,6 +299,46 @@ class TestC7双信号联动:
         judge = _item(report)
         assert judge["signals"] == ["reliability_below_target"]
         assert judge["alert"]["level"] == drift_config.double_signal.base_level
+        assert judge["alert"]["double_signal"] is False
+
+    def test_轮级报告无别名时双信号仍被检出(
+        self, drift_data_dir, drift_config, drift_sequence_writer, write_calibration_ledger
+    ):
+        """读取点迁移（020）：信度报告只落在**轮级路径**（无兼容别名）时，双信号仍被检出。
+
+        这是"报告写了但读不到"缺口的回归断言——`close_round` 只写
+        `reports/{period}-{run_id}.json`，读取口必须经 `latest_report_path` 定位。
+        """
+        from core.calibration.config import CalibrationConfig
+        from core.calibration.report import build_report as build_reliability_report
+        from core.calibration.report import report_path
+
+        _detect(drift_data_dir, drift_config, drift_sequence_writer, "mean_shift", only=_PERIOD)
+        write_calibration_ledger(
+            [{"evaluator_key": _KEY, "period": _PERIOD, "samples": 12, "kendall_tau": 0.3}],
+            agent_id=_AGENT,
+        )
+        calibration = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
+        build_reliability_report(
+            drift_data_dir,
+            _PERIOD,
+            target=calibration.reliability_target,
+            window_semantics=calibration.window_semantics,
+            window_semantics_change_date=calibration.window_semantics_change_date,
+            run_id="2026-W39-round-2",
+        )
+        assert not report_path(drift_data_dir, _PERIOD).exists()  # 只落轮级报告、无别名
+
+        judge = _item(build_report(_PERIOD, drift_config, drift_data_dir))
+        assert judge["signals"] == ["drift", "reliability_below_target"]
+        assert judge["alert"]["double_signal"] is True
+        assert "双信号" in judge["alert"]["note"]
+
+    def test_信度报告缺失时不成双信号(self, drift_data_dir, drift_config, drift_sequence_writer):
+        """无信度报告（既无轮级报告也无别名）⇒ 如实只报漂移信号，不编造信度结论。"""
+        _detect(drift_data_dir, drift_config, drift_sequence_writer, "mean_shift", only=_PERIOD)
+        judge = _item(build_report(_PERIOD, drift_config, drift_data_dir))
+        assert judge["signals"] == ["drift"]
         assert judge["alert"]["double_signal"] is False
 
     def test_双信号开关关闭时不升级(

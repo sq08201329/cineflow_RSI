@@ -397,6 +397,8 @@ dev:
 # 短剧差异：**外环日级**（period_days: 1 —— 短剧迭代快，按日校准）
 calibration:
   period_days: 1 # 校准周期（天；日级外环）
+  window_semantics: half_open # 窗口口径（取值域单元素；其它值装配报错）
+  window_semantics_change_date: 2026-09-25 # 口径生效日（ISO 日期；跨该日的窗口比较必须标注）
   top_k: 3 # 每轮盲评清单锚点数（短剧预算小，盲评预算下调）
   min_samples: 3 # 偏差计算最小配对样本量，不足不产偏差值（FR-004）
   bias_threshold: 0.15 # 均值偏移超阈即生成权重再拟合提案

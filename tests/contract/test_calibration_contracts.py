@@ -59,6 +59,8 @@ calibration:
   bias_threshold: 0.15
   reliability_target: 0.6
   ridge_lambda: 1.0
+  window_semantics: half_open
+  window_semantics_change_date: 2026-09-25
   self_pairing_exclusions:
     platform_truth: ["human.platform_metrics"]
 """
@@ -109,6 +111,7 @@ def open_round(tree_store, visual_tree, calibration_data_dir):
         period_end=_PERIOD[1],
         top_k=5,
         data_dir=calibration_data_dir,
+        period_days=7,
     )
 
 
@@ -121,6 +124,7 @@ class TestC1盲评清单:
             period_end=_PERIOD[1],
             top_k=5,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert len(round_.node_ids) == 5  # 6 节点取 top-5
         assert round_.note == ""
@@ -131,6 +135,7 @@ class TestC1盲评清单:
             period_end=_PERIOD[1],
             top_k=10,
             data_dir=calibration_data_dir,
+            period_days=7,
         )
         assert len(small.node_ids) == 6 and "样本不足" in small.note
 
@@ -150,6 +155,7 @@ class TestC1盲评清单:
                 period_end=_PERIOD[1],
                 top_k=5,
                 data_dir=calibration_data_dir,
+                period_days=7,
             )
 
 
@@ -306,8 +312,25 @@ class TestC6台账与报告:
         assert after.startswith(before)  # 首轮行逐字节不变
         assert len(after.splitlines()) == 2
 
-        report = build_report(calibration_data_dir, "2026-W39", target=0.6)
-        assert set(report) == {"period", "agents", "target", "alerts"}
+        report = build_report(
+            calibration_data_dir,
+            "2026-W39",
+            target=0.6,
+            window_semantics="half_open",
+            window_semantics_change_date="2026-09-25",
+        )
+        assert set(report) == {
+            "period",
+            "agents",
+            "target",
+            "alerts",
+            "period_days",
+            "window_semantics",
+            "window_semantics_change_date",
+            "run_id",
+            "window",
+            "note",
+        }
         entry = report["agents"]["visual"]["proxy.a@1.0.0"]
         assert entry["meets_target"] is True and entry["samples"] == 5
         assert read_latest(calibration_data_dir, "visual", "proxy.a")["period"] == "2026-W39"
@@ -383,6 +406,8 @@ class TestC7提案生成:
                     "bias_threshold": 0.15,
                     "reliability_target": 0.6,
                     "ridge_lambda": 1.0,
+                    "window_semantics": "half_open",
+                    "window_semantics_change_date": "2026-09-25",
                     "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
                 }
             }
@@ -429,6 +454,8 @@ class TestC8确认与生效:
                     "bias_threshold": 0.15,
                     "reliability_target": 0.6,
                     "ridge_lambda": 1.0,
+                    "window_semantics": "half_open",
+                    "window_semantics_change_date": "2026-09-25",
                     "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
                 }
             }
@@ -533,11 +560,16 @@ class TestC9一轮完整收口:
         assert summary["status"] == "closed"
         assert summary["period"] == "2026-W38"
         # 台账 / 快照 / 报告三类产物同轮落盘
+        from core.calibration.report import latest_report_path, report_path
+
         assert (calibration_data_dir / "ledger" / "visual" / "proxy.aesthetic.jsonl").is_file()
         assert (
             calibration_data_dir / "snapshots" / "visual" / "proxy.aesthetic" / "2026-W38.json"
         ).is_file()
-        assert (calibration_data_dir / "reports" / "2026-W38.json").is_file()
+        # 020：报告按轮标识落盘（同周期多轮并留存、零覆盖）
+        assert latest_report_path(calibration_data_dir, "2026-W38") == report_path(
+            calibration_data_dir, "2026-W38", open_round.round_id
+        )
 
 
 class TestFR011零昂贵动作审计:

@@ -6,7 +6,8 @@
   阈值快照、当前状态与处置记录（人/时间/理由/动作）——JSON 可机读，供人工决策与
   F9 证据引用；无检测记录的评估器标注"无数据"（不伪造）；范围外类别（proxy/rule
   默认关闭）标注"非 judge 类未纳入检测"；
-- **C7 双信号联动**：漂移告警 ∧ 010 信度低于目标（`reports/{period}.json` 的
+- **C7 双信号联动**：漂移告警 ∧ 010 信度低于目标（该周期**最新**信度报告
+  `reports/{period}-{run_id}.json`，无轮级报告时回退兼容别名 `reports/{period}.json` 的
   `meets_target`）→ **强化告警**（级别升级为 `escalated_level` + `double_signal: true`
   + "双信号"标注）；单信号 → 常规告警（级别 `base_level`，不误升级别）；
 - **C7 场景 3 残余信号附注**：F6 的 ScoreConflict 只作**附注**（`residual_signals`）——
@@ -27,6 +28,7 @@ from core.calibration.drift_config import DriftConfig
 from core.calibration.drift_metrics import detector_version, kind_of
 from core.calibration.drift_models import DriftMetrics, DriftReport, DriftVerdict
 from core.calibration.drift_status import current_status, dispositions
+from core.calibration.report import latest_report_path
 
 # F6 残余信号（ScoreConflict）约定持久化落点：{data_dir 同级}/replay/hit_distributions/
 SCORE_CONFLICT_SOURCE_RELPATH = Path("replay") / "hit_distributions"
@@ -94,9 +96,13 @@ def _period_versions(data_dir: str | Path, agent_id: str, evaluator_id: str) -> 
 
 
 def _reliability_entries(data_dir: str | Path, period: str) -> dict[tuple[str, str], dict]:
-    """010 信度报告（reports/{period}.json）→ {(agent_id, evaluator_key): 条目}。"""
-    path = Path(data_dir) / "reports" / f"{period}.json"
-    if not path.is_file():
+    """010 信度报告 → {(agent_id, evaluator_key): 条目}。
+
+    路径经 `core.calibration.report.latest_report_path`（该周期**最新**轮级报告的路径规则单点，
+    无轮级报告时回退兼容别名 `reports/{period}.json`）；无报告 ⇒ `{}`（如实"无报告"，不报错）。
+    """
+    path = latest_report_path(data_dir, period)
+    if path is None:
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
     target = payload.get("target")

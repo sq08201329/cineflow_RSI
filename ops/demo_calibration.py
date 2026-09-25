@@ -215,6 +215,7 @@ def main() -> int:
         period_end="2026-09-06",
         top_k=calib_cfg.top_k,
         data_dir=data_dir,
+        period_days=calib_cfg.period_days,
     )
     round1_payload = json.loads(
         (data_dir / "rounds" / "visual" / f"{round1.round_id}.json").read_text(encoding="utf-8")
@@ -265,6 +266,7 @@ def main() -> int:
         period_end="2026-09-20",
         top_k=calib_cfg.top_k,
         data_dir=data_dir,
+        period_days=calib_cfg.period_days,
     )
     with engine.begin() as conn:
         platform_anchors = collect_platform_anchors(
@@ -323,9 +325,30 @@ def main() -> int:
         )
     )
 
-    # ── 步骤 5：信度报告（四要素 + meets_target）
-    report = build_report(data_dir, period, target=calib_cfg.reliability_target)
-    _assert(set(report) == {"period", "agents", "target", "alerts"}, "报告 schema 四要素")
+    # ── 步骤 5：信度报告（既有四要素 + 窗口口径键，meets_target）
+    report = build_report(
+        data_dir,
+        period,
+        target=calib_cfg.reliability_target,
+        window_semantics=calib_cfg.window_semantics,
+        window_semantics_change_date=calib_cfg.window_semantics_change_date,
+    )
+    _assert(
+        set(report)
+        == {
+            "period",
+            "agents",
+            "target",
+            "alerts",
+            "period_days",
+            "window_semantics",
+            "window_semantics_change_date",
+            "run_id",
+            "window",
+            "note",
+        },
+        "报告 schema（既有四要素 + 020 窗口口径键）",
+    )
     entry = report["agents"]["visual"]["proxy.aesthetic@1.0.0"]
     _assert(entry["samples"] == 5 and entry["meets_target"] is True, "信度达标口径")
     print(

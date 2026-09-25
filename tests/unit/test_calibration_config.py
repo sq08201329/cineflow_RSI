@@ -1,8 +1,10 @@
-"""calibration 段配置解析单测（功能 010 / T507，先于实现编写）。
+"""calibration 段配置解析单测（功能 010 / T507，先于实现编写；020 扩展窗口口径键）。
 
 - 从 configs/movie.yaml 读真实 calibration 段；
 - 缺段/缺字段/类型错误均报清晰错误（风格对齐 core/evaluators/weights.py）；
-- self_pairing_exclusions 映射结构校验（防自循环配对的配置驱动来源）。
+- self_pairing_exclusions 映射结构校验（防自循环配对的配置驱动来源）；
+- 020 新增 `window_semantics`（取值域单元素 half_open）与 `window_semantics_change_date`
+  （ISO 日期）：**必需读取**（缺项即报错、不取码内默认，FR-014）。
 """
 
 from pathlib import Path
@@ -23,6 +25,8 @@ _VALID_SECTION = {
     "bias_threshold": 0.15,
     "reliability_target": 0.6,
     "ridge_lambda": 1.0,
+    "window_semantics": "half_open",
+    "window_semantics_change_date": "2026-09-25",
     "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
 }
 
@@ -42,6 +46,9 @@ class Test读取真实配置:
         assert config.bias_threshold == pytest.approx(0.15)
         assert config.reliability_target == pytest.approx(0.6)
         assert config.ridge_lambda == pytest.approx(1.0)
+        # 020：窗口口径键由配置声明（两形态齐备，取值域单元素）
+        assert config.window_semantics == "half_open"
+        assert config.window_semantics_change_date == "2026-09-25"
 
     def test_自循环排除映射(self):
         config = CalibrationConfig.from_yaml(MOVIE_YAML)
@@ -68,6 +75,8 @@ class Test缺段与缺字段:
             "bias_threshold",
             "reliability_target",
             "ridge_lambda",
+            "window_semantics",
+            "window_semantics_change_date",
             "self_pairing_exclusions",
         ],
     )
@@ -76,6 +85,25 @@ class Test缺段与缺字段:
         path = _write(tmp_path, {"calibration": section})
         with pytest.raises(CalibrationConfigError, match=missing):
             CalibrationConfig.from_yaml(path)
+
+    @pytest.mark.parametrize("bad", ["inclusive", "half-open", "", "HALF_OPEN", None, 1])
+    def test_窗口口径取值域单元素(self, tmp_path, bad):
+        path = _write(tmp_path, {"calibration": {**_VALID_SECTION, "window_semantics": bad}})
+        with pytest.raises(CalibrationConfigError, match="window_semantics"):
+            CalibrationConfig.from_yaml(path)
+
+    @pytest.mark.parametrize("bad", ["2026/09/25", "25-09-2026", "", "not-a-date"])
+    def test_口径变更日必须为_ISO_日期(self, tmp_path, bad):
+        path = _write(
+            tmp_path, {"calibration": {**_VALID_SECTION, "window_semantics_change_date": bad}}
+        )
+        with pytest.raises(CalibrationConfigError, match="window_semantics_change_date"):
+            CalibrationConfig.from_yaml(path)
+
+    def test_窗口口径键读入原值(self, tmp_path):
+        config = CalibrationConfig.from_yaml(_write(tmp_path, {"calibration": _VALID_SECTION}))
+        assert config.window_semantics == "half_open"
+        assert config.window_semantics_change_date == "2026-09-25"
 
     def test_配置文件不存在报错(self, tmp_path):
         with pytest.raises(CalibrationConfigError):

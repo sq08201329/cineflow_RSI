@@ -10,6 +10,7 @@
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -185,12 +186,81 @@ class Test差异逐项可归因:
         # 分段更细更快：均镜头时长下调
         assert short_head["mean_ms"] < movie_head["mean_ms"]
 
-    def test_外环日级(self):
+    def test_外环日级(
+        self, tree_store, anchors_engine, build_calibration_tree, calibration_data_dir
+    ):
+        """T2015：外环日级由"配置数字"升级为**运转**断言（既有数字断言保留、不删）。
+
+        ① cadence 派生标签：日级 ⇒ 日期形态、周级 ⇒ ISO 周；
+        ② 漂移窗口单位与 cadence 同量纲：日级 = 天、周级 = 周（经口径唯一映射，非配置数字）；
+        ③ 同一日级周期内两轮收口：台账行数 == 2、报告文件数 == 2（路径不同）且都保留。
+        """
+        from datetime import UTC, datetime
+
         from core.calibration.config import CalibrationConfig
+        from core.calibration.periods import CADENCE_UNIT, cadence_of, period_label
 
         movie = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
         short = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / "shortdrama.yaml")
         assert short.period_days == 1 and short.period_days < movie.period_days
+
+        # ① 运转：标签由 cadence 派生（日级 = 日期形态，周级 = ISO 周）
+        day = "2026-09-25"
+        daily_label = period_label(day, short.period_days)
+        weekly_label = period_label(day, movie.period_days)
+        assert daily_label == "2026-09-25"
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", daily_label)
+        assert re.fullmatch(r"\d{4}-W\d{2}", weekly_label)
+        assert cadence_of(daily_label) == 1 and cadence_of(weekly_label) == 7
+
+        # ② 运转：漂移窗口单位与 cadence 同量纲（日级 window: 3 ⇒ 量纲 = 天）
+        assert CADENCE_UNIT[cadence_of(daily_label)] == "day"
+        assert CADENCE_UNIT[cadence_of(weekly_label)] == "week"
+
+        # ③ 运转：同一日级周期内两轮收口 —— 台账与报告并留存、零覆盖
+        from core.calibration.anchors import intake_anchors
+        from core.calibration.rounds import close_round
+        from core.calibration.selection import build_blind_list
+
+        breakdown = {"proxy.aesthetic@1.0.0": {"score": 0.6}}
+        _, node_ids = build_calibration_tree(
+            [(0.5, dict(breakdown)), (0.7, dict(breakdown)), (0.9, dict(breakdown))],
+            agent_id="visual",
+            base_created_at=datetime(2026, 9, 25, 12, tzinfo=UTC).timestamp(),
+        )
+        periods: list[str] = []
+        for index in range(2):
+            round_ = build_blind_list(
+                tree_store,
+                agent_id="visual",
+                period_start="2026-09-25",
+                period_end="2026-09-25",
+                top_k=3,
+                data_dir=calibration_data_dir,
+                period_days=short.period_days,
+                round_id=f"shortdrama-daily-{index}",
+            )
+            entries = [
+                {"node_id": nid, "score": score, "reviewer": "r1"}
+                for nid, score in zip(node_ids, (0.55, 0.75, 0.95), strict=True)
+            ]
+            with anchors_engine.begin() as conn:
+                intake_anchors(conn, round_.round_id, entries, data_dir=calibration_data_dir)
+            with anchors_engine.connect() as conn:
+                summary = close_round(
+                    tree_store, conn, calibration_data_dir, round_id=round_.round_id, config=short
+                )
+            periods.append(summary["period"])
+        assert periods == ["2026-09-25", "2026-09-25"]  # 两轮落在同一**日级**周期
+        ledger_lines = sum(
+            len(path.read_text(encoding="utf-8").splitlines())
+            for path in (calibration_data_dir / "ledger" / "visual").glob("*.jsonl")
+        )
+        assert ledger_lines == 2  # 两轮各一行台账（append-only，零覆盖）
+        reports = sorted((calibration_data_dir / "reports").glob("*.json"))
+        assert len(reports) == 2  # 两轮报告并留存：文件数 == 轮数
+        assert len({path.name for path in reports}) == 2  # 路径不同（不互相覆盖）
+        assert all(path.read_text(encoding="utf-8").strip() for path in reports)
 
     def test_预算与并行度下调(self):
         from agents.editing.config import EditingConfig
