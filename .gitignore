@@ -24,4 +24,6 @@ htmlcov/
 .smoke-llm/
 
 # 019 运行期产物根（跨进程账本 + 告警留痕 + 账单/报告/校准/运行记录；C4：与 pilot/runs 同级）
-billing/
+# **必须根锚定**：裸 `billing/` 会连带忽略 `core/billing/` 源码包（实测让 `ruff check .` 的树扫描
+# 跳过整个包 ⇒ 门禁出现盲区）；根锚定后运行期产物仍被忽略，源码包重新纳入扫描。
+/billing/

@@ -2,9 +2,10 @@
 """真实渠道与账单对账 CLI（功能 019）：额度台账 / 最小规模校准 / 扩量。
 
 **判定全在 core**（`core/billing/`），本脚本只做参数解析、调用与 JSON 打印（薄转发）。
-子命令（命名与契约 C16 逐字一致，**七条齐备**）：
+子命令（命名与契约 C16 逐字一致，**八条齐备**；第 8 条 `channels` 由功能 020 新增）：
 
 ```
+uv run python ops/billing.py channels  [--config configs/*.yaml]
 uv run python ops/billing.py tiers     --channel <id> [--config configs/*.yaml]
 uv run python ops/billing.py calibrate --channel <id> --tier <环节> --measured-usd <实测> \
         [--from-records | --sample-count <n>] [--profile <档案 id> | --expected-usd <按价目折算>] \
@@ -22,10 +23,16 @@ uv run python ops/billing.py raise-tier --channel <id> --tier <环节> --limit-u
 ```
 
 - `tiers`：各档余量 / 拒绝计数 / **未结算预留**（崩溃残留如实列出，不自动清零）；
+- `channels`：**只读**渠道面（功能 020 / C12）——声明渠道集合 → 每渠道 `adapter`（装配入口）与
+  `tiers` 键集/余量/拒绝计数 → **凭证就绪矩阵**（只 `set`/`length`，**绝不回显值**）→ 每渠道
+  账本/告警路径；不写账本、不写报告，缺项或不一致 ⇒ 退出码 2；
 - `calibrate`：**只读既有记录、不联网、不构造后端、不新测花费**——"实测花费"由运营从
   厂商侧读出（`--measured-usd`，口径写在 `--cost-source`）；"按价目折算"可由 `--expected-usd`、
   档案价目 × token 数、或 `--from-records` 复述**既有真实调用记录**（运行记录里 `source=real`
   的条数为样本量、该档账本记账值为折算额）给出；
+  **投放渠道的最小规模入口就是本子命令**（`--channel <投放渠道> --tier <投放环节>
+  --from-records`，只读既有运行记录与账本）：019 的 LLM 冒烟入口（`ops/smoke_llm.py`）
+  **不适用于投放渠道**，不得据此假定投放已按最小规模验证；
 - `import-bill`：账单导入（**不联网**：人工上传厂商导出文件）；格式/列映射由配置声明，
   缺声明即报错、**零落盘**；批次幂等（同批次重复导入拒绝）；
 - `reconcile`：逐项对账并落报告 + 告警留痕；**无账单批次即拒绝产出**（不产"零差异"报告）；
@@ -37,7 +44,8 @@ uv run python ops/billing.py raise-tier --channel <id> --tier <环节> --limit-u
   逐字节不变）+ 写 `calibrated_by` + `alerts.jsonl` 留痕；任一条件不满足即拒绝并留
   `uncalibrated_raise`（配置一字不改）。
 
-退出码（契约 C16）：`0` 成功（`tiers`/`calibrate` 成功；`runs` 达标；`raise-tier` 改写成功）｜
+退出码（契约 C16）：`0` 成功（`channels`/`tiers`/`calibrate` 成功；`runs` 达标；
+`raise-tier` 改写成功）｜
 `1` 执行失败或拒绝（预算拒绝、校准未过、扩量被拒、`runs` 未达标）｜`2` 用法或配置错误。
 凭证只报"是否设置 + 长度"，**绝不回显值**（沿用 `ops/smoke_llm.py` 口径）。
 """
@@ -67,8 +75,10 @@ from core.billing.budget import (  # noqa: E402 - 019：账本/档位/告警读�
     FileLedger,
     alerts_path,
     channel_dir,
+    declared_channels,
     ledger_path,
-    sole_channel,
+    tier_of,
+    tiers_of,
 )
 from core.billing.calibration import (  # noqa: E402 - 019：校准记录与扩量
     CalibrationRecordError,
@@ -100,14 +110,20 @@ def _load_config(path: str | Path) -> BudgetConfig:
 
 
 def _channel_of(cfg: BudgetConfig, requested: str) -> str:
-    """渠道 id 必须与配置声明一致（码内零渠道字面量：不一致即用法错误）。"""
-    declared = sole_channel(cfg)
-    if requested and str(requested) != declared.channel_id:
+    """渠道 id 必须 ∈ 配置**声明的渠道集合**（码内零渠道字面量：未声明即用法错误）。
+
+    语义（契约 C12）：声明值 ⇒ 用之；未声明值 ⇒ `BudgetConfigError` ⇒ **退出码 2**——错误文案
+    保留「不一致」子串（`tests/contract/test_billing_contracts.py` 的 `--channel ghost` 用例依存），
+    且**不回落**到任一渠道的额度（未声明的渠道不得开工）。
+    """
+    declared = [spec.channel_id for spec in declared_channels(cfg)]
+    requested = str(requested or "")
+    if requested not in declared:
         raise BudgetConfigError(
-            f"渠道 {requested!r} 与配置声明的 {declared.channel_id!r} 不一致"
-            "（渠道 id 由 budget.channels 声明，命令行取值须与配置一致）"
+            f"渠道 {requested!r} 与配置声明的渠道集合 {declared} 不一致"
+            "（渠道 id 由 budget.channels 声明，命令行取值须与配置一致；未声明的渠道不得开工）"
         )
-    return declared.channel_id
+    return requested
 
 
 def _read_tier_rows(cfg: BudgetConfig, channel_id: str) -> dict:
@@ -116,7 +132,7 @@ def _read_tier_rows(cfg: BudgetConfig, channel_id: str) -> dict:
     payload = json.loads(ledger_file.read_text(encoding="utf-8")) if ledger_file.is_file() else {}
     records = payload.get("tiers", {})
     rows: list[dict] = []
-    for tier_id, tier in sorted(cfg.tiers.items()):
+    for tier_id, tier in sorted(tiers_of(cfg, channel_id).items()):
         record = records.get(tier_id, {})
         spent = float(record.get("spent_usd", 0.0))
         reserved = float(record.get("reserved_usd", 0.0))
@@ -165,11 +181,63 @@ def _cmd_tiers(args) -> int:
     return EXIT_OK
 
 
+def _cmd_channels(args) -> int:
+    """**只读**渠道面（功能 020 / 契约 C12）：声明渠道集合 → 装配入口 → 档位/余量/拒绝计数 →
+    凭证就绪矩阵（只 `set`/`length`，绝不回显值）→ 每渠道账本/告警路径。
+
+    不写账本、不写报告（只读）；渠道缺项或凭证矩阵与声明不一致 ⇒ 退出码 2。
+    """
+    from ops.check_credentials import CredentialCheckError, channel_matrix
+
+    cfg = _load_config(args.config)
+    try:
+        matrix = channel_matrix(args.config, environ=os.environ)
+    except CredentialCheckError as exc:
+        return _fail(f"凭证就绪矩阵不可用：{exc}", EXIT_USAGE)
+    declared = [spec.channel_id for spec in declared_channels(cfg)]
+    available = {row["channel_id"]: row for row in matrix["channels"]}
+    if set(available) != set(declared):
+        return _fail(
+            f"凭证矩阵与配置声明的渠道集合不一致：声明 {declared} / 矩阵 {sorted(available)}",
+            EXIT_USAGE,
+        )
+    rows: list[dict] = []
+    for spec in declared_channels(cfg):
+        state = _read_tier_rows(cfg, spec.channel_id)
+        rows.append(
+            {
+                "channel_id": spec.channel_id,
+                "adapter": spec.adapter,
+                "tiers": state["tiers"],
+                "ledger_path": state["ledger_path"],
+                "alerts_path": state["alerts_path"],
+                "revision": state["revision"],
+                "calibration_status": state["calibration_status"],
+                "credentials": available[spec.channel_id],
+            }
+        )
+    print(
+        json.dumps(
+            {
+                "config_path": str(args.config),
+                "tiers_shape": cfg.tiers_shape,
+                "declared_channels": declared,
+                "channels": rows,
+                "notes": [*cfg.notes, *matrix["notes"]],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return EXIT_OK
+
+
 def _cmd_calibrate(args) -> int:
     """只读既有记录落校准记录：**不联网、不构造后端、不新测花费**（C12）。"""
     cfg = _load_config(args.config)
     channel_id = _channel_of(cfg, args.channel)
-    cfg.tier(args.tier)  # 缺档即用法/配置错误（不发明档位）
+    tier_of(cfg, channel_id, args.tier)  # 缺档即用法/配置错误（不发明档位）
     records = _records_for(cfg, channel_id, args.tier) if args.from_records else None
     sample_count = int(args.sample_count) if args.sample_count is not None else None
     if records is not None:
@@ -575,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="真实渠道与账单对账 CLI（功能 019；判定全在 core，脚本只做薄转发）",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    channels = sub.add_parser(
+        "channels", help="只读渠道面：声明渠道集合 / 档位余量 / 凭证矩阵 / 账本路径"
+    )
+    channels.add_argument("--config", default=DEFAULT_CONFIG, help="形态配置路径")
+    channels.set_defaults(handler=_cmd_channels)
 
     tiers = sub.add_parser("tiers", help="各档余量 / 拒绝计数 / 未结算预留")
     tiers.add_argument("--channel", required=True, help="渠道 id（须与 budget.channels 一致）")

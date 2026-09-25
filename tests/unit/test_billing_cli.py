@@ -363,9 +363,12 @@ class TestRaiseTier:
             line for line in before_lines if line not in removed
         ]
         payload = yaml.safe_load(config.read_text(encoding="utf-8"))
-        tier = payload["budget"]["tiers"]["screenplay"]
+        # 020（C11）：档位在**渠道内** —— 定点改写的路径随档位形状（真实配置 = 新形状）
+        tier = payload["budget"]["channels"][channel]["tiers"]["screenplay"]
         assert tier["limit_usd"] == pytest.approx(9.0) and tier["calibrated_by"] == "cal-raise"
-        assert BudgetConfig.from_yaml(config).tier("screenplay").limit_usd == pytest.approx(9.0)
+        assert BudgetConfig.from_yaml(config).tiers_of(channel)[
+            "screenplay"
+        ].limit_usd == pytest.approx(9.0)
         assert [
             entry["kind"]
             for entry in AlertLog(

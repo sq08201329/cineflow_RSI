@@ -68,7 +68,10 @@ REQUIRED_PATHS = (
     ("calibration", ("calibration", "self_pairing_exclusions")),
     ("drift", ("calibration", "drift")),
     ("deployment", ("deployment", "gate")),
-    ("budget", ("budget", "tiers")),
+    # 020（C11）：档位在**渠道内**（`channels.<id>.tiers`）——缺嵌套 `tiers` 即报错；
+    # 旧扁平 `budget.tiers` 仍可读（见 `tests/unit/test_billing_channels.py`）
+    ("budget", ("budget", "channels", "llm", "tiers")),
+    ("budget", ("budget", "channels", "llm", "adapter")),
     ("web", ("web", "data_dirs")),
 )
 

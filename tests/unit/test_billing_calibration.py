@@ -176,14 +176,19 @@ class Test扩量六条拒绝:
         assert config_path.read_text(encoding="utf-8") == before
 
     def test_不同渠道的校准记录即拒绝(
-        self, budget_config_factory, billing_budget_factory, billing_root, tmp_path
+        self, billing_channels_payload_factory, billing_root, tmp_path
     ):
-        declared = billing_budget_factory(tier_limit_usd=1.0, window_kind="day")["channels"]
-        first = next(iter(declared))
-        second = "channel-iso"
-        cfg = budget_config_factory(channels={first: declared[first], second: {**declared[first]}})
+        # 020（C11）：档位在**渠道内** ⇒ 多渠道新形状（每渠道一份额度、一本账）
+        section = billing_channels_payload_factory(tier_limit_usd=1.0, window_kind="day")
+        first, second = "llm", "channel-iso"
+        cfg = BudgetConfig.from_dict({"budget": section})
         config_path = tmp_path / "movie.yaml"
-        config_path.write_text(CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+        config_path.write_text(
+            yaml.safe_dump(
+                {"form": "movie", "budget": section}, allow_unicode=True, sort_keys=False
+            ),
+            encoding="utf-8",
+        )
         _record(cfg, billing_root, second)  # 记录落在**另一个渠道**目录
         with pytest.raises(CalibrationRecordError):
             raise_tier(
@@ -205,7 +210,7 @@ class Test扩量六条拒绝:
         config_path = tmp_path / "movie.yaml"
         config_path.write_text(CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
         _record(cfg, billing_root, channel)
-        current = budget_config_factory().tier("screenplay").limit_usd
+        current = budget_config_factory().tiers_of(channel)["screenplay"].limit_usd
         with pytest.raises(CalibrationRecordError, match="相同"):
             self._raise(
                 cfg, billing_root, config_path, channel, limit_usd=None
@@ -226,14 +231,27 @@ class Test扩量六条拒绝:
 
 class Test扩量落地:
     def test_合格时定点改写额度与_calibrated_by_且其余逐字节不变(
-        self, budget_config_factory, billing_root, tmp_path
+        self, budget_config_factory, billing_budget_factory, billing_root, tmp_path
     ):
-        cfg = budget_config_factory()
+        """旧扁平形状的定点改写：**配置与 cfg 同源**（同一 `budget:` 段），路径才唯一。
+
+        新形状（`channels.<id>.tiers.<环节>`）的定点改写由 `tests/unit/test_billing_cli.py`
+        的 `raise-tier` 用例在**真实 movie.yaml**（带注释）上覆盖。
+        """
+        section = billing_budget_factory(tier_limit_usd=1.0)
+        section["tiers"]["screenplay"]["limit_usd"] = 5.0  # 唯一取值：行替换口径可指认
+        cfg = BudgetConfig.from_dict({"budget": section})
         channel = next(iter(cfg.channels))
         config_path = tmp_path / "configs" / "movie.yaml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(CONFIG.read_text(encoding="utf-8"), encoding="utf-8")
+        config_path.write_text(
+            yaml.safe_dump(
+                {"form": "movie", "budget": section}, allow_unicode=True, sort_keys=False
+            ),
+            encoding="utf-8",
+        )
         before_lines = config_path.read_text(encoding="utf-8").splitlines()
+        assert sum("limit_usd: 5.0" in line for line in before_lines) == 1
         _record(cfg, billing_root, channel)
         report = raise_tier(
             channel,
@@ -252,7 +270,9 @@ class Test扩量落地:
         tier = payload["budget"]["tiers"]["screenplay"]
         assert tier["limit_usd"] == pytest.approx(9.0)
         assert tier["calibrated_by"] == "cal-1"  # 升级可追溯到记录
-        assert report["previous_limit_usd"] == pytest.approx(cfg.tier("screenplay").limit_usd)
+        assert report["previous_limit_usd"] == pytest.approx(
+            cfg.tier_of(channel, "screenplay").limit_usd
+        )
         assert report["event"] == "tier_raised" and report["by_reason"] == "最小规模校准合格"
         # 其余段与注释逐字节不变：**只有**该档的两处改动（额度值 + 新增 calibrated_by 行）
         left = [line for line in after.splitlines() if "calibrated_by:" not in line]
@@ -263,9 +283,9 @@ class Test扩量落地:
             "tier_raised"
         ]
         # 改写后重新装配：新额度即时生效（配置为准）
-        assert BudgetConfig.from_yaml(config_path).tier("screenplay").limit_usd == pytest.approx(
-            9.0
-        )
+        assert BudgetConfig.from_yaml(config_path).tiers_of(channel)[
+            "screenplay"
+        ].limit_usd == pytest.approx(9.0)
 
     def test_require_calibration_合格时返回记录(self, budget_config_factory, billing_root):
         cfg = budget_config_factory()

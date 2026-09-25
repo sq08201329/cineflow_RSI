@@ -4,7 +4,13 @@
 
 - `BudgetConfig.from_yaml` / `from_dict`：`budget:` 段**全量校验**（缺项即报错、不取码内默认）；
   `BudgetTier`（余量 = `limit − spent − reserved`）、`PeakWindows`（**闭开区间 `[start, end)`**、
-  支持跨夜、按**调用开始时刻**归属）、`ChannelSpec`（渠道登记 + 账单列映射）；
+  支持跨夜、按**调用开始时刻**归属）、`ChannelSpec`（渠道登记 + 账单列映射 + **本渠道档位**）；
+- **渠道命名空间（功能 020 / C11/C12）**：档位由扁平 `budget.tiers.<环节>` 改为按渠道分组
+  `budget.channels.<id>.tiers.<环节>`，额度和账本按**配置声明的渠道集合**分派
+  （`declared_channels` / `channel_for_adapter` / `tiers_of` / `tier_of`）；旧扁平形状**仍可读**
+  （恰好声明 1 个渠道 ⇒ 显式归入该渠道、`tiers_shape = "legacy_flat"`；多渠道或新旧并存 ⇒ 报错，
+  不静默误判）。既有 `tiers` / `tier()` 降级为**单渠道兼容视图**
+  （多渠道下访问即报错 ⇒ 同一档位不得跨渠道串用）；
 - `FileLedger`：**单主机跨进程**账本（`fcntl.flock(LOCK_EX)` → 读 → 改 → `os.replace` 原子替换，
   每写 `revision += 1` 单调）。余量、预留与拒绝计数**全落在文件**——"额度校验不得只在进程内"；
   锁超时 ⇒ `BudgetLedgerError` 拒绝调用（不无锁写、不静默放行）；崩溃残留的未结算预留**如实呈现**、
@@ -38,7 +44,7 @@ import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from datetime import time as clock_time
 from pathlib import Path
@@ -53,6 +59,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # 时间窗取值域（C9：day 的日历取 peak_windows.timezone，不另立时区键）
 WINDOW_KINDS = ("run", "day", "period")
+# 档位形状（C11）：`channels` = 按渠道分组的声明形状；`legacy_flat` = 旧扁平 `tiers` 归一后的形状
+TIERS_SHAPES = ("channels", "legacy_flat")
 # 额度耗尽语义：取值域单元素——拒绝（不排队、不降级为模拟）
 ON_EXHAUSTED_REFUSE = "refuse"
 # 峰谷归属：取值域单元素（按调用开始时刻归属，跨峰谷不拆分）
@@ -253,31 +261,41 @@ class ChannelBillSpec:
 
 @dataclass(frozen=True)
 class ChannelSpec:
-    """渠道登记：id + 真实调用面的装配引用 + 账单导入面。"""
+    """渠道登记：id + 真实调用面的装配引用 + 账单导入面 + **本渠道档位**（C11 命名空间）。
+
+    `tiers` 是**渠道内**的环节 → 额度映射（`budget.channels.<id>.tiers.<环节>`）：同一档位名在
+    不同渠道是两份额度、两本账（跨渠道串用次数恒 0）。旧扁平形状归一后同样落在这里。
+    """
 
     channel_id: str
     adapter: str
     bill: ChannelBillSpec
+    tiers: Mapping[str, BudgetTier] = field(default_factory=dict)
 
     def to_snapshot(self) -> dict:
         return {
             "channel_id": self.channel_id,
             "adapter": self.adapter,
+            "tiers": {tier_id: tier.to_snapshot() for tier_id, tier in sorted(self.tiers.items())},
             "bill": self.bill.to_snapshot(),
         }
 
 
 @dataclass(frozen=True)
 class BudgetConfig:
-    """`budget:` 段配置（冻结快照；改额度只影响此后新装配，历史节点不变）。"""
+    """`budget:` 段配置（冻结快照；改额度只影响此后新装配，历史节点不变）。
+
+    `tiers_shape` 记录档位形状的来源（`channels` = 新形状；`legacy_flat` = 旧扁平归一的迁移形状），
+    使"档位从哪来"在配置对象与装配快照里都可追溯（C11 的可追溯率 100%）。
+    """
 
     channels: Mapping[str, ChannelSpec]
-    tiers: Mapping[str, BudgetTier]
     peak_windows: PeakWindows
     calibration: Mapping[str, object]
     reconcile: Mapping[str, object]
     ledger: Mapping[str, object]
     runs: Mapping[str, object]
+    tiers_shape: str = TIERS_SHAPES[0]
     notes: tuple[str, ...] = field(default=())
 
     @classmethod
@@ -295,16 +313,26 @@ class BudgetConfig:
             raise BudgetConfigError("形态配置必须为映射（含 budget 段）")
         section = _require_section("budget", config.get("budget"))
         notes: list[str] = []
+        channels, tiers_shape = _parse_channels(section, notes)
         return cls(
-            channels=_parse_channels(section),
-            tiers=_parse_tiers(section, notes),
+            channels=channels,
             peak_windows=_parse_peak_windows(section),
             calibration=_parse_calibration(section),
             reconcile=_parse_reconcile(section),
             ledger=_parse_ledger(section),
             runs=_parse_runs(section),
+            tiers_shape=tiers_shape,
             notes=tuple(notes),
         )
+
+    @property
+    def tiers(self) -> Mapping[str, BudgetTier]:
+        """**单渠道兼容视图**（019 的既有取值面）：仅在声明集合大小为 1 时可用。
+
+        多渠道下访问 ⇒ `BudgetConfigError`（不静默归并、不取首个渠道）——"同一档位不得跨渠道
+        串用"在 API 层同样成立；多渠道请按渠道取档（`tiers_of(channel_id)`）。
+        """
+        return _single_channel(self).tiers
 
     def channel(self, channel_id: str) -> ChannelSpec:
         """按渠道 id 取登记（缺即报错——不发明渠道，不静默回落）。"""
@@ -315,14 +343,18 @@ class BudgetConfig:
             )
         return spec
 
+    def tiers_of(self, channel_id: str) -> Mapping[str, BudgetTier]:
+        """按渠道取档位（薄委托：单一实现在模块级 `tiers_of`）。"""
+        return tiers_of(self, channel_id)
+
+    def tier_of(self, channel_id: str, tier_id: str) -> BudgetTier:
+        """按（渠道, 环节）取档（薄委托：单一实现在模块级 `tier_of`）。"""
+        return tier_of(self, channel_id, tier_id)
+
     def tier(self, tier_id: str) -> BudgetTier:
-        """按环节 id 取档（缺即报错——不取码内默认额度）。"""
-        tier = self.tiers.get(str(tier_id))
-        if tier is None:
-            raise BudgetConfigError(
-                f"环节 {tier_id!r} 未在 budget.tiers 声明（缺档即拒绝，不取码内默认）"
-            )
-        return tier
+        """**单渠道兼容视图**（缺档即报错——不取码内默认额度；多渠道下访问即报错）。"""
+        channel = _single_channel(self)
+        return tier_of(self, channel.channel_id, tier_id)
 
     def ledger_root(self) -> Path:
         """产物根：相对路径落仓库根，绝对路径原样使用（C4）。"""
@@ -336,12 +368,19 @@ class BudgetConfig:
         return self.peak_windows.is_peak(moment)
 
     def to_snapshot(self, channel_id: str) -> dict:
-        """装配时的生效档位快照（并入 Agent 的 `config_snapshot["budget_tiers"]`，C9）。"""
+        """装配时的生效档位快照（并入 Agent 的 `config_snapshot["budget_tiers"]`，C9）。
+
+        只落**本渠道**档位 + 渠道 id + `adapter` + `tiers_shape`（C11/C12：跨渠道不可见）。
+        """
         spec = self.channel(channel_id)
         return {
             "channel_id": spec.channel_id,
             "adapter": spec.adapter,
-            "tiers": {tier_id: tier.to_snapshot() for tier_id, tier in sorted(self.tiers.items())},
+            "tiers_shape": self.tiers_shape,
+            "tiers": {
+                tier_id: tier.to_snapshot()
+                for tier_id, tier in sorted(tiers_of(self, spec.channel_id).items())
+            },
             "peak_windows_snapshot": self.peak_windows.to_snapshot(),
             "calibration": dict(self.calibration),
             "reconcile": dict(self.reconcile),
@@ -354,14 +393,66 @@ def peak_windows_snapshot(cfg: BudgetConfig) -> dict:
     return cfg.peak_windows.to_snapshot()
 
 
-def sole_channel(cfg: BudgetConfig) -> ChannelSpec:
-    """本特性唯实例化一个渠道：**声明多个即拒绝装配**（不猜用哪个档位/账本，避免打错额度）。"""
-    if len(cfg.channels) != 1:
+# ---------------------------------------------------------------------------
+# 渠道分派（C12）：按配置声明的渠道集合分派额度（`sole_channel` 的单渠道硬拒绝已退役）
+# ---------------------------------------------------------------------------
+
+
+def declared_channels(cfg: BudgetConfig) -> tuple[ChannelSpec, ...]:
+    """配置声明的**全部**渠道（声明顺序）；空 ⇒ `BudgetConfigError`。"""
+    specs = tuple(cfg.channels.values())
+    if not specs:
+        raise BudgetConfigError("budget.channels 未声明任何渠道（缺项即报错，不取码内默认）")
+    return specs
+
+
+def channel_for_adapter(cfg: BudgetConfig, adapter_id: str) -> ChannelSpec:
+    """按**装配入口**（`channels.<id>.adapter`）反查唯一渠道（C12）。
+
+    0 个命中 ⇒ 报错（该装配入口未登记渠道，**不发明**）；
+    ≥2 个命中 ⇒ 报错（**歧义，不猜**用哪个账本）。
+    """
+    wanted = str(adapter_id)
+    matched = [spec for spec in declared_channels(cfg) if spec.adapter == wanted]
+    if not matched:
         raise BudgetConfigError(
-            f"budget.channels 必须恰好声明一个渠道，实际 {sorted(cfg.channels)}："
-            "装配面不猜用哪个（多渠道需先补齐按渠道分派的装配口径）"
+            f"装配入口 {wanted!r} 未在 budget.channels 登记渠道（不发明渠道、不静默回落）"
         )
-    return next(iter(cfg.channels.values()))
+    if len(matched) > 1:
+        raise BudgetConfigError(
+            f"装配入口 {wanted!r} 在多个渠道上声明"
+            f"（{sorted(spec.channel_id for spec in matched)}）：歧义，不猜用哪个账本"
+        )
+    return matched[0]
+
+
+def tiers_of(cfg: BudgetConfig, channel_id: str) -> Mapping[str, BudgetTier]:
+    """按渠道取档位（未登记渠道 ⇒ 报错；**单一实现**，`BudgetConfig` 侧只作薄委托）。"""
+    return cfg.channel(channel_id).tiers
+
+
+def tier_of(cfg: BudgetConfig, channel_id: str, tier_id: str) -> BudgetTier:
+    """按（渠道, 环节）取档（缺档即报错，**不取码内默认**）。"""
+    tier = tiers_of(cfg, channel_id).get(str(tier_id))
+    if tier is None:
+        raise BudgetConfigError(
+            f"环节 {tier_id!r} 未在 budget.tiers 声明"
+            f"（渠道 {channel_id!r}：缺档即拒绝，不取码内默认）"
+        )
+    return tier
+
+
+def _single_channel(cfg: BudgetConfig) -> ChannelSpec:
+    """单渠道兼容视图的前提检查（多渠道 ⇒ 报错，不静默归并）。"""
+    channels = declared_channels(cfg)
+    if len(channels) != 1:
+        raise BudgetConfigError(
+            f"budget.channels 声明了 {len(channels)} 个渠道"
+            f"（{sorted(spec.channel_id for spec in channels)}）：单渠道兼容视图不可用，"
+            "请按渠道取档（tiers_of(channel_id) / tier_of(channel_id, tier_id)）"
+            "——同一档位不得跨渠道串用"
+        )
+    return channels[0]
 
 
 def default_window_context(cfg: BudgetConfig, *, moment: datetime | None = None) -> dict:
@@ -420,6 +511,7 @@ class GuardAssembly:
 def assemble_guard(
     config_path: str | Path,
     *,
+    channel_id: str | None = None,
     window_context: Mapping[str, str] | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> GuardAssembly:
@@ -428,9 +520,26 @@ def assemble_guard(
     **真实渠道装配点的唯一入口**（链内唯一装配点 = `agents/pilot/backends.py`，最小规模
     校准入口 = `ops/smoke_llm.py`）：缺 `budget` 段、缺档、缺峰谷声明都在这两处**装配期拒绝**
     （FR-001：缺额度不得启动）——不是等到第一次调用才炸。
+
+    渠道按**配置声明的集合**分派（C12）：装配点先用 `channel_for_adapter(cfg, <装配入口>)`
+    解析出渠道再传 `channel_id=`（解析只有一个实现，装配点不各写一份）；`channel_id` 缺省时
+    仅当声明集合大小为 1 才取该渠道（019 既有 `assemble_guard(config_path)` 单渠道调用保留可用），
+    多渠道下缺省 ⇒ 报错（**不猜**用哪个账本）。
     """
     cfg = BudgetConfig.from_yaml(config_path)
-    channel = sole_channel(cfg)
+    if channel_id is None:
+        channels = declared_channels(cfg)
+        if len(channels) != 1:
+            raise BudgetConfigError(
+                f"budget.channels 声明了 {len(channels)} 个渠道"
+                f"（{sorted(spec.channel_id for spec in channels)}）：缺省渠道不可用，"
+                "装配点须先 channel_for_adapter(cfg, <装配入口>) 解析再传 channel_id="
+                "（不猜用哪个账本）"
+            )
+        channel = channels[0]
+    else:
+        # 未登记渠道不得装配门禁（缺声明即报错，不发明渠道）
+        channel = cfg.channel(channel_id)
     root = cfg.ledger_root()
     ledger = FileLedger(
         ledger_path(root, channel.channel_id),
@@ -838,14 +947,17 @@ class SpendGuard:
                     "guard_channel_id": self.channel_id,
                 },
             )
-        tier = self.cfg.tiers.get(tier_id)
+        tier = tiers_of(self.cfg, self.channel_id).get(tier_id)
         if tier is None:
             self._refuse(
                 tier=None,
                 reason="tier_undeclared",
                 moment=moment,
                 estimated_usd=estimated,
-                detail={"stage": tier_id, "declared_tiers": sorted(self.cfg.tiers)},
+                detail={
+                    "stage": tier_id,
+                    "declared_tiers": sorted(tiers_of(self.cfg, self.channel_id)),
+                },
             )
         window_key = self.window_key(tier, moment)
         at = moment.isoformat()
@@ -1013,7 +1125,12 @@ def _localize(moment: datetime, timezone: str) -> datetime:
     return moment.astimezone(zone) if moment.tzinfo else moment.replace(tzinfo=UTC).astimezone(zone)
 
 
-def _parse_channels(section: Mapping) -> dict[str, ChannelSpec]:
+def _parse_channels(section: Mapping, notes: list[str]) -> tuple[dict[str, ChannelSpec], str]:
+    """逐键校验渠道登记 + 档位命名空间，并判形状（`channels` / `legacy_flat`）。
+
+    每个 `channels.<id>` 必带**非空 `adapter`** 与 `bill`；档位在**本渠道内**（旧扁平形状
+    见下方归一分支）。缺项即报错、不取码内默认（FR-014）。
+    """
     raw = _require_section("budget.channels", _require_key("budget", section, "channels"))
     channels: dict[str, ChannelSpec] = {}
     for channel_id, channel in raw.items():
@@ -1039,9 +1156,15 @@ def _parse_channels(section: Mapping) -> dict[str, ChannelSpec]:
             raise BudgetConfigError(
                 f"{where}.bill.fetch 必须 ∈ ['export', 'api']，实际为 {fetch!r}"
             )
+        nested = spec.get("tiers")
         channels[str(channel_id)] = ChannelSpec(
             channel_id=str(channel_id),
             adapter=_require_str(f"{where}.adapter", _require_key(where, spec, "adapter")),
+            tiers=(
+                _parse_tier_map(nested, where=f"{where}.tiers", notes=notes)
+                if nested is not None
+                else {}
+            ),
             bill=ChannelBillSpec(
                 format_id=_require_str(
                     f"{where}.bill.format", _require_key(f"{where}.bill", bill, "format")
@@ -1057,35 +1180,64 @@ def _parse_channels(section: Mapping) -> dict[str, ChannelSpec]:
                 },
             ),
         )
-    return channels
+    flat = section.get("tiers")
+    if flat is None:
+        for spec in channels.values():
+            if not spec.tiers:
+                raise BudgetConfigError(
+                    f"budget.channels.{spec.channel_id}.tiers 必须为非空映射"
+                    "（键 = 环节 id；缺项即报错，不取码内默认）"
+                )
+        return channels, TIERS_SHAPES[0]
+    # 旧扁平形状兼容读（C11）：恰好声明 1 个渠道 ⇒ 显式归入该渠道；歧义或新旧并存 ⇒ 报错
+    if len(channels) != 1:
+        raise BudgetConfigError(
+            f"budget.tiers 为旧扁平形状，但 budget.channels 声明了 {len(channels)} 个渠道"
+            f"（{sorted(channels)}）：归属歧义，不静默归入任一渠道"
+        )
+    only = next(iter(channels.values()))
+    if only.tiers:
+        raise BudgetConfigError(
+            f"budget.tiers（旧扁平）与 budget.channels.{only.channel_id}.tiers 同时出现："
+            "两个来源，不静默择一（请把档位归位到渠道下）"
+        )
+    channels[only.channel_id] = replace(
+        only, tiers=_parse_tier_map(flat, where="budget.tiers", notes=notes)
+    )
+    notes.append(
+        f"旧扁平 tiers 显式归入渠道 {only.channel_id}"
+        "（迁移形状 legacy_flat；只发生在读入内存这一步）"
+    )
+    return channels, TIERS_SHAPES[1]
 
 
-def _parse_tiers(section: Mapping, notes: list[str]) -> dict[str, BudgetTier]:
-    raw = _require_section("budget.tiers", _require_key("budget", section, "tiers"))
+def _parse_tier_map(raw: object, *, where: str, notes: list[str]) -> dict[str, BudgetTier]:
+    """档位映射解析（键 = 环节 id）：缺 `limit_usd` / `window.kind` / `on_exhausted` 即报错。"""
+    section = _require_section(where, raw)
     tiers: dict[str, BudgetTier] = {}
-    for tier_id, tier in raw.items():
-        where = f"budget.tiers.{tier_id}"
-        spec = _require_section(where, tier)
-        window = _require_section(f"{where}.window", _require_key(where, spec, "window"))
-        kind = _require_str(f"{where}.window.kind", _require_key(f"{where}.window", window, "kind"))
+    for tier_id, tier in section.items():
+        entry = f"{where}.{tier_id}"
+        spec = _require_section(entry, tier)
+        window = _require_section(f"{entry}.window", _require_key(entry, spec, "window"))
+        kind = _require_str(f"{entry}.window.kind", _require_key(f"{entry}.window", window, "kind"))
         if kind not in WINDOW_KINDS:
             raise BudgetConfigError(
-                f"{where}.window.kind 必须 ∈ {list(WINDOW_KINDS)}，实际为 {kind!r}"
+                f"{entry}.window.kind 必须 ∈ {list(WINDOW_KINDS)}，实际为 {kind!r}"
             )
-        exhausted = _require_str(f"{where}.on_exhausted", _require_key(where, spec, "on_exhausted"))
+        exhausted = _require_str(f"{entry}.on_exhausted", _require_key(entry, spec, "on_exhausted"))
         if exhausted != ON_EXHAUSTED_REFUSE:
             raise BudgetConfigError(
-                f"{where}.on_exhausted 取值域单元素 {ON_EXHAUSTED_REFUSE!r}，实际为 {exhausted!r}"
+                f"{entry}.on_exhausted 取值域单元素 {ON_EXHAUSTED_REFUSE!r}，实际为 {exhausted!r}"
                 "（不排队、不降级为模拟）"
             )
         note = str(spec.get("note") or "")
         if not note.strip():
             # 口径必须可追溯：缺 note 记 notes 告警但可通过（运营补全前不阻塞装配）
-            notes.append(f"{where}.note 缺失：额度口径不可追溯（缺省通过但记 notes 告警）")
+            notes.append(f"{entry}.note 缺失：额度口径不可追溯（缺省通过但记 notes 告警）")
         tiers[str(tier_id)] = BudgetTier(
             tier_id=str(tier_id),
             limit_usd=_require_amount(
-                f"{where}.limit_usd", _require_key(where, spec, "limit_usd"), positive=True
+                f"{entry}.limit_usd", _require_key(entry, spec, "limit_usd"), positive=True
             ),
             window_kind=kind,
             note=note,

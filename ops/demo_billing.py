@@ -81,8 +81,9 @@ def _budget_config_text(root: Path, *, tier_limit_usd: float = 5.0) -> str:
     """
     payload = yaml.safe_load(MOVIE_YAML.read_text(encoding="utf-8"))
     payload["budget"]["ledger"]["root"] = str(root / "billing")
-    for tier in payload["budget"]["tiers"].values():
-        tier["limit_usd"] = tier_limit_usd
+    for channel in payload["budget"]["channels"].values():
+        for tier in channel["tiers"].values():
+            tier["limit_usd"] = tier_limit_usd
     payload["budget"]["calibration"]["min_samples"] = 1
     return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
 
@@ -117,15 +118,17 @@ def _step_1_额度声明与缺项拒绝(root: Path, config_path: Path, report: d
         FileLedger,
         assemble_guard,
         ledger_path,
+        tiers_of,
     )
     from core.llm_gateway.backends.mock import MockBackend
     from core.llm_gateway.gateway import LLMGateway
 
     assembly = assemble_guard(config_path)
+    declared = tiers_of(assembly.cfg, assembly.channel_id)
     stated = {
-        "tiers": sorted(assembly.cfg.tiers),
+        "tiers": sorted(declared),
         "peak_windows": assembly.cfg.peak_windows.to_snapshot(),
-        "tier_limits": {tier: assembly.cfg.tiers[tier].limit_usd for tier in assembly.cfg.tiers},
+        "tier_limits": {tier_id: tier.limit_usd for tier_id, tier in declared.items()},
     }
     # 缺项即拒绝：删掉 budget 段
     broken = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -139,7 +142,7 @@ def _step_1_额度声明与缺项拒绝(root: Path, config_path: Path, report: d
 
     # 超限 ⇒ 调用前拒绝：把该档额度压到"任何预估额都超"
     tiny = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    tiny["budget"]["tiers"]["screenplay"]["limit_usd"] = 1e-6
+    tiny["budget"]["channels"][assembly.channel_id]["tiers"]["screenplay"]["limit_usd"] = 1e-6
     tiny_path = _write_config(root, yaml.safe_dump(tiny, allow_unicode=True), "tiny.yaml")
     guard = assemble_guard(tiny_path)
     backend = MockBackend()
@@ -343,9 +346,9 @@ def _step_3_未校准扩量拒绝留痕(root: Path, config_path: Path, report: d
             str(config_path),
         ]
     )
-    rewritten = yaml.safe_load(config_path.read_text(encoding="utf-8"))["budget"]["tiers"][
-        "screenplay"
-    ]
+    rewritten = yaml.safe_load(config_path.read_text(encoding="utf-8"))["budget"]["channels"][
+        assembly.channel_id
+    ]["tiers"]["screenplay"]
     kinds = [
         entry["kind"]
         for entry in AlertLog(alerts_path(assembly.root, assembly.channel_id)).entries()
@@ -494,10 +497,11 @@ def _step_5_跨进程账本并发共享额度(root: Path, config_path: Path, rep
     from core.billing.budget import BudgetConfig, FileLedger, ledger_path
 
     concurrency_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    concurrency_config["budget"]["tiers"]["dev"]["limit_usd"] = 0.5
-    concurrency_config["budget"]["tiers"]["dev"]["window"] = {"kind": "day"}
-    for tier in concurrency_config["budget"]["tiers"].values():
-        tier["window"] = {"kind": "day"}
+    for channel in concurrency_config["budget"]["channels"].values():
+        for tier_id, tier in channel["tiers"].items():
+            tier["window"] = {"kind": "day"}
+            if tier_id == "dev":
+                tier["limit_usd"] = 0.5
     concurrency_path = _write_config(
         root, yaml.safe_dump(concurrency_config, allow_unicode=True), "concurrency.yaml"
     )
@@ -507,7 +511,9 @@ def _step_5_跨进程账本并发共享额度(root: Path, config_path: Path, rep
     worker.parent.mkdir(parents=True, exist_ok=True)
     worker.write_text(_WORKER_SOURCE, encoding="utf-8")
     config_json = root / "fixtures" / "budget.json"
-    config_json.write_text(json.dumps(_budget_section(cfg), ensure_ascii=False), encoding="utf-8")
+    config_json.write_text(
+        json.dumps(_budget_section(cfg, channel), ensure_ascii=False), encoding="utf-8"
+    )
     results = [
         subprocess.run(
             [
@@ -812,7 +818,9 @@ print(json.dumps({"ok": ok, "refused": refused}))
 """
 
 
-def _budget_section(cfg) -> dict:
+def _budget_section(cfg, channel_id: str) -> dict:
+    from core.billing.budget import tiers_of
+
     return {
         "channels": {
             channel.channel_id: {
@@ -836,7 +844,7 @@ def _budget_section(cfg) -> dict:
                 "on_exhausted": "refuse",
                 "note": tier.note,
             }
-            for tier_id, tier in cfg.tiers.items()
+            for tier_id, tier in tiers_of(cfg, channel_id).items()
         },
         "peak_windows": {
             "timezone": cfg.peak_windows.timezone,

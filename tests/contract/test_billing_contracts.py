@@ -147,6 +147,23 @@ def _channel(cfg) -> str:
     return next(iter(cfg.channels))
 
 
+def _llm_channel_key(section: dict) -> str:
+    """`budget:` 段里 LLM 渠道的键（按**装配引用**定位，不在用例里写死渠道 id）。"""
+    return next(
+        key for key, spec in section["channels"].items() if str(spec.get("adapter")) == "pilot_llm"
+    )
+
+
+def _declared_tier_ids() -> set[str]:
+    """两形态各渠道 `channels.<id>.tiers` 的键**并集**（C13.2：不是扁平 `budget.tiers`）。"""
+    return {
+        str(key)
+        for form in FORMS
+        for channel in _section(form)["budget"]["channels"].values()
+        for key in channel["tiers"]
+    }
+
+
 def _bill(cfg, channel, fixture, *, text=None, bill_id=None):
     spec = cfg.channel(channel).bill
     return normalize_bill(
@@ -600,12 +617,13 @@ class TestC9分档与环节归属:
         with pytest.raises(BudgetConfigError):
             assemble_guard(_write_config(tmp_path, payload))
         payload = _section("movie")
-        payload["budget"]["tiers"]["screenplay"].pop("limit_usd")
+        llm = _llm_channel_key(payload["budget"])
+        payload["budget"]["channels"][llm]["tiers"]["screenplay"].pop("limit_usd")
         with pytest.raises(BudgetConfigError, match="limit_usd"):
             assemble_guard(_write_config(tmp_path, payload, name="no-limit.yaml"))
 
     def test_调用点_stage_取值属于声明的环节(self):
-        declared = {str(key) for form in FORMS for key in _section(form)["budget"]["tiers"]}
+        declared = _declared_tier_ids()
         sites = [
             (path, lineno, value)
             for path in _scanned_modules()
@@ -818,13 +836,23 @@ class TestC12校准先决与扩量:
             )
 
     def test_扩量定点改写且留痕(
-        self, tmp_path, billing_root, budget_config_factory, billing_calibration_factory
+        self,
+        tmp_path,
+        billing_root,
+        budget_config_factory,
+        billing_budget_factory,
+        billing_calibration_factory,
     ):
         from core.billing.calibration import raise_tier
 
         cfg = budget_config_factory()
         channel = _channel(cfg)
-        config = _write_config(tmp_path, _with_root(_section("movie"), tmp_path))
+        # 020（C11）：旧扁平形状归一（夹具按 LLM 渠道收敛为单渠道并暴露扁平 `tiers`）——
+        # 配置与 cfg 同源，故定点改写路径唯一；新形状（`channels.<id>.tiers`）的定点改写
+        # 由 `tests/unit/test_billing_cli.py` 的 `raise-tier` 用例在真实 movie.yaml 上覆盖
+        config = _write_config(
+            tmp_path, _with_root({"form": "movie", "budget": billing_budget_factory()}, tmp_path)
+        )
         before = config.read_text(encoding="utf-8")
         params = billing_calibration_factory(cfg)
         record_calibration(cfg=cfg, **params, root=billing_root)

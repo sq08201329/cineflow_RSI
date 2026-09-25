@@ -556,8 +556,9 @@ def _tiny_tier_config(tmp_path, form: str = "movie"):
     import yaml
 
     payload = yaml.safe_load((Path("configs") / f"{form}.yaml").read_text(encoding="utf-8"))
-    for tier in payload["budget"]["tiers"].values():
-        tier["limit_usd"] = REFUSE_AT
+    for channel in payload["budget"]["channels"].values():  # 档位在渠道内（C11 命名空间）
+        for tier in channel["tiers"].values():
+            tier["limit_usd"] = REFUSE_AT
     payload["budget"]["ledger"]["root"] = str(tmp_path / "billing")
     target = tmp_path / "configs" / f"{form}-tiny-tiers.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)

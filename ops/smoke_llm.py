@@ -59,9 +59,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from agents.pilot.pilot import PilotInputs, run_pilot  # noqa: E402
-from core.billing.budget import (  # noqa: E402 - 019：门禁装配与拒绝文案
+from core.billing.budget import (  # noqa: E402 - 019/020：门禁装配、渠道解析与拒绝文案
+    BudgetConfig,
     BudgetRefusedError,
     assemble_guard,
+    channel_for_adapter,
     refusal_reason,
 )
 from core.billing.runlog import RecordingGateway  # noqa: E402 - 019：运行记录（C15/T1942）
@@ -203,7 +205,16 @@ def build_gateway(
     """
     loaded, profile = resolve_profile(config_path, profile_id)
     scoped = restricted_profile_set(loaded, profile.profile_id)
-    budget = assemble_guard(config_path)
+    # 020（C12）：渠道**按装配引用解析**（`pilot_llm` ⇒ 唯一渠道），不再经单渠道硬拒绝；
+    # 装配引用取链内装配点的**同一常量**（单一来源，避免两处字面量各自漂移）
+    from agents.pilot.backends import LLM_CHANNEL_ADAPTER
+
+    budget = assemble_guard(
+        config_path,
+        channel_id=channel_for_adapter(
+            BudgetConfig.from_yaml(config_path), LLM_CHANNEL_ADAPTER
+        ).channel_id,
+    )
     gateway = LLMGateway(
         backend if backend is not None else HttpBackend.from_profile(profile, environ=environ),
         price_book=scoped.snapshot().price_book(),

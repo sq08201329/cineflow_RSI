@@ -431,21 +431,29 @@ def _stage_sections() -> tuple[str, ...]:
 
 
 def _declared_tier_limits(config_path: Path) -> dict[str, float]:
-    """LLM 腿的声明额度（键 = **环节 id**）：`budget.tiers` 的声明值，缺段/缺档即拒绝启动。
+    """LLM 腿的声明额度（键 = **环节 id**）：**LLM 渠道** `tiers` 的声明值，缺段/缺档即拒绝启动。
 
     **不发明 agent → 环节映射**（如实登记的口径张力）：环节 id 由**调用点**声明
     （`chat(..., stage=<环节 id>)`），与 Agent 名不必一一对应（judge 一个角色覆盖四个环节、
-    一个 Agent 可有多个环节），故此处按环节 id 原样登记。
+    一个 Agent 可有多个环节），故此处按环节 id 原样登记。渠道按**装配引用**解析（C12）：
+    额度是**按渠道分派**的，预检只取 LLM 渠道的档位。
     """
-    from core.billing.budget import BudgetConfig
+    from agents.pilot.backends import LLM_CHANNEL_ADAPTER
+    from core.billing.budget import (
+        BudgetConfig,
+        channel_for_adapter,
+        tiers_of,
+    )
 
     try:
         cfg = BudgetConfig.from_yaml(config_path)
+        channel_id = channel_for_adapter(cfg, LLM_CHANNEL_ADAPTER).channel_id
+        tiers = tiers_of(cfg, channel_id)
     except Exception as exc:  # noqa: BLE001 - 预检统一收口：缺额度不得启动
         raise PrecheckError(f"预算不可用（budget 段）：{exc}") from exc
-    if not cfg.tiers:
+    if not tiers:
         raise PrecheckError("预算不可用：budget.tiers 为空（缺档即拒绝启动）")
-    return {tier_id: tier.limit_usd for tier_id, tier in cfg.tiers.items()}
+    return {tier_id: tier.limit_usd for tier_id, tier in tiers.items()}
 
 
 def precheck(

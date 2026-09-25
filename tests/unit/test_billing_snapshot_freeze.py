@@ -69,8 +69,10 @@ def _tree_of(store, tree_id: str, agent_id: str):
 def _assert_frozen(snapshot: dict, cfg: BudgetConfig, channel: str) -> None:
     """快照形状与取值：档位逐档与配置一致 + 峰谷事实随行（C5/C6 口径三处可见之一）。"""
     assert snapshot["channel_id"] == channel
-    assert set(snapshot["tiers"]) == set(cfg.tiers)
-    for tier_id, tier in cfg.tiers.items():
+    assert snapshot["tiers_shape"] == cfg.tiers_shape  # 档位形状随快照（C11 可追溯）
+    tiers = cfg.tiers_of(channel)  # 快照只含**本渠道**档位（按渠道取档，C12）
+    assert set(snapshot["tiers"]) == set(tiers)
+    for tier_id, tier in tiers.items():
         frozen = snapshot["tiers"][tier_id]
         assert frozen["limit_usd"] == pytest.approx(tier.limit_usd)  # 值 = 配置声明
         assert frozen["window"] == {"kind": tier.window_kind}
@@ -488,8 +490,9 @@ def _config_file_with_limits(tmp_path: Path, limit: float) -> Path:
     payload = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / "configs" / "movie.yaml").read_text(encoding="utf-8")
     )
-    for tier in payload["budget"]["tiers"].values():
-        tier["limit_usd"] = limit
+    for channel in payload["budget"]["channels"].values():  # 档位在渠道内（C11 命名空间）
+        for tier in channel["tiers"].values():
+            tier["limit_usd"] = limit
     payload["budget"]["ledger"]["root"] = str(tmp_path / "billing")
     target = tmp_path / "configs" / "movie-frozen.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)

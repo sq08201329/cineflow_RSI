@@ -174,7 +174,9 @@ class TestC2_C3链首与预算:
         tiers = set()
         for form in ("movie", "shortdrama"):
             payload = yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text("utf-8"))
-            tiers |= set(payload["budget"]["tiers"])
+            # 020（C11）：档位在**渠道内** —— 取各渠道 `channels.<id>.tiers` 的键并集
+            for channel in payload["budget"]["channels"].values():
+                tiers |= set(channel["tiers"])
         sites = stages_module.chat_call_sites()
         assert len(sites) == _CHAT_CALL_SITE_COUNT
         assert set(stages_module.chat_stage_ids()) <= tiers
@@ -182,7 +184,12 @@ class TestC2_C3链首与预算:
 
     def test_缺_dev_档即拒绝启动(self, run_context, tmp_path):
         payload = yaml.safe_load(run_context["config_path"].read_text("utf-8"))
-        payload["budget"]["tiers"].pop("dev")
+        llm = next(
+            key
+            for key, spec in payload["budget"]["channels"].items()
+            if spec["adapter"] == "pilot_llm"
+        )
+        payload["budget"]["channels"][llm]["tiers"].pop("dev")
         broken = tmp_path / "configs" / "no-dev-tier.yaml"
         broken.parent.mkdir(parents=True, exist_ok=True)
         broken.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), "utf-8")

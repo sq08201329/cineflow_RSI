@@ -39,8 +39,16 @@ from agents.promo.platform.base import UnavailableError as PromoUnavailableError
 from agents.sound.platform.base import UnavailableError as SoundUnavailableError
 from agents.storyboard.platform.base import UnavailableError as StoryboardUnavailableError
 from agents.visual.platform.base import UnavailableError as VisualUnavailableError
-from core.billing.budget import assemble_guard  # 019：真实渠道装配点的门禁装配
-from core.billing.runlog import RecordingGateway  # 019：运行记录（C15/T1942）
+from core.billing.budget import (  # 019/020：真实渠道装配点的门禁装配 + 渠道解析
+    BudgetConfig,
+    BudgetConfigError,
+    assemble_guard,
+    channel_for_adapter,
+)
+from core.billing.runlog import (  # 019/020：运行记录 + 投放调用门禁包装
+    RecordingChannelCall,
+    RecordingGateway,
+)
 from core.llm_gateway.gateway import GatewayError, LLMGateway
 from core.orchestration.errors import OrchestrationError
 
@@ -61,6 +69,12 @@ PLATFORM_SLOTS = ("storyboard", "visual", "sound", "editing", "promo")
 LLM_SLOT = "llm"
 OVERRIDE_KEYS = (LLM_SLOT, *PLATFORM_SLOTS)
 SOUND_TYPES = ("tts", "sfx", "music")
+
+# 渠道的**装配引用**（`budget.channels.<id>.adapter` 的取值）：装配点声明"我是谁"，
+# 据此经 `channel_for_adapter` 反查**唯一**渠道（C11/C12）。取值域不变：019 既有 `pilot_llm`
+# **原样保留、不重命名**；投放渠道取值为 C11 的**权威定名** `promo_platform`。
+LLM_CHANNEL_ADAPTER = "pilot_llm"
+PROMO_CHANNEL_ADAPTER = "promo_platform"
 
 # 单一映射声明（功能 018 / C12）：环节 id → 后端槽位。`dev`/`script` 是 **LLM 腿专属**环节
 # （`PLATFORM_SLOTS` 不含它们），其余五环取同名平台槽位。**不得**按 `resolved` 键名与 stage_id
@@ -277,7 +291,14 @@ def build_backends(
     # 019（C10 ①/②）：真实渠道装配点必须接**非 None** 的预算门禁——档位、渠道 id、账本、
     # 告警写手与渠道日历一次装配（缺 budget 段/缺档/缺峰谷声明在此装配期拒绝，
     # 不等到第一次调用）；守卫生效后超限调用被拒且**成本零入账**
-    budget = assemble_guard(config_path)
+    # 020（C12）：渠道**按装配引用解析**（`pilot_llm` ⇒ 唯一渠道；解析只有一个实现），
+    # 不再经 `sole_channel` 的单渠道硬拒绝——多渠道配置（短剧态 `llm` + `media`）下同样装配成功
+    budget = assemble_guard(
+        config_path,
+        channel_id=channel_for_adapter(
+            BudgetConfig.from_yaml(config_path), LLM_CHANNEL_ADAPTER
+        ).channel_id,
+    )
     # 019（C15/T1942）：网关外层包**运行记录**（一次调用 = 一条 entry；来源按后端声明如实标注，
     # 模拟后端 = simulated ⇒ 不计入 covered_days）
     gateway = RecordingGateway(
@@ -316,7 +337,11 @@ def build_backends(
         editing=_guard(
             "editing", resolved["editing"], lambda: _editing(resolved["editing"], configs)
         ),
-        promo=_guard("promo", resolved["promo"], lambda: _promo(resolved["promo"], configs)),
+        promo=_guard(
+            "promo",
+            resolved["promo"],
+            lambda: _promo(resolved["promo"], configs, config_path),
+        ),
     )
 
 
@@ -396,14 +421,50 @@ def _editing(kind: str, configs):
     return HttpRealEditRender.from_env()
 
 
-def _promo(kind: str, configs):
+def _promo(kind: str, configs, config_path: str | Path):
+    """宣发（C 路径投放）装配点：模拟后端原样；**真实后端外层包投放门禁包装**（C12/C14/T2049）。
+
+    - 渠道由 `channel_for_adapter(cfg, "promo_platform")` 解析（**未登记 ⇒ 装配期显式拒绝**并指出
+      "该形态未登记投放渠道"——电影态不登记投放渠道，故在电影态声明真实投放即在此拒绝）；
+    - `stage` = 该渠道**恰好一个**投放环节档的 id（键即环节 id，**不在码内写死环节名**；
+      多于一个 ⇒ 拒绝，不猜用哪一档）；
+    - 真实适配器构造（`from_env()`）缺凭证 ⇒ 经 `_guard` 收口为装配错误（点名缺失变量、
+      **零落树零扣费、绝不静默回落模拟**）；
+    - 本函数**不加形态判断分支**（原则五）：只看 `pilot` 段取值 + 配置声明的渠道集合。
+    """
     if kind == SIMULATED:
         from agents.promo.platform.simulated import SimulatedPlatform
 
         return SimulatedPlatform(configs.promo.simulated_platform)
     from agents.promo.platform.http_real import HttpRealPlatform
 
-    return HttpRealPlatform.from_env()
+    cfg = BudgetConfig.from_yaml(config_path)
+    try:
+        channel = channel_for_adapter(cfg, PROMO_CHANNEL_ADAPTER)
+    except BudgetConfigError as exc:
+        raise BackendAssemblyError(
+            f"该形态未登记投放渠道（{config_path} 的 budget.channels 未声明 "
+            f"adapter={PROMO_CHANNEL_ADAPTER!r}）：声明真实投放即必须登记渠道；"
+            "此处拒绝启动（不静默降级为模拟、不发明渠道）"
+        ) from exc
+    assembly = assemble_guard(config_path, channel_id=channel.channel_id)
+    return RecordingChannelCall(
+        HttpRealPlatform.from_env(),
+        assembly=assembly,
+        stage=_delivery_stage(channel),
+        source=SOURCE_REAL,
+    )
+
+
+def _delivery_stage(channel) -> str:
+    """投放环节 id：该渠道**恰好一个**档位键（多于一个 ⇒ 拒绝，不猜用哪一档）。"""
+    tiers = sorted(channel.tiers)
+    if len(tiers) != 1:
+        raise BackendAssemblyError(
+            f"投放渠道 {channel.channel_id!r} 必须恰好声明一个投放环节档"
+            f"（budget.channels.<id>.tiers），实际 {tiers}：档位歧义即拒绝（不猜）"
+        )
+    return tiers[0]
 
 
 def _llm_profiles_for(config_path: str | Path):

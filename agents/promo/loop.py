@@ -27,9 +27,11 @@ from agents.promo.platform.base import (
     RateLimitedError,
     UnavailableError,
 )
-from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与崩溃可辨
+from core.billing.budget import (  # 019/020（C9/C10/C14）：快照冻结 + 拒绝与崩溃可辨
+    BudgetRefusedError,
     gateway_budget_snapshot,
     isolation_reason,
+    refusal_reason,
     with_budget_tiers,
 )
 from core.llm_gateway.gateway import LLMGateway
@@ -423,6 +425,24 @@ def _run_material(
     # 4) 投放（适配器瞬时错误退避重试，上限 3 次；其余错误直接失败）
     try:
         campaign = _create_campaign_with_retry(adapter, material, requested, round_id, sleep)
+    except BudgetRefusedError as exc:
+        # 020（C14）：**跨进程账本门禁**在投放调用前拒绝——平台 0 次调用、成本零入账；
+        # 原因沿用 core/billing 的单一措辞来源（点名环节与余量），与本函数第 3 步的
+        # 015 按轮上限文案（"预算门禁…（拒投）"）**可分辨**；两道门禁各自在位、互不替代
+        reason = refusal_reason(exc)
+        _append_child(
+            store,
+            tree_id=tree_id,
+            root_id=root_id,
+            material=material,
+            gen_params=gen_params,
+            status=NodeStatus.EVALUATED,
+            score=0.0,
+            breakdown=breakdown,
+            cost=_cost_record(gen_cost),
+            reason=reason,
+        )
+        return {"material_id": material_id, "status": "rejected", "reason": reason}
     except PlatformError as exc:
         _record_campaign(
             engine,

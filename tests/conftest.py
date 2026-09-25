@@ -4126,6 +4126,8 @@ def dev_data_dir(tmp_path):
 
 # 夹具的记账币种（与账单条目币种比对；异币种条目必须带 fx）
 _BILLING_ACCOUNTING_CURRENCY = "USD"
+# LLM 渠道的**装配引用**（功能 020：夹具按它收敛为单渠道，见 `_billing_budget_payload`）
+_BILLING_LLM_ADAPTER = "pilot_llm"
 
 
 def _billing_budget_payload(
@@ -4135,7 +4137,14 @@ def _billing_budget_payload(
     window_kind: str | None,
     **overrides,
 ) -> dict:
-    """小额度假 `budget:` 段：从真实形态配置派生后压额度/窗口，其余逐字保留。"""
+    """小额度假 `budget:` 段：从真实形态配置派生后压额度/窗口，其余逐字保留。
+
+    **功能 020（C11 的夹具兼容规则）**：档位命名空间落地后，本夹具按**装配引用**
+    （`adapter == pilot_llm`）收敛为**单渠道**并把该渠道档位以**旧扁平 `tiers`** 暴露 ——
+    `billing_budget_factory(...)["tiers"]` 与 `budget_config_factory(tiers=…)` 的**调用体零改动**，
+    同时顺带覆盖"旧扁平形状仍可读且显式归一"这条路径。**多渠道**场景（跨渠道串用、歧义报错、
+    投放渠道账单面）由 `tests/unit/test_billing_channels.py` 从**真实配置**自行构造。
+    """
     import copy
 
     import yaml
@@ -4145,11 +4154,22 @@ def _billing_budget_payload(
             "budget"
         ]
     )
+    channels = payload.get("channels")
+    if isinstance(channels, dict) and channels:
+        llm_key = next(
+            key
+            for key, spec in channels.items()
+            if isinstance(spec, dict) and str(spec.get("adapter")) == _BILLING_LLM_ADAPTER
+        )
+        llm_channel = channels[llm_key]
+        if llm_channel.get("tiers") is not None:
+            payload["tiers"] = llm_channel.pop("tiers")
+        payload["channels"] = {llm_key: llm_channel}
     if tier_limit_usd is not None:
-        for tier in payload["tiers"].values():
+        for tier in (payload.get("tiers") or {}).values():
             tier["limit_usd"] = float(tier_limit_usd)
     if window_kind is not None:
-        for tier in payload["tiers"].values():
+        for tier in (payload.get("tiers") or {}).values():
             tier["window"] = {"kind": window_kind}
     payload.update(overrides)
     return payload
@@ -4159,7 +4179,9 @@ def _billing_budget_payload(
 def billing_budget_factory():
     """两形态小额度假 `budget:` 段工厂：`_make(form="movie"|"shortdrama", ...)` → 段 dict。
 
-    只压额度与窗口（默认 `day`，避免夹具依赖 `run`/`period` 窗口实例）；键集与真实配置一致。
+    只压额度与窗口（默认 `day`，避免夹具依赖 `run`/`period` 窗口实例）；**020 起**该段按
+    **LLM 渠道**收敛为单渠道 + 旧扁平 `tiers`（见 `_billing_budget_payload` 的 C11 兼容规则），
+    故 `["tiers"]` / `budget_config_factory(tiers=…)` 的既有调用体零改动。
     """
 
     def _make(
@@ -4172,6 +4194,36 @@ def billing_budget_factory():
         return _billing_budget_payload(
             form, tier_limit_usd=tier_limit_usd, window_kind=window_kind, **overrides
         )
+
+    return _make
+
+
+@pytest.fixture()
+def billing_channels_payload_factory(billing_budget_factory):
+    """**多渠道新形状**段工厂（功能 020 / C11）：`_make(channels=("llm", "other"), …)` → 段 dict。
+
+    单渠道夹具（`billing_budget_factory`）按 C11 收敛为**旧扁平**形状（覆盖"旧形状仍可读"）；
+    跨渠道串用、按渠道取档、多渠道 + 旧扁平歧义报错三条纪律需要**多渠道新形状**，
+    故本工厂把该渠道档位复制到每个声明的渠道下（键集与真实配置一致，只复制档位取值）。
+    """
+
+    import copy
+
+    def _make(
+        form: str = "movie",
+        *,
+        channels=("llm", "channel-iso"),
+        **overrides,
+    ) -> dict:
+        section = billing_budget_factory(form, **overrides)
+        flat = section.pop("tiers")
+        declared = section["channels"]
+        template = next(iter(declared.values()))
+        section["channels"] = {
+            channel_id: {**copy.deepcopy(template), "tiers": copy.deepcopy(flat)}
+            for channel_id in channels
+        }
+        return section
 
     return _make
 

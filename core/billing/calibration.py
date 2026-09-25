@@ -29,7 +29,13 @@ from core.billing.bill import (
     system_digest,
     write_snapshot,
 )
-from core.billing.budget import AlertLog, BudgetConfig, alerts_path, channel_dir
+from core.billing.budget import (
+    TIERS_SHAPES,
+    AlertLog,
+    BudgetConfig,
+    alerts_path,
+    channel_dir,
+)
 from core.yaml_edit import YamlEditError, replace_section_entries, upsert_section_entries
 
 # 渠道校准状态取值域（由最新记录派生）
@@ -151,7 +157,7 @@ def record_calibration(
     if not str(calibration_id or "").strip():
         raise CalibrationRecordError("calibration_id 不能为空（无 id 即无从引用，拒绝记录）")
     spec = cfg.channel(channel_id)
-    tier = cfg.tier(tier_id)
+    tier = cfg.tier_of(channel_id, tier_id)  # 按（渠道, 环节）取档（C12：同一档位不跨渠道串用）
     samples = _require_sample_count(sample_count)
     measured = _require_amount("measured_cost_usd", measured_cost_usd, positive=False)
     expected = _require_amount("expected_cost_usd", expected_cost_usd, positive=True)
@@ -256,7 +262,7 @@ def require_calibration(
     if not str(calibration_id or "").strip():
         raise CalibrationRecordError("拒绝扩量（无 calibration_id）：校准记录是扩量的先决条件")
     cfg.channel(channel_id)
-    cfg.tier(tier_id)
+    cfg.tier_of(channel_id, tier_id)  # 缺档即拒绝（不发明档位）
     try:
         record = load_calibration(calibration_id, channel_id=channel_id, root=root)
     except Exception as exc:  # noqa: BLE001 - 记录缺失/完整性失败一律拒绝扩量
@@ -365,7 +371,7 @@ def raise_tier(
     """
     if not str(by or "").strip() or not str(reason or "").strip():
         raise CalibrationRecordError("扩量必须带操作人与理由（留痕不得无归属）")
-    tier = cfg.tier(tier_id)  # 缺档即拒绝（不发明档位）
+    tier = cfg.tier_of(channel_id, tier_id)  # 缺档即拒绝（不发明档位）
     cfg.channel(channel_id)
     new_limit = _require_amount("limit_usd", limit_usd, positive=True)
     moment = at or datetime.now(UTC)
@@ -404,17 +410,20 @@ def raise_tier(
         raise
     path = Path(config_path)
     text = path.read_text(encoding="utf-8")
-    try:
-        rewritten = replace_section_entries(
-            text, ("budget", "tiers", tier_id), {"limit_usd": new_limit}
-        )
-    except YamlEditError as exc:
-        raise CalibrationRecordError(
-            f"额度定点改写失败（budget.tiers.{tier_id}.limit_usd 行形态不支持？）：{exc}"
-        ) from exc
-    rewritten = upsert_section_entries(
-        rewritten, ("budget", "tiers", tier_id), {"calibrated_by": str(calibration_id)}
+    # 定点改写路径随档位形状（C11）：旧扁平归一形状落 `budget.tiers.<环节>`，
+    # 新形状落 `budget.channels.<渠道>.tiers.<环节>`——改的是配置的**声明位置**，不是额度语义
+    legacy = cfg.tiers_shape == TIERS_SHAPES[1]
+    tier_path = (
+        ("budget", "tiers", tier_id)
+        if legacy
+        else ("budget", "channels", channel_id, "tiers", tier_id)
     )
+    dotted = ".".join((*tier_path, "limit_usd"))
+    try:
+        rewritten = replace_section_entries(text, tier_path, {"limit_usd": new_limit})
+    except YamlEditError as exc:
+        raise CalibrationRecordError(f"额度定点改写失败（{dotted} 行形态不支持？）：{exc}") from exc
+    rewritten = upsert_section_entries(rewritten, tier_path, {"calibrated_by": str(calibration_id)})
     path.write_text(rewritten, encoding="utf-8")
     detail = _record(
         tier_id,

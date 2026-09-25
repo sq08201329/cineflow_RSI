@@ -79,7 +79,9 @@ def tiers(tmp_path):
     keys: set[str] = set()
     for form in ("movie", "shortdrama"):
         payload = yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text("utf-8"))
-        keys |= set(payload["budget"]["tiers"])
+        # 020（C11）：档位在**渠道内** —— 取各渠道 `channels.<id>.tiers` 的键并集
+        for channel in payload["budget"]["channels"].values():
+            keys |= set(channel["tiers"])
     return keys
 
 

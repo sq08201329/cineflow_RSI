@@ -273,7 +273,7 @@ def _rejection_step(*, root: Path, short_cfg: Path) -> dict:
     missing_tier = _mutated_config(
         short_cfg,
         root / "configs" / "no-dev-tier.yaml",
-        lambda payload: payload["budget"]["tiers"].pop("dev"),
+        lambda payload: payload["budget"]["channels"]["llm"]["tiers"].pop("dev"),
     )
 
     def _break_duration(payload: dict) -> None:

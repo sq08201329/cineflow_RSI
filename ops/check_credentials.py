@@ -486,6 +486,115 @@ def _load_manifest(manifest_path: Path) -> dict:
     return payload
 
 
+# ---------------------------------------------------------------------------
+# 渠道就绪矩阵（功能 020 / 契约 C16 / FR-011）：**按形态配置声明的渠道**生成
+# ---------------------------------------------------------------------------
+
+# 装配入口（`budget.channels.<id>.adapter`）→ `pilot` 段的生效取值来源（声明真实与否）
+ADAPTER_BACKEND_SLOT = {"pilot_llm": "llm", "promo_platform": "promo"}
+# 装配入口 → 清单里的凭证前缀（同一个权威面：`ADAPTER_HINTS`；变量名由此拼出，不手抄）
+ADAPTER_CREDENTIAL_PREFIX = {"promo_platform": "PROMO_PLATFORM"}
+# `pilot_llm` 的端点/密钥**按配置档案注入**（`llm.profiles.<id>.api_key_env`）⇒ 变量名从配置取
+PROFILE_CREDENTIAL_ADAPTERS = ("pilot_llm",)
+HTTP_BACKEND = "http"
+
+
+def _declared_backend(payload: dict, adapter: str) -> str:
+    """该装配入口在 `pilot` 段的**声明后端**（`http` = 真实；其余 = 模拟）。"""
+    slot = ADAPTER_BACKEND_SLOT.get(adapter)
+    if slot is None:
+        raise CredentialCheckError(
+            f"装配入口 {adapter!r} 未登记（不发明后端取值）：新增装配入口须同步登记本表"
+        )
+    pilot = payload.get("pilot") or {}
+    overrides = pilot.get("overrides") or {}
+    if slot in overrides:
+        return str(overrides[slot])
+    if slot == "llm":
+        return str(pilot.get("llm_backend", "mock"))
+    return str(pilot.get("backend", "simulated"))
+
+
+def _credential_envs_for(adapter: str, payload: dict) -> tuple[str, ...]:
+    """该装配入口读哪些环境变量（**以代码/配置声明为权威**，不发明变量名）。"""
+    prefix = ADAPTER_CREDENTIAL_PREFIX.get(adapter)
+    if prefix is not None:
+        return (f"{prefix}{_BASE_SUFFIX}", f"{prefix}{_KEY_SUFFIX}")
+    if adapter in PROFILE_CREDENTIAL_ADAPTERS:
+        profiles = (payload.get("llm") or {}).get("profiles") or {}
+        return tuple(
+            sorted(
+                {
+                    str(profile["api_key_env"])
+                    for profile in profiles.values()
+                    if isinstance(profile, dict) and profile.get("api_key_env")
+                }
+            )
+        )
+    raise CredentialCheckError(
+        f"装配入口 {adapter!r} 的凭证面未登记（不发明变量名）：新增装配入口须同步登记本表"
+    )
+
+
+def channel_matrix(config_path: str | Path, *, environ: dict[str, str] | None = None) -> dict:
+    """按形态配置**声明的渠道**生成渠道就绪矩阵（FR-011 / C16）。
+
+    - 形状：渠道 → `adapter`（装配入口）→ `{env: {set, length}}` → `ready` → 缺失时的拒绝语义；
+    - **按形态声明生成**：未登记的渠道不出现（`configs/movie.yaml` 不登记投放渠道 ⇒ movie 的
+      矩阵没有投放行，也**不触发任何投放凭证判定**）；
+    - 声明模拟 ⇒ `ready=true`、`backend=simulated`（不要求凭证）；声明真实而凭证缺失 ⇒
+      `ready=false` + `missing` 逐项点名（装配期拒绝启动、零落盘零扣费、**绝不静默回落模拟**）；
+    - **只报 `set`/`length`，绝不回显凭证值**；凭证不进任何产物。
+    """
+    import yaml
+
+    from core.billing.budget import BudgetConfig, declared_channels
+
+    path = Path(config_path)
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise CredentialCheckError(f"形态配置不可读：{path}（{exc}）") from exc
+    if not isinstance(payload, dict):
+        raise CredentialCheckError(f"形态配置必须为映射：{path}")
+    cfg = BudgetConfig.from_yaml(path)
+    env = os.environ if environ is None else environ
+    rows: list[dict] = []
+    for spec in declared_channels(cfg):
+        backend = _declared_backend(payload, spec.adapter)
+        names = _credential_envs_for(spec.adapter, payload)
+        credentials = {
+            name: {"set": bool(env.get(name)), "length": len(env.get(name, ""))} for name in names
+        }
+        real = backend == HTTP_BACKEND
+        missing = sorted(name for name in names if not env.get(name)) if real else []
+        rows.append(
+            {
+                "channel_id": spec.channel_id,
+                "adapter": spec.adapter,
+                "backend": backend,
+                "declared_real": real,
+                "credential_envs": credentials,
+                "ready": not missing,
+                "missing": missing,
+                "refusal": (
+                    "声明真实而凭证缺失 ⇒ 装配期显式拒绝启动并点名缺失变量"
+                    "（零落盘、零扣费，绝不静默回落模拟）"
+                    if real
+                    else "声明模拟 ⇒ 零凭证可跑（不触发任何真实凭证判定）"
+                ),
+            }
+        )
+    return {
+        "config_path": str(path),
+        "channels": rows,
+        "notes": [
+            "只报 set/length，绝不回显凭证值；凭证不进任何产物",
+            "矩阵按形态配置**声明的渠道**生成：未登记的渠道不出现，也不参与判定",
+        ],
+    }
+
+
 def _parse_probe_paths(items: list[str]) -> dict[str, str]:
     overrides: dict[str, str] = {}
     for item in items:
@@ -533,10 +642,22 @@ def evaluate(
         if config_path is not None
         else {"profiles": [], "notes": ["未给出配置路径：跳过档案化就绪矩阵"]}
     )
+    if config_path is None:
+        channel_block: dict = {"channels": [], "notes": ["未给出配置路径：跳过渠道就绪矩阵"]}
+    else:
+        try:
+            channel_block = channel_matrix(config_path, environ=env)
+        except Exception as exc:  # noqa: BLE001 - 渠道矩阵不可用如实标注（不阻断既有路径核算）
+            channel_block = {
+                "config_path": str(config_path),
+                "channels": [],
+                "notes": [f"渠道就绪矩阵不可用：{exc}"],
+            }
     return {
         "manifest": str(manifest_file),
         "schema_version": manifest.get("schema_version"),
         "llm_profiles": profile_block,
+        "channel_matrix": channel_block,
         "probe": probe,
         "probe_profiles": probe_profiles,
         "checked_paths": [r["path_id"] for r in reports],

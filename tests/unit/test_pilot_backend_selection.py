@@ -237,7 +237,10 @@ class Test声明驱动装配:
             "HttpRealMusicGen",
         }
         assert _class_name(runtime.backends.editing) == "HttpRealEditRender"
-        assert _class_name(runtime.backends.promo) == "HttpRealPlatform"
+        # 020（C14）：投放面**外层包投放调用门禁**（`RecordingChannelCall`），
+        # 真实实现类在包内（断言强度不变：装配到的仍是真实适配器，不是模拟）
+        assert _class_name(runtime.backends.promo) == "RecordingChannelCall"
+        assert _class_name(runtime.backends.promo.adapter) == "HttpRealPlatform"
 
 
 class Test缺凭证零成本失败:

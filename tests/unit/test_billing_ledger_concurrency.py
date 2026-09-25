@@ -22,6 +22,7 @@ from core.billing.budget import (
     SpendGuard,
     alerts_path,
     ledger_path,
+    tiers_of,
 )
 
 _DAY = dt.datetime(2026, 9, 23, 12, 0, tzinfo=dt.UTC)
@@ -188,22 +189,26 @@ print(json.dumps({"ok": ok, "refused": refused}))
 
 
 def _budget_section(cfg) -> dict:
-    """把夹具配置还原成 `budget:` 段（子进程只依赖配置文件）。"""  # noqa: D401
+    """把夹具配置还原成 `budget:` 段（子进程只依赖配置文件）。
+
+    档位以**旧扁平**形态落给子进程（子进程从该段构造 `BudgetConfig` ⇒ 走 C11 的旧形状归一，
+    顺带覆盖兼容读路径）；键集取**本渠道**的档位（020 / C12：按渠道取档）。
+    """  # noqa: D401
+    channel_id = next(iter(cfg.channels))
     return {
         "channels": {
-            channel.channel_id: {
-                "adapter": channel.adapter,
+            channel_id: {
+                "adapter": cfg.channel(channel_id).adapter,
                 "bill": {
-                    "format": channel.bill.format_id,
-                    "fetch": channel.bill.fetch,
-                    "columns": dict(channel.bill.columns),
+                    "format": cfg.channel(channel_id).bill.format_id,
+                    "fetch": cfg.channel(channel_id).bill.fetch,
+                    "columns": dict(cfg.channel(channel_id).bill.columns),
                     "classification": {
-                        "line_kind": dict(channel.bill.line_kind_classes),
-                        "amount_sign": dict(channel.bill.amount_signs),
+                        "line_kind": dict(cfg.channel(channel_id).bill.line_kind_classes),
+                        "amount_sign": dict(cfg.channel(channel_id).bill.amount_signs),
                     },
                 },
             }
-            for channel in cfg.channels.values()
         },
         "tiers": {
             tier_id: {
@@ -212,7 +217,7 @@ def _budget_section(cfg) -> dict:
                 "on_exhausted": "refuse",
                 "note": tier.note,
             }
-            for tier_id, tier in cfg.tiers.items()
+            for tier_id, tier in tiers_of(cfg, channel_id).items()
         },
         "peak_windows": {
             "timezone": cfg.peak_windows.timezone,

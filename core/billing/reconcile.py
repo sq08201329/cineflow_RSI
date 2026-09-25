@@ -145,9 +145,7 @@ def report_path(root: str | Path, channel_id: str, period: str) -> Path:
 
 def load_report(period: str, *, channel_id: str, root: str | Path) -> dict:
     """读取差异报告并机检 `system_digest`（系统字段被改写即报错，不静默取）。"""
-    return load_snapshot(
-        report_path(root, channel_id, period), system_fields=REPORT_SYSTEM_FIELDS
-    )
+    return load_snapshot(report_path(root, channel_id, period), system_fields=REPORT_SYSTEM_FIELDS)
 
 
 def save_report(report: ReconciliationReport, *, root: str | Path) -> Path:

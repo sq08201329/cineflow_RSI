@@ -155,12 +155,17 @@ class Test调用点声明环节:
 
     def test_每个调用点声明_stage_且取值在档位键集内(self):
         tier_ids: set[str] = set()
+        llm_tier_ids: set[str] = set()
         for form in ("movie", "shortdrama"):
             payload = yaml.safe_load(
                 (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
             )
-            tier_ids |= set(payload["budget"]["tiers"])
-        assert len(tier_ids) == 8  # 两形态键集一致（8 处调用点各一档）
+            # 020（C11）：档位在**渠道内** —— 扫描面取各渠道键并集，8 处调用点核对取 LLM 渠道
+            for channel in payload["budget"]["channels"].values():
+                tier_ids |= set(channel["tiers"])
+                if channel.get("adapter") == "pilot_llm":
+                    llm_tier_ids |= set(channel["tiers"])
+        assert len(llm_tier_ids) == 8  # 两形态 LLM 渠道键集一致（8 处调用点各一档）
         calls = self._chat_calls()
         assert len(calls) == 8, f"调用点数量变化（应为 8 处）：{[str(p) for p, _ in calls]}"
         offenders: list[str] = []

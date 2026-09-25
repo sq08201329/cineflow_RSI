@@ -16,14 +16,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import blake3
 
-from core.billing.budget import BudgetConfig, BudgetRefusedError, channel_dir
+from core.billing.budget import (
+    BudgetConfig,
+    BudgetRefusedError,
+    GuardAssembly,
+    channel_dir,
+)
 
 RUN_SOURCES = ("real", "simulated", "fallback")
 # 保留值：本特性无写入点（装配期即拒、网关不设回落路径），值域保留 + 写入侧要求原因
@@ -354,7 +359,7 @@ class RecordingGateway:
         moment = self._clock()
         stage = str(kwargs.get("stage", "") or "")
         try:
-            result = getattr(self._gateway, "chat")(prompt, **kwargs)
+            result = getattr(self._gateway, "chat")(prompt, **kwargs)  # noqa: B009 - 见 docstring：刻意的转发取法
         except Exception as exc:  # noqa: BLE001 - 失败/拒绝都要留痕后原样上抛
             self._write(
                 moment=moment,
@@ -391,6 +396,125 @@ class RecordingGateway:
             cost_source=COST_SOURCE_GATEWAY,
             fallback_reason="",
         )
+
+
+class RecordingChannelCall:
+    """投放渠道调用的**门禁包装**（C14 / T2049）：与既有 `RecordingGateway` 同构，同处无第二份实现。
+
+    **投放面唯一的调用包装点**（投放执行器内不得再写一份门禁调用）：在
+    `create_campaign(...)` **之前**取门禁判定（`guard.check`，`stage` = 该渠道的投放环节 id），
+    平台响应之后 `reservation.settle(campaign.spent_usd)`（**实测超预估如实入账** + `over_limit`
+    告警，019 口径不变）；其余属性与方法一律转发（`get_status` / `pause` / `fetch_metrics` …），
+    故可原样替换适配器传入投放执行器（调用点的零成本分支见该模块文档）。
+
+    三条纪律：
+
+    - **拒绝 ⇒ 前置**：平台调用 **0 次**、成本 **0 入账**、运行记录 `result=refused`、
+      `alerts.jsonl` 落 `kind=budget_refused`（019 C10 的零成本分支，投放面同样成立）；
+    - **失败 ⇒ 零入账**：平台失败的这一笔**未发生花费**，以 `settle(0.0)` 释放预留
+      （不留崩溃残留标记），运行记录 `result=failed`，异常原样上抛（不吞、**不静默回落模拟**）；
+    - **来源由装配面声明**：取值域 `RUN_SOURCES`；`fallback` 必须带非空 `fallback_reason`
+      （本特性不新增回落路径，该值为保留值）。
+
+    金额来源标注 `measured_backfill`：投放的实际花费以**平台响应**为准（不是网关折算记账值）。
+    """
+
+    def __init__(
+        self,
+        adapter,
+        *,
+        assembly: GuardAssembly,
+        stage: str,
+        source: str,
+        fallback_reason: str = "",
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        if source not in RUN_SOURCES:
+            raise RunLogError(f"运行来源必须 ∈ {list(RUN_SOURCES)}，实际为 {source!r}")
+        if source == FALLBACK_SOURCE and not str(fallback_reason or "").strip():
+            raise RunLogError(
+                "source=fallback 必须声明 fallback_reason（真实渠道失败禁止静默回落并照常计费）"
+            )
+        self._adapter = adapter
+        self._assembly = assembly
+        self._stage = str(stage or "")
+        self._source = str(source)
+        self._fallback_reason = str(fallback_reason or "")
+        self._clock = clock or _now
+        self._adapter_ref = assembly.cfg.channel(assembly.channel_id).adapter
+
+    @property
+    def adapter(self):
+        """**被包装的投放适配器**（其余方法经 `__getattr__` 转发；仅 `create_campaign` 被包）。"""
+        return self._adapter
+
+    @property
+    def channel_id(self) -> str:
+        return self._assembly.channel_id
+
+    @property
+    def stage(self) -> str:
+        return self._stage
+
+    @property
+    def source(self) -> str:
+        return self._source
+
+    def create_campaign(self, material, budget_usd, **kwargs):
+        """门禁判定 → 平台调用 → 结算入账（一次调用 = 一条运行记录）。"""
+        moment = self._clock()
+        request = _ChannelSpendRequest(
+            channel_id=self._assembly.channel_id,
+            stage=self._stage,
+            estimated_usd=budget_usd,
+        )
+        try:
+            reservation = self._assembly.guard.check(request)
+        except BudgetRefusedError:
+            # 调用前拒绝：平台 0 次调用、成本零入账（证据在 alerts.jsonl + 运行记录）
+            self._write(moment=moment, result="refused")
+            raise
+        try:
+            campaign = self._adapter.create_campaign(material, budget_usd, **kwargs)
+        except Exception:  # noqa: BLE001 - 失败也要留痕并释放预留，异常原样上抛
+            reservation.settle(0.0)
+            self._write(moment=moment, result="failed")
+            raise
+        actual = getattr(campaign, "spent_usd", None)
+        reservation.settle(budget_usd if actual is None else float(actual))
+        self._write(moment=moment, result="ok")
+        return campaign
+
+    def __getattr__(self, name: str):
+        """其余属性与方法一律转发（`get_status` / `pause` / `fetch_metrics` / …）。"""
+        return getattr(self._adapter, name)
+
+    def _write(self, *, moment, result: str) -> None:
+        if not self._stage:
+            # 无环节归属（缺 stage= 的拒绝）：证据在 alerts.jsonl（与 RecordingGateway 同口径）
+            return
+        append_run(
+            self._assembly.channel_id,
+            cfg=self._assembly.cfg,
+            root=self._assembly.root,
+            moment=moment,
+            stage=self._stage,
+            source=self._source,
+            adapter_ref=self._adapter_ref,
+            profile_id="",
+            result=result,
+            cost_source=COST_SOURCE_MEASURED,
+            fallback_reason=self._fallback_reason,
+        )
+
+
+@dataclass(frozen=True)
+class _ChannelSpendRequest:
+    """门禁请求的最小结构化形态（`SpendRequest` 协议：三个只读属性）。"""
+
+    channel_id: str
+    stage: str
+    estimated_usd: float
 
 
 def _now() -> datetime:

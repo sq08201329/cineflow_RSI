@@ -10,8 +10,8 @@
 2. 零厂商词与**配置声明的档案 id / 端点 host**（同 `tests/unit/test_no_vendor_literals.py:39-52`
    的反向扫描法）；
 3. 零**配置声明的渠道 id、环节 id 与账单格式 id**（反向扫描 `budget.channels` 键、
-   `budget.tiers` 键、`budget.*.bill.format`）——白名单**仅**注册表内置通用格式键
-   `csv_lines` / `json_lines`，且**白名单本身常驻断言**（新增一条即红）；
+   **各渠道 `budget.channels.<id>.tiers` 的键并集**、`budget.*.bill.format`）——白名单**仅**
+   注册表内置通用格式键 `csv_lines` / `json_lines`，且**白名单本身常驻断言**（新增一条即红）；
 4. 零反向依赖：不得 `from agents.…` / `import agents`，也不得 `import dreaming`。
 
 **扫描口径（如实登记）**：声明的 id 是**标识符/键**，故按标识符边界判定
@@ -80,7 +80,28 @@ def _declared_channel_ids() -> list[str]:
 
 
 def _declared_tier_ids() -> list[str]:
-    return sorted({str(key) for section in _sections() for key in section["budget"]["tiers"]})
+    """各渠道 `tiers` 的键**并集**（020 / C11：档位在 `budget.channels.<id>.tiers`）。"""
+    return sorted(
+        {
+            str(key)
+            for section in _sections()
+            for channel in section["budget"]["channels"].values()
+            for key in channel["tiers"]
+        }
+    )
+
+
+def _declared_llm_tier_ids() -> list[str]:
+    """装配引用为 `pilot_llm` 的渠道的档位键（= 8 处 `.chat(` 调用点声明的 `stage=` 取值）。"""
+    return sorted(
+        {
+            str(key)
+            for section in _sections()
+            for channel in section["budget"]["channels"].values()
+            if str(channel.get("adapter")) == "pilot_llm"
+            for key in channel["tiers"]
+        }
+    )
 
 
 def _declared_format_ids() -> list[str]:
@@ -156,7 +177,12 @@ class Test零配置声明字面量:
 
     def test_无配置声明的环节_id(self):
         declared = _declared_tier_ids()
-        assert len(declared) == 8  # 环节 id 清单 = 8 处 .chat( 调用点声明的 stage= 取值
+        llm_declared = _declared_llm_tier_ids()
+        # 环节 id 清单 = 8 处 .chat( 调用点声明的 stage= 取值（LLM 渠道）；020 另加投放环节，
+        # 两者都在**反向扫描面**内（多渠道并集：新增环节 id 若写死进 core/billing 即红）
+        assert len(llm_declared) == 8
+        assert set(llm_declared) <= set(declared)
+        assert len(declared) > len(llm_declared)
         offenders = _scan_ids(declared)
         assert offenders == [], "core/billing 出现环节 id：\n" + "\n".join(offenders)
 

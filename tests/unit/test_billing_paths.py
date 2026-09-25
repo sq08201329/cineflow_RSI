@@ -111,13 +111,11 @@ class Test落盘与同键拒重产:
         assert budget.alerts_path(billing_root, channel).is_file()
         assert budget.ledger_path(billing_root, channel).parent == billing_root / channel
 
-    def test_两渠道同周期互不覆盖(
-        self, budget_config_factory, billing_budget_factory, billing_root
-    ):
-        declared = billing_budget_factory(tier_limit_usd=1.0, window_kind="day")["channels"]
-        first = next(iter(declared))
-        second = "channel-iso"
-        cfg = budget_config_factory(channels={first: declared[first], second: {**declared[first]}})
+    def test_两渠道同周期互不覆盖(self, billing_channels_payload_factory, billing_root):
+        # 020（C11）：档位在**渠道内**（`channels.<id>.tiers.<环节>`）；两渠道各一份独立额度
+        section = billing_channels_payload_factory(tier_limit_usd=1.0, window_kind="day")
+        first, second = "llm", "channel-iso"
+        cfg = budget.BudgetConfig.from_dict({"budget": section})
         for name, amount in ((first, 0.3), (second, 0.7)):
             guard = _guard(cfg, billing_root, name, alerts=_alerts(billing_root, name))
             guard.check(_Request(name, "screenplay", amount)).settle(amount)
@@ -128,6 +126,28 @@ class Test落盘与同键拒重产:
             budget.FileLedger(first_ledger, timeout_seconds=1.0).read()["tiers"]
             != (budget.FileLedger(second_ledger, timeout_seconds=1.0).read()["tiers"])
         )
+        # 同一档位名在渠道内可见、**不跨渠道串用**：两本账各自的档位表互不影响
+        assert cfg.tiers_of(first)["screenplay"].limit_usd == 1.0
+        assert cfg.tiers_of(second)["screenplay"].limit_usd == 1.0
+
+    def test_多渠道加旧扁平形状即歧义报错(self, billing_budget_factory):
+        """C11：旧扁平 `tiers` 只在**恰好一个**渠道时可归一；多渠道 ⇒ 歧义报错（不静默择一）。"""
+        section = billing_budget_factory(tier_limit_usd=1.0, window_kind="day")
+        declared = section["channels"]
+        first = next(iter(declared))
+        section["channels"] = {
+            first: declared[first],
+            "channel-iso": dict(declared[first]),
+        }  # 顶层旧扁平 `tiers` 仍在 ⇒ 两个来源归属歧义
+        with pytest.raises(budget.BudgetConfigError, match="歧义"):
+            budget.BudgetConfig.from_dict({"budget": section})
+
+    def test_新旧两处档位并存即报错(self, billing_channels_payload_factory):
+        """C11：既有顶层扁平 `tiers`、又有渠道 `tiers` ⇒ 报错（两个来源，不静默择一）。"""
+        section = billing_channels_payload_factory(channels=("llm",))
+        section["tiers"] = {"screenplay": {"limit_usd": 1.0, "window": {"kind": "day"}}}
+        with pytest.raises(budget.BudgetConfigError, match="同时出现"):
+            budget.BudgetConfig.from_dict({"budget": section})
 
     def test_校准记录同键重产被拒(self, budget_config_factory, billing_root):
         cfg = budget_config_factory()

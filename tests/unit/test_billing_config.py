@@ -21,6 +21,8 @@ from core.billing.budget import (
 )
 from core.llm_gateway.profiles import ProfileConfigError
 
+LLM_ADAPTER = "pilot_llm"  # 配置里 LLM 渠道的装配引用（取值域不变：019 既有取值）
+
 
 def _payload(form: str = "movie", **overrides) -> dict:
     payload = yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8"))
@@ -33,6 +35,16 @@ def _budget(form: str = "movie", **overrides) -> dict:
     return section
 
 
+def _llm_channel(section: dict) -> str:
+    """LLM 渠道的键：按**装配引用**（`adapter`）定位，不在测试里写死渠道 id（C11）。"""
+    return next(key for key, spec in section["channels"].items() if spec["adapter"] == LLM_ADAPTER)
+
+
+def _tiers(section: dict) -> dict:
+    """LLM 渠道的档位映射（`budget.channels.<id>.tiers`，键 = 环节 id）。"""
+    return section["channels"][_llm_channel(section)]["tiers"]
+
+
 class Test缺项即报错:
     def test_缺预算段即报错(self):
         with pytest.raises(BudgetConfigError, match="budget"):
@@ -40,11 +52,12 @@ class Test缺项即报错:
 
     def test_缺某环节档即报错(self):
         section = _budget()
-        section["tiers"].pop("screenplay")
+        _tiers(section).pop("screenplay")
         cfg = BudgetConfig.from_dict({"budget": section})
-        assert "screenplay" not in cfg.tiers
+        channel = _llm_channel(section)
+        assert "screenplay" not in cfg.tiers_of(channel)
         with pytest.raises(BudgetConfigError, match="未在 budget.tiers 声明"):
-            cfg.tier("screenplay")  # 取缺档 ⇒ 拒绝，不取码内默认
+            cfg.tier_of(channel, "screenplay")  # 取缺档 ⇒ 拒绝，不取码内默认
 
     def test_缺峰谷时区即报错(self):
         section = _budget()
@@ -69,7 +82,7 @@ class Test缺项即报错:
 
     def test_缺额度键即报错(self):
         section = _budget()
-        section["tiers"]["promo"].pop("limit_usd")
+        _tiers(section)["promo"].pop("limit_usd")
         with pytest.raises(BudgetConfigError, match="limit_usd"):
             BudgetConfig.from_dict({"budget": section})
 
@@ -77,7 +90,7 @@ class Test缺项即报错:
 class Test取值域:
     def test_额度耗尽语义单元素_refuse(self):
         section = _budget()
-        section["tiers"]["promo"]["on_exhausted"] = "queue"
+        _tiers(section)["promo"]["on_exhausted"] = "queue"
         with pytest.raises(BudgetConfigError, match="取值域单元素"):
             BudgetConfig.from_dict({"budget": section})
         assert ON_EXHAUSTED_REFUSE == "refuse"
@@ -85,21 +98,21 @@ class Test取值域:
     @pytest.mark.parametrize("value", [0, -1.0])
     def test_额度非正即报错(self, value):
         section = _budget()
-        section["tiers"]["promo"]["limit_usd"] = value
+        _tiers(section)["promo"]["limit_usd"] = value
         with pytest.raises(BudgetConfigError, match="limit_usd"):
             BudgetConfig.from_dict({"budget": section})
 
     def test_额度为_bool_即报错(self):
         """bool 是 int 的子类：`True` 不得被当成 1.0（金额口径必须显式）。"""
         section = _budget()
-        section["tiers"]["promo"]["limit_usd"] = True
+        _tiers(section)["promo"]["limit_usd"] = True
         with pytest.raises(BudgetConfigError, match="limit_usd"):
             BudgetConfig.from_dict({"budget": section})
 
     def test_窗口类型取值域(self):
         assert set(WINDOW_KINDS) == {"run", "day", "period"}
         section = _budget()
-        section["tiers"]["promo"]["window"] = {"kind": "week"}
+        _tiers(section)["promo"]["window"] = {"kind": "week"}
         with pytest.raises(BudgetConfigError, match="window.kind"):
             BudgetConfig.from_dict({"budget": section})
 
@@ -137,33 +150,39 @@ class Test取值域:
 class Test口径备注:
     def test_缺_note_记告警但可启动(self):
         section = _budget()
-        section["tiers"]["promo"].pop("note")
+        _tiers(section)["promo"].pop("note")
         cfg = BudgetConfig.from_dict({"budget": section})
         assert any("note" in note for note in cfg.notes)  # 口径不可追溯 ⇒ notes 告警
-        assert cfg.tier("promo").limit_usd > 0  # 但不阻塞装配（运营补全前可跑）
+        assert (
+            cfg.tier_of(_llm_channel(section), "promo").limit_usd > 0
+        )  # 但不阻塞装配（运营补全前可跑）
 
     def test_未标定标注在真实配置的每个档位上(self):
         """运营给定前按最小规模档运行：每个档位的口径备注必须标注"未标定"。"""
         for form in ("movie", "shortdrama"):
             cfg = BudgetConfig.from_yaml(REPO_ROOT / "configs" / f"{form}.yaml")
-            assert cfg.tiers and all("未标定" in tier.note for tier in cfg.tiers.values())
+            for spec in cfg.channels.values():  # 两形态的每个渠道、每个档位都标"未标定"
+                assert spec.tiers and all("未标定" in tier.note for tier in spec.tiers.values())
 
 
 class Test两形态差异由配置承载:
     def test_额度与窗口取值可指认(self):
         movie = BudgetConfig.from_yaml(REPO_ROOT / "configs" / "movie.yaml")
         short = BudgetConfig.from_yaml(REPO_ROOT / "configs" / "shortdrama.yaml")
-        assert set(movie.tiers) == set(short.tiers)  # 键集一致（环节清单与形态无关）
+        # 两侧都取 **LLM 渠道**的档位（额度按渠道分派：同一档位名在别的渠道是另一份额度）
+        movie_tiers = movie.tiers_of(_llm_channel(_budget("movie")))
+        short_tiers = short.tiers_of(_llm_channel(_budget("shortdrama")))
+        assert set(movie_tiers) == set(short_tiers)  # 键集一致（环节清单与形态无关）
         smaller = [
             tier_id
-            for tier_id, tier in movie.tiers.items()
-            if short.tiers[tier_id].limit_usd < tier.limit_usd
+            for tier_id, tier in movie_tiers.items()
+            if short_tiers[tier_id].limit_usd < tier.limit_usd
         ]
-        assert len(smaller) == len(movie.tiers)  # 短剧额度**逐档更小**
+        assert len(smaller) == len(movie_tiers)  # 短剧额度**逐档更小**
         shorter = [
             tier_id
-            for tier_id, tier in movie.tiers.items()
-            if short.tiers[tier_id].window_kind != tier.window_kind
+            for tier_id, tier in movie_tiers.items()
+            if short_tiers[tier_id].window_kind != tier.window_kind
         ]
         assert shorter  # 短剧时间窗更短（取值差异可逐档指认）
         assert short.calibration["record_ttl_days"] < movie.calibration["record_ttl_days"]
@@ -179,7 +198,7 @@ class Test两形态差异由配置承载:
                 (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
             )
             assert payload["form"] == form
-            assert set(payload["budget"]["tiers"]) == {
+            assert set(_tiers(payload["budget"])) == {
                 "screenplay",
                 "dev",
                 "promo",
