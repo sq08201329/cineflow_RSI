@@ -58,8 +58,14 @@ class Test表结构:
             "reviewer",
             "round_id",
             "created_at",
+            # 功能 020 / 迁移 0011：归属日列（可空，见下）
+            "metric_date",
         }
         for name, column in columns.items():
+            if name == "metric_date":
+                # 020：归属日列**必须可空**——历史行恒 NULL、永不回填（新写入路径非空由写入侧把守）
+                assert column["nullable"], "metric_date 必须可空（历史行不回填）"
+                continue
             assert not column["nullable"], f"{name} 必须 NOT NULL"
 
     def test_主键为_anchor_id(self):

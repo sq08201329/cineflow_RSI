@@ -3411,6 +3411,21 @@ calibration:
   ridge_lambda: 1.0
   window_semantics: half_open
   window_semantics_change_date: 2026-09-25
+  transfer: # 020 / C15：只迁结论、不迁权重；六键齐备（缺项即报错，不取码内默认）
+    basis: conclusion_only
+    source_forms: [shortdrama]
+    target_forms: [movie]
+    conditions:
+      evaluator_registered: true
+      min_samples: 3
+      detector_version_match: true
+      cadence_conversion: "日级来源按 ISO 周聚合后再与周级目标比较（显式换算口径）"
+      real_coverage_days: 3
+      reliability_floor: 0.6
+      max_abs_mean_shift: 0.05
+      require_drift_pass: true
+    storage: {dir: transfers}
+    adoption: manual
   self_pairing_exclusions:
     platform_truth: ["human.platform_metrics"]
   drift:
