@@ -58,7 +58,10 @@ def _config(**overrides) -> ScreenplayConfig:
     raw = copy.deepcopy(_REAL_CONFIG)
     raw["screenplay"].update({"target_duration_min": 3, "page_tolerance": 0, "lines_per_page": 3})
     raw["screenplay"].update(overrides)
-    return ScreenplayConfig.from_dict(raw)
+    # 021（T2125）：页数窗口改了版本相关取值 ⇒ 按本夹具取值重新钉住 version
+    from tests.plugin_fixtures import resync_plugin_versions
+
+    return ScreenplayConfig.from_dict(resync_plugin_versions(raw, agents=("screenplay",)))
 
 
 def _plan_of(artifact) -> dict:
@@ -243,15 +246,19 @@ class Test注册元数据:
         assert next(s for s in specs if s.evaluator_id == _JUDGE_ID).cost_per_call > 0
 
     def test_装配与权重节一一对应(self, config, gateway):
-        """权重节与装配的评估器集合必须一致（缺项/多项即拒绝装配，防配置漂移）。"""
-        from agents.screenplay.config import ScreenplayConfigError
+        """权重节与装配的评估器集合必须一致（缺项/多项即拒绝装配，防配置漂移）。
+
+        021（C2）：一一对应校验由唯一装配点承担 ⇒ 报错类型为 `PluginAssemblyError`
+        （文案口径沿用既有"缺权重键/多余权重键"），断言面不削弱。
+        """
+        from core.evaluators.errors import PluginAssemblyError
 
         raw = copy.deepcopy(_REAL_CONFIG)
         raw["screenplay"].update(
             {"target_duration_min": 3, "page_tolerance": 0, "lines_per_page": 3}
         )
         del raw["evaluator_weights"]["screenplay"]["proxy.timeline_conflict"]
-        with pytest.raises(ScreenplayConfigError, match="evaluator_weights"):
+        with pytest.raises(PluginAssemblyError, match="evaluator_weights"):
             build_screenplay_evaluators(ScreenplayConfig.from_dict(raw), gateway)
 
     def test_对比样本_与既有形态评估器同构(

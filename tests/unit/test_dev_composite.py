@@ -9,7 +9,7 @@
 
 import pytest
 
-from agents.dev.config import DevConfig, DevConfigError
+from agents.dev.config import DevConfig
 from agents.dev.evaluators import build_dev_evaluators
 from agents.dev.evaluators.composite import (
     COMPOSITE_POLICY,
@@ -17,7 +17,7 @@ from agents.dev.evaluators.composite import (
     evaluate_dev,
 )
 from core.evaluators.base import ArtifactRef, EvaluatorKind
-from core.evaluators.errors import RegistrationError
+from core.evaluators.errors import PluginAssemblyError, RegistrationError
 from core.evaluators.quantize import quantize_score
 from core.evaluators.registry import Registry
 from tests.stubs import StubProxyEvaluator
@@ -159,9 +159,11 @@ class Test装配:
         assert short["proxies"][0].spec.version == movie["proxies"][0].spec.version
 
     def test_权重键漂移即拒绝装配(self, dev_config_fragment):
+        """021（C2）：一一对应校验由唯一装配点承担 ⇒ 报错类型为 `PluginAssemblyError`
+        （文案口径沿用既有"缺权重键/多余权重键"），断言面不削弱。"""
         payload = dev_config_fragment()
         payload["evaluator_weights"]["dev"]["proxy.ghost"] = 0.1
-        with pytest.raises(DevConfigError):
+        with pytest.raises(PluginAssemblyError, match="evaluator_weights.dev"):
             build_dev_evaluators(DevConfig.from_dict(payload))
 
     def test_同键重复注册被拒(self, dev_config):

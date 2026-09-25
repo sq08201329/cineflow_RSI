@@ -45,7 +45,10 @@ def _config_dict() -> dict:
     config["editing"]["target_duration_s"] = 12
     config["editing"]["duration_tolerance_s"] = 8
     config["editing"]["render"].update(width=64, height=48)
-    return config
+    # 021（T2125）：时长窗口改了版本相关取值 ⇒ 按本夹具取值重新钉住 version
+    from tests.plugin_fixtures import resync_plugin_versions
+
+    return resync_plugin_versions(config, agents=("editing",))
 
 
 @pytest.fixture()

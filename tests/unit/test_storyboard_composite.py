@@ -48,7 +48,10 @@ def _config() -> StoryboardConfig:
     """接线用配置：渲染尺寸缩小提速（64x48）；索引网格随帧宽收窄。"""
     config = copy.deepcopy(_REAL_CONFIG)
     config["storyboard"]["render"].update(width=64, height=48, index_grid={"rows": 2, "cols": 4})
-    return StoryboardConfig.from_dict(config)
+    # 021（T2125）：渲染规格进 alignment 版本号 ⇒ 按本夹具取值重新钉住 version
+    from tests.plugin_fixtures import resync_plugin_versions
+
+    return StoryboardConfig.from_dict(resync_plugin_versions(config, agents=("storyboard",)))
 
 
 @pytest.fixture()

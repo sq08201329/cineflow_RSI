@@ -106,6 +106,7 @@ def _cmd_produce(args) -> int:
     from agents.dev.config import DevConfig, DevConfigError
     from agents.dev.db import create_jobs_schema
     from agents.dev.loop import DevLoopError, run_dev_round
+    from core.evaluators.errors import PluginAssemblyError
     from core.llm_gateway.gateway import GatewayError, LLMGateway
 
     dsn = _resolve_dsn(args)
@@ -176,7 +177,11 @@ def _cmd_produce(args) -> int:
         )
     except DevLoopError as exc:
         return _fail(str(exc), 1)
-    except DevConfigError as exc:  # 装配期配置漂移（权重键与评估器集合不一致）
+    except (
+        DevConfigError,
+        PluginAssemblyError,
+    ) as exc:  # 装配期配置漂移（权重键与评估器集合不一致）
+        # 021（C2）：一一对应/声明/版本校验收在唯一装配点 ⇒ 装配期拒绝也走配置级退出码 2
         return _fail(f"评估器装配失败：{exc}", 2)
 
     payload = result.to_dict()

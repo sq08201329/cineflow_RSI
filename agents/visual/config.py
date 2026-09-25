@@ -2,12 +2,15 @@
 
 配置即形态（宪章原则五）：生成预算、片段规格、帧采样规则、judge 锚点集
 与提示词、judge 单票输出预算、五评估器权重全部来自配置，缺失即报错。
+插件声明面（021 C1）随本配置承载：`plugin_declarations` 缺段即 `None`，不补默认。
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+from core.evaluators.plugin import declaration_subtree
 
 
 class VisualConfigError(Exception):
@@ -49,6 +52,7 @@ class VisualConfig:
     simulated_gen: dict
     judge: dict
     evaluator_weights: dict = field(default_factory=dict)
+    plugin_declarations: dict | None = None
 
     @classmethod
     def from_dict(cls, config: dict) -> "VisualConfig":
@@ -68,6 +72,7 @@ class VisualConfig:
             simulated_gen=dict(_require(visual, "simulated_gen", "visual")),
             judge=_require_judge(_require(visual, "judge", "visual")),
             evaluator_weights=evaluator_weights,
+            plugin_declarations=declaration_subtree(config, "visual"),
         )
 
     @classmethod

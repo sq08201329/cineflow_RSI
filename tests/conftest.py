@@ -3107,8 +3107,59 @@ def pilot_demo_config_path(tmp_path):
     ):
         assert text.count(old) == 1, f"派生点缺失或重复（{old}）：配置口径变了即红"
         text = text.replace(old, new)
+    # 021（T2125）：声明面的 `version` 必须与**实现产出**逐字相等；排练档在运行期以
+    # `dataclasses.replace` 派生 screenplay/editing 的体量键（`stages.apply_rehearsal_scale`）
+    # ⇒ 声明面按**生效取值**钉住（用真实的派生函数取值，不复制其推导逻辑）。
+    # 定点替换**只落在** `evaluators` 段的 `version` 叶子上：体量键、注释与其余字节一字不动。
+    import yaml
+
+    from agents.dev.config import DevConfig
+    from agents.editing.config import EditingConfig
+    from agents.pilot import stages as stages_module
+    from agents.pilot.pilot import PilotConfig
+    from agents.promo.config import PromoConfig
+    from agents.screenplay.config import ScreenplayConfig
+    from agents.sound.config import SoundConfig
+    from agents.storyboard.config import StoryboardConfig
+    from agents.visual.config import VisualConfig
+    from tests.plugin_fixtures import resync_plugin_versions
+
     target = tmp_path / "configs" / "shortdrama-demo.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    effective = stages_module.apply_rehearsal_scale(
+        stages_module.AgentConfigs(
+            dev=DevConfig.from_yaml(target),
+            screenplay=ScreenplayConfig.from_yaml(target),
+            storyboard=StoryboardConfig.from_yaml(target),
+            visual=VisualConfig.from_yaml(target),
+            sound=SoundConfig.from_yaml(target),
+            editing=EditingConfig.from_yaml(target),
+            promo=PromoConfig.from_yaml(target),
+        ),
+        PilotConfig.from_yaml(target),
+    )
+    payload = yaml.safe_load(text)
+    # 排练档只派生 screenplay/editing 的体量键（visual 的 clip_spec.duration_seconds 不进任何
+    # 版本哈希 ⇒ 无需重钉；judge 锚点哈希取自未变的 fps/anchor_gen_params）
+    listened_agents = ("screenplay", "editing")
+    pinned = [
+        (agent, slot, evaluator_id, leaf["version"])
+        for agent in listened_agents
+        for slot, entries in payload["evaluators"]["plugins"][agent].items()
+        for evaluator_id, leaf in entries.items()
+    ]
+    resync_plugin_versions(
+        payload,
+        agents=listened_agents,
+        configs={agent: getattr(effective, agent) for agent in listened_agents},
+    )
+    for agent, slot, evaluator_id, stale in pinned:
+        fresh = payload["evaluators"]["plugins"][agent][slot][evaluator_id]["version"]
+        if fresh == stale:
+            continue
+        assert text.count(stale) == 1, f"版本声明不唯一（{stale}）：配置口径变了即红"
+        text = text.replace(stale, fresh)
     target.write_text(text, encoding="utf-8")
     return target
 
@@ -3846,7 +3897,11 @@ _DEV_DIRECTIONS = (
 
 
 def _dev_config_payload() -> dict:
-    """dev 配置片段底座：真实 movie.yaml 的 dev 段 + evaluator_weights.dev（逐用例定向破坏）。"""
+    """dev 配置片段底座：真实 movie.yaml 的 dev 段 + evaluator_weights.dev（逐用例定向破坏）。
+
+    021（T2125）：片段同步补齐 `evaluators` 段——装配面按声明驱动，缺段即装配期报错
+    （**不得**以"缺段回落硬编码装配"换取夹具全绿）。
+    """
     import copy
 
     import yaml
@@ -3856,6 +3911,7 @@ def _dev_config_payload() -> dict:
         "form": payload["form"],
         "dev": copy.deepcopy(payload["dev"]),
         "evaluator_weights": {"dev": copy.deepcopy(payload["evaluator_weights"]["dev"])},
+        "evaluators": {"plugins": {"dev": copy.deepcopy(payload["evaluators"]["plugins"]["dev"])}},
     }
 
 
@@ -3897,6 +3953,12 @@ def dev_config_fragment():
                 payload["dev"].pop(key, None)
             else:
                 payload["dev"][key] = value
+        if overrides:
+            # 021（T2125）：overrides 改了版本相关取值（slate / marks / 重复率）⇒ 按本片段的
+            # 实际取值重新钉住 `evaluators.plugins.dev` 的 version（声明值必须与实现产出逐字相等）
+            from tests.plugin_fixtures import resync_plugin_versions
+
+            resync_plugin_versions(payload, agents=("dev",))
         return payload
 
     return _make

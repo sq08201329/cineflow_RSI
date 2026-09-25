@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from agents.screenplay.artifact import ScriptArtifact
+from core.evaluators.plugin import declaration_subtree
 
 # 节拍表 act 归属枚举（三幕结构；节拍归属越界即配置非法）
 ACTS = ("act1", "act2", "act3")
@@ -259,6 +260,7 @@ class ScreenplayConfig:
     judge: dict
     anchor_outlines: tuple[ScriptArtifact, ...]
     evaluator_weights: dict = field(default_factory=dict)
+    plugin_declarations: dict | None = None
 
     @classmethod
     def from_dict(cls, config: dict) -> "ScreenplayConfig":
@@ -315,6 +317,7 @@ class ScreenplayConfig:
             judge=judge,
             anchor_outlines=anchor_outlines,
             evaluator_weights=evaluator_weights,
+            plugin_declarations=declaration_subtree(config, "screenplay"),
         )
 
     @classmethod

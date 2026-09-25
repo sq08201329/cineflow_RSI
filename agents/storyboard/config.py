@@ -20,6 +20,7 @@ import yaml
 from agents.pilot.scale import derived_shot_count
 from agents.storyboard.board_render import index_grid_size
 from agents.storyboard.shotlist import ShotList
+from core.evaluators.plugin import declaration_subtree
 from core.tree.errors import ValidationError
 
 
@@ -260,6 +261,7 @@ class StoryboardConfig:
     judge: dict
     anchor_shotlists: tuple[ShotList, ...]
     evaluator_weights: dict = field(default_factory=dict)
+    plugin_declarations: dict | None = None
 
     @classmethod
     def from_dict(cls, config: dict) -> "StoryboardConfig":
@@ -287,6 +289,7 @@ class StoryboardConfig:
             judge=judge,
             anchor_shotlists=anchor_shotlists,
             evaluator_weights=evaluator_weights,
+            plugin_declarations=declaration_subtree(config, "storyboard"),
         )
 
     @classmethod

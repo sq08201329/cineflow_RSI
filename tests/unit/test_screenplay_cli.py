@@ -58,6 +58,10 @@ def scaled_config(tmp_path):
     """
     raw = copy.deepcopy(_REAL_CONFIG)
     raw["screenplay"].update({"target_duration_min": 2, "page_tolerance": 1, "lines_per_page": 3})
+    # 021（T2125）：页数窗口改了版本相关取值 ⇒ 按本夹具取值重新钉住 `evaluators` 的 version
+    from tests.plugin_fixtures import resync_plugin_versions
+
+    resync_plugin_versions(raw, agents=("screenplay",))
     path = tmp_path / "movie_scaled.yaml"
     path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
@@ -338,6 +342,11 @@ class Test产出:
             {"target_duration_min": 2, "page_tolerance": 1, "lines_per_page": 3}
         )
         del raw["evaluator_weights"]["screenplay"]["proxy.timeline_conflict"]
+        # 021（T2125）：本用例考的是"权重键漂移即拒绝装配"（声明面键多于权重键）⇒ 只钉版本、
+        # 不补权重键（装配期按声明面与权重键集核对，先于实例化报错）
+        from tests.plugin_fixtures import resync_plugin_versions
+
+        resync_plugin_versions(raw, agents=("screenplay",))
         config_path = tmp_path / "movie_drifted.yaml"
         config_path.write_text(
             yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"

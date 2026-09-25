@@ -21,16 +21,11 @@ from sqlalchemy.engine import Engine
 from agents.visual.clip import produce_clip
 from agents.visual.config import VisualConfig
 from agents.visual.db import visual_gen_jobs
-from agents.visual.evaluators.aesthetic import AestheticEvaluator
-from agents.visual.evaluators.cinematic import CinematicJudgeEvaluator
-from agents.visual.evaluators.flicker import FlickerEvaluator
-from agents.visual.evaluators.format_compliance import FormatComplianceEvaluator
-from agents.visual.evaluators.identity import IdentityConsistencyEvaluator
+from agents.visual.evaluators.plugins import AGENT, SLOT_LAYOUT, _to_return_shape
 from agents.visual.frames import sample_frames
 from agents.visual.platform.base import (
     VideoGenError,
 )
-from agents.visual.platform.simulated import encode_mp4, render_frames
 from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与崩溃可辨
     gateway_budget_snapshot,
     isolation_reason,
@@ -39,6 +34,7 @@ from core.billing.budget import (  # 019（C9/C10）：快照冻结 + 拒绝与�
 from core.calibration.drift_gate import DriftGate, apply_gate
 from core.evaluators.base import ArtifactRef, EvalResult
 from core.evaluators.composite import composite_score_versioned
+from core.evaluators.plugin import assemble, parse_manifest
 from core.evaluators.quantize import quantize_score
 from core.llm_gateway.gateway import LLMGateway
 from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
@@ -98,19 +94,6 @@ def _clip_id(round_id: str, index: int) -> str:
 def _params_hash(gen_params: dict) -> str:
     canonical = json.dumps(gen_params, sort_keys=True, ensure_ascii=False)
     return blake3.blake3(canonical.encode()).hexdigest()
-
-
-def _judge_anchor_hashes(config: VisualConfig, artifacts: ArtifactStore) -> list[str]:
-    """锚点集（决策 5）：configs 固定生成参数集经确定性模拟生成器产出锚点工件。
-
-    参数哈希与工件哈希双双进入 judge 版本号；真实环境切换为固定素材的
-    工件哈希清单，代码路径不变。
-    """
-    hashes = []
-    for anchor_params in config.judge["anchor_gen_params"]:
-        frames = render_frames(anchor_params, config.simulated_gen)
-        hashes.append(artifacts.put(encode_mp4(frames, fps=config.clip_spec["fps"])))
-    return hashes
 
 
 def run_round(
@@ -207,28 +190,14 @@ def run_round(
 def build_evaluators(config: VisualConfig, gateway: LLMGateway, artifacts: ArtifactStore) -> dict:
     """五评估器装配（run_round / consistency / demo 共用的唯一装配点）。
 
-    返回 {"compliance", "proxies": [...], "judge", "all": [...]}。
+    返回 {"compliance", "proxies": [...], "judge", "all": [...]}——评估器集合与参数
+    **完全由 `configs/*.yaml` 的 `evaluators.plugins.visual` 声明驱动**（021 C1/C2：
+    解析与实例化收在 `core/evaluators/plugin.py`；既有参数经 `agent_config` 槽位读取）。
     """
-    compliance = FormatComplianceEvaluator(config.clip_spec)
-    proxies = [
-        AestheticEvaluator(config.frame_sampling),
-        IdentityConsistencyEvaluator(config.frame_sampling),
-        FlickerEvaluator(config.frame_sampling),
-    ]
-    judge = CinematicJudgeEvaluator(
-        gateway,
-        model=_judge_model(config),
-        prompts=list(config.judge["prompts"]),
-        anchor_hashes=_judge_anchor_hashes(config, artifacts),
-        sampling_spec=config.frame_sampling,
-        max_tokens=config.judge["max_tokens"],
+    manifest = parse_manifest(config.plugin_declarations, AGENT, slots=SLOT_LAYOUT)
+    return _to_return_shape(
+        assemble(manifest, agent_config=config, gateway=gateway, artifacts=artifacts)
     )
-    return {
-        "compliance": compliance,
-        "proxies": proxies,
-        "judge": judge,
-        "all": [compliance, *proxies, judge],
-    }
 
 
 def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> DiscoveryTree:
@@ -255,11 +224,6 @@ def freeze_round_tree(round_id: str, store: TreeStore, engine: Engine) -> Discov
     if not matches:
         raise VisualLoopError(f"轮次树不存在：{tree_id}")
     return matches[0]
-
-
-def _judge_model(config: VisualConfig) -> str:
-    """judge 经网关调用的模型（价目表必须覆盖；缺价目网关即报错）。"""
-    return config.judge.get("model", "mock-copy-v1")
 
 
 def _config_snapshot(config: VisualConfig, compliance, proxies, judge) -> dict:

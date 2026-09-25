@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from agents.editing.edl import EditDecisionList
+from core.evaluators.plugin import declaration_subtree
 
 
 class EditingConfigError(Exception):
@@ -109,6 +110,7 @@ class EditingConfig:
     judge: dict
     anchor_edls: tuple[EditDecisionList, ...]
     evaluator_weights: dict = field(default_factory=dict)
+    plugin_declarations: dict | None = None
 
     @classmethod
     def from_dict(cls, config: dict) -> "EditingConfig":
@@ -137,6 +139,7 @@ class EditingConfig:
             judge=judge,
             anchor_edls=anchor_edls,
             evaluator_weights=evaluator_weights,
+            plugin_declarations=declaration_subtree(config, "editing"),
         )
 
     @classmethod

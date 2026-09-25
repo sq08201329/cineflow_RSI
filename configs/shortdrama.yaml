@@ -53,6 +53,155 @@ evaluator_weights:
     proxy.genre_regression: 0.4 # 历史同类型票房回归预测（模拟数据源，确定性）
     proxy.buzz_heat: 0.6 # 舆情检索热度（模拟数据源，确定性）
 
+# --------------------------------------------------------------------------
+# 评估器插件声明面（功能 021 / C1~C4）：配置声明集 = 可用插件全集，目录不决定可用性。
+# `<evaluator_id>` 逐字等于 `evaluator_weights.<agent>` 的键；叶子键恰 `impl`/`version`/`params`；
+# `version` 与实现产出逐字相等（改实现文件一字节即需改此值）；既有参数不搬迁 ⇒ `params` 全为 {}。
+# 槽位取值域 = 该 Agent 装配函数返回形状导出的 SLOT_LAYOUT（`all` 仅列表返回的 sound 可声明）。
+evaluators:
+  plugins:
+    visual:
+      compliance:
+        rule.format_compliance:
+          impl: "agents.visual.evaluators.plugins:format_compliance"
+          version: "1.0.0"
+          params: {}
+      proxies:
+        proxy.aesthetic:
+          impl: "agents.visual.evaluators.plugins:aesthetic"
+          version: "1.0.0+9c22e4083ae6"
+          params: {}
+        proxy.identity_consistency:
+          impl: "agents.visual.evaluators.plugins:identity_consistency"
+          version: "1.0.0+b879d1f0833d"
+          params: {}
+        proxy.flicker:
+          impl: "agents.visual.evaluators.plugins:flicker"
+          version: "1.0.0+f0c633386ec2"
+          params: {}
+      judge:
+        judge.cinematic:
+          impl: "agents.visual.evaluators.plugins:cinematic"
+          version: "1.0.0+e270b19b9ab3"
+          params: {}
+    sound:
+      all:
+        rule.loudness_compliance:
+          impl: "agents.sound.evaluators.plugins:loudness_compliance"
+          version: "1.0.0+b16fed79fdcd"
+          params: {}
+        rule.av_sync:
+          impl: "agents.sound.evaluators.plugins:av_sync"
+          version: "1.0.0+a2cdba5ff9c8"
+          params: {}
+        proxy.asr_transcript:
+          impl: "agents.sound.evaluators.plugins:asr_transcript"
+          version: "1.0.0+bb13debb9c20"
+          params: {}
+        proxy.emotion_music_match:
+          impl: "agents.sound.evaluators.plugins:emotion_music_match"
+          version: "1.0.0+5884d9885256"
+          params: {}
+    editing:
+      gates:
+        rule.duration_compliance:
+          impl: "agents.editing.evaluators.plugins:duration_compliance"
+          version: "1.0.0+dda011a25a60"
+          params: {}
+        rule.shot_distribution:
+          impl: "agents.editing.evaluators.plugins:shot_distribution"
+          version: "1.0.0+2b8cda57fff5"
+          params: {}
+        rule.transition_rules:
+          impl: "agents.editing.evaluators.plugins:transition_rules"
+          version: "1.0.0+79b490c2abed"
+          params: {}
+      pacing:
+        proxy.pacing_curve:
+          impl: "agents.editing.evaluators.plugins:pacing_curve"
+          version: "1.0.0+7e7284c09977"
+          params: {}
+      judge:
+        judge.narrative_flow:
+          impl: "agents.editing.evaluators.plugins:narrative_flow"
+          version: "1.0.0+jfcb2a4e866b266deb33c90dft512"
+          params: {}
+    storyboard:
+      gates:
+        rule.shot_grammar:
+          impl: "agents.storyboard.evaluators.plugins:shot_grammar"
+          version: "1.0.0+299038b411e2"
+          params: {}
+        rule.coverage:
+          impl: "agents.storyboard.evaluators.plugins:coverage"
+          version: "1.0.0+5b1f7a09effb"
+          params: {}
+        rule.axis_rule:
+          impl: "agents.storyboard.evaluators.plugins:axis_rule"
+          version: "1.0.0+1284b0c8300f"
+          params: {}
+      alignment:
+        proxy.emotion_alignment:
+          impl: "agents.storyboard.evaluators.plugins:emotion_alignment"
+          version: "1.0.0+a52dd7b69c1a8fab70ec06"
+          params: {}
+      judge:
+        judge.script_fit:
+          impl: "agents.storyboard.evaluators.plugins:script_fit"
+          version: "1.0.0+jd80a23e6d6bc6494b91fe3c6t512"
+          params: {}
+    screenplay:
+      gates:
+        rule.beat_structure:
+          impl: "agents.screenplay.evaluators.plugins:beat_structure"
+          version: "1.0.0+bdb05683ff26"
+          params: {}
+        rule.page_minutes:
+          impl: "agents.screenplay.evaluators.plugins:page_minutes"
+          version: "1.0.0+6ede07707889"
+          params: {}
+        rule.scene_character:
+          impl: "agents.screenplay.evaluators.plugins:scene_character"
+          version: "1.0.0+3121b4d6323c"
+          params: {}
+        rule.dialogue_action_ratio:
+          impl: "agents.screenplay.evaluators.plugins:dialogue_action_ratio"
+          version: "1.0.0+2dcc8e077209"
+          params: {}
+      proxies:
+        proxy.entity_consistency:
+          impl: "agents.screenplay.evaluators.plugins:entity_consistency"
+          version: "1.0.0+2dbec610fa3b"
+          params: {}
+        proxy.timeline_conflict:
+          impl: "agents.screenplay.evaluators.plugins:timeline_conflict"
+          version: "1.0.0+daa049ab7b79"
+          params: {}
+      judge:
+        judge.dramatic_tension:
+          impl: "agents.screenplay.evaluators.plugins:dramatic_tension"
+          version: "1.0.0+j07dea312293b669bc7a1d40et512"
+          params: {}
+    dev:
+      gates:
+        rule.slate_structure:
+          impl: "agents.dev.evaluators.plugins:slate_structure"
+          version: "1.0.0+fe92e238c91a"
+          params: {}
+        rule.slate_combination:
+          impl: "agents.dev.evaluators.plugins:slate_combination"
+          version: "1.0.0+a7f2c0dafab4"
+          params: {}
+      proxies:
+        proxy.genre_regression:
+          impl: "agents.dev.evaluators.plugins:genre_regression"
+          version: "1.0.0+a9bf5634fd76"
+          params: {}
+        proxy.buzz_heat:
+          impl: "agents.dev.evaluators.plugins:buzz_heat"
+          version: "1.0.0+002995008a83"
+          params: {}
+
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
 # latency_quantum_ms 为响应时间填充的时延量子（计时侧信道防护）；
 # unbiasedness_tau_threshold 为回放无偏性 Kendall τ 发布门槛。

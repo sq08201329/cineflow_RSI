@@ -124,6 +124,7 @@ def _cmd_produce(args) -> int:
     from agents.screenplay.db import create_jobs_schema
     from agents.screenplay.evaluators import build_screenplay_evaluators
     from agents.screenplay.loop import ScreenplayLoopError, run_screenplay_round
+    from core.evaluators.errors import PluginAssemblyError
     from core.llm_gateway.gateway import GatewayError, LLMGateway
 
     dsn = _resolve_dsn(args)
@@ -188,7 +189,8 @@ def _cmd_produce(args) -> int:
         evaluators = build_screenplay_evaluators(config, gateway)
     except ScreenplayLoopError as exc:
         return _fail(str(exc), 1)
-    except ScreenplayConfigError as exc:
+    except (ScreenplayConfigError, PluginAssemblyError) as exc:
+        # 021（C2）：一一对应/声明/版本校验收在唯一装配点 ⇒ 装配期拒绝也走配置级退出码 2
         return _fail(f"评估器装配失败：{exc}", 2)
 
     try:

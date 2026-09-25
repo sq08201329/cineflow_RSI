@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from core.evaluators.plugin import declaration_subtree
+
 # 升级判据阈值：全量声明（缺任一项即报错）——无来源者由判据材料标"无法评价（来源缺失）"
 THRESHOLD_KEYS = ("correlation_target", "min_samples", "drift_band", "gate_violation_max")
 
@@ -160,6 +162,7 @@ class DevConfig:
     model: str
     model_prices: dict
     max_tokens: int
+    plugin_declarations: dict | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "DevConfig":
@@ -215,6 +218,7 @@ class DevConfig:
             max_tokens=_require_int(
                 _require(dev, "max_tokens", "dev"), "dev.max_tokens", minimum=1
             ),
+            plugin_declarations=declaration_subtree(config, "dev"),
         )
 
     def price_of(self, model: str) -> dict:

@@ -446,6 +446,9 @@ class TestC10到C13试水运行:
             "screenplay",
             "calibration",
             "dreaming",
+            # 021：插件声明面按形态声明——`version` 为派生值（实现文件字节 + 该形态口径参数哈希）
+            # ⇒ 两形态该段结构相同但 `version` 逐形态不同，故并入顶层差异集（同 017 的 dev 登记）
+            "evaluators",
             # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）
             "deployment",
             # 019：budget 段按形态声明（短剧额度更小、时间窗更短；键集本身两形态一致）

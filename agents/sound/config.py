@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from core.evaluators.plugin import declaration_subtree
+
 # 三类型适配器与成本分账粒度（澄清 Q2）；响度分档三档（rule.loudness_compliance 对照）
 _GEN_TYPES = ("tts", "sfx", "music")
 _LOUDNESS_TIERS = ("dialogue", "sfx", "music")
@@ -62,6 +64,7 @@ class SoundConfig:
     asr: dict
     emotion: dict
     evaluator_weights: dict = field(default_factory=dict)
+    plugin_declarations: dict | None = None
 
     @classmethod
     def from_dict(cls, config: dict) -> "SoundConfig":
@@ -82,6 +85,7 @@ class SoundConfig:
             asr=dict(_require(sound, "asr", "sound")),
             emotion=dict(_require(sound, "emotion", "sound")),
             evaluator_weights=evaluator_weights,
+            plugin_declarations=declaration_subtree(config, "sound"),
         )
 
     @classmethod
