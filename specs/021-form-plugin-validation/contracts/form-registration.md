@@ -26,10 +26,11 @@
 > 020 登记扫描面时用的行号**已漂移**（`specs/020-shortdrama-real-feedback/tasks.md:424`、`:692`）——
 > 本契约**不以行号承载语义**。
 >
-> **编号映射（与 `plan.md` 阶段 1 的对应；本文件的区间不变）**：`plan.md` 阶段 1 把本文件写作
-> 「C9 五处登记点与逐一机检 / C10 三处两形态硬编码改派生的改法 / C11 020 口径声明完备」。本文件把
-> 「五处登记点逐处：**今天形状 → 改成什么 → 机检断言 → 反例**」合入 **C9**；把「登记完备」口径单列
-> **C10**（裁决 5、`research.md` 决策 7）；把 020 口径声明完备 + cadence 收口单列 **C11**（裁决 6）。
+> **编号映射（与 `plan.md` 阶段 1 的一致；本文件的区间不变）**：`plan.md` 阶段 1 与本文件的落点**逐项一致**——
+> **C9** = 五处登记点改配置/形态派生（含逐一机检、缺项点名、**不新造第六处**）；
+> **C10** = **登记完备**口径（两两唯一 ∧ 配置集合 ⊆ 登记派生集 ∧ 下界 ≥2）；
+> **C11** = 020 口径声明完备与 cadence 收口。本文件的组织方式是把"五处登记点**逐处**：
+> 今天形状 → 改成什么 → 机检断言 → 反例"写在 **C9**（裁决 5、`research.md` 决策 7、裁决 6 的口径落在 C10/C11）。
 > **本文件只占 C9~C11**，不占用 `contracts/plugin-config.md` 的 **C1 / C2 / C3 / C4**，也不占用
 > `contracts/zero-form-branch.md` 的 **C5 / C6 / C7 / C8**（四条各自成号：C5 = 字面量层扫描面与例外三条 /
 > C6 = 判断分支层与形态名派生 / C7 = 三副本委派收敛 / C8 = 裸词收敛与 E1 例外登记——见本文头"守卫面"段）。
@@ -60,7 +61,7 @@
 | --- | --- | --- | --- | --- |
 | ① | `tests/unit/test_form_switch.py`：模块级 `FORMS`（`:30`）、`Test差异逐项可归因._pair`（`:144`）、`Test差异逐项可归因.test_全量差异都被配置文件承载`（`:341-379`）、`Test零形态分支静态断言.BANNED_LITERALS` / `BANNED_PATTERNS`（`:413` / `:414`）、`test_core_与_agents_无形态字面量`（`:421`，排除行 `:423`）、`test_形态切换只经配置文件`（`:438`，断言 `:441`） | `FORMS = ("movie", "shortdrama")` 硬编码；扫描面**显式排除 `agents/pilot`**；`configs == ["movie.yaml", "shortdrama.yaml"]` **恰好两份** | `FORMS` 与 `_pair` 改由 `declared_forms()` 驱动；`:423` 的排除**删去**（补面方向是**变严**）；禁用清单**委派**到 `form_literals()` / `form_branch_patterns()`；`:341-379` 的固定差异集**原位一字不改**；**新增**"逐形态对"断言；`:441` 按 C10 升级为**登记完备**口径 | 新形态在 `FORMS` 里**缺席**（用例不覆盖它）；或该处退回字面量元组（委派证明失败） |
 | ② | `tests/unit/test_config_integrity.py`：`SHORTDRAMA` / `MOVIE`（`:19` / `:20`）、`CONFIG_CLASSES`（`:23-40`）、`REQUIRED_PATHS`（`:48-98`）、`Test形态标识与段完整性.test_形态标识为短剧`（`:118`）、`test_与电影配置段集合一致`（`:122-126`）、`Test全部配置类加载器` 的参数化（`:133`）、`test_缺项即红` 的参数化（`:153-154`） | 配置集合只有 `SHORTDRAMA` / `MOVIE` 两份；参数化面写死这两份 | 配置集合改由 `declared_forms()` 驱动（**每份** `configs/*.yaml` 都跑**全部加载器**与**全部"缺项即红"条目**）；`SHORTDRAMA` / `MOVIE` 两常量**保留**（既有符号不删，作为"对照面"）；`CONFIG_CLASSES` **新增** `evaluators` 段清单解析器条目；`REQUIRED_PATHS` **新增**插件声明面的必需键与"`<evaluator_id>` 键集 == `evaluator_weights.<agent>` 键集"条目；`:122-126` 原位保留 + **新增**"全部形态段集合一致" | 新形态配置**不被任何加载器覆盖**（静默逃逸）；或新增加载器/必需键条目漏登 |
-| ③ | `tests/contract/test_pilot_contracts.py`：`TestC10到C13试水运行.test_c13_两套配置差异可归因且无形态分支`（`:418`，差异集断言 `:434-453`，全量扫描 `:468-477`，写死禁用元组 `:474`） | 固定两形态 + 固定 16 键差异集；扫描用**写死的禁用元组** | 差异集断言 `:434-453` **一字不改**（见"口径澄清 B"）；`:468-477` 的禁用元组改由 `form_literals()` / `form_branch_patterns()` 派生（该处扫描面**本就覆盖 `agents/pilot`**）；**新增**逐对形态断言（同 ①） | 两处扫描面口径**分叉**（该处用派生面、`test_form_switch.py` 用字面量）；或差异集被改成弱断言 |
+| ③ | `tests/contract/test_pilot_contracts.py`：`TestC10到C13试水运行.test_c13_两套配置差异可归因且无形态分支`（`:418`，差异集断言 `:434-453`，全量扫描 `:468-477`，写死禁用元组 `:474`） | 固定两形态 + 固定 **15** 键差异集；扫描用**写死的禁用元组** | 差异集断言 `:434-453` **一字不改**（见"口径澄清 B"）；`:468-477` 的禁用元组改由 `form_literals()` / `form_branch_patterns()` 派生（该处扫描面**本就覆盖 `agents/pilot`**）；**新增**逐对形态断言（同 ①） | 两处扫描面口径**分叉**（该处用派生面、`test_form_switch.py` 用字面量）；或差异集被改成弱断言 |
 | ④ | `agents/pilot/pilot.py`：`config_completeness`（`:377`，调用点 `:507`）、新增同模块函数 `form_clause_completeness`、`_require_duration_consistency` 的 docstring（`:613`） | `config_completeness` **按配置路径通用**（对新形态无需改代码即生效，是本特性最靠得住的一处），但只逐段跑加载器 + 七个环节权重键；`:613` 有**裸形态词** `（movie ⇒ 5400 s）` | **保住通用性**；**追加** `form_clause_completeness(config_path)` 并由 `config_completeness` 收口调用（C11 的 020 口径逐项机检，读**原始文档**不经模型）；**并把 `evaluators` 段清单解析器加进预检清单**（缺段即拒绝启动）；`:613` 的裸形态词**收敛**为中性措辞（保留"任一不一致即拒绝启动并点名两处实测值"的既有语义），**不得**为它加例外 | 新形态缺任一 020 口径键却**照常启动**（取码内默认）；或"漏声明插件清单"静默逃逸；或为 `:613` 开例外 |
 | ⑤ | `tests/conftest.py`：`PILOT_FORMS`（`:2854`）、`pilot_form_config_path`（`:3054` 装饰器 / `:3055` 函数，`movie` 分支用 `_MINIMAL_MOVIE_CONFIG`（`:3196`），未知形态 `:3072` 直接 `raise ValueError`，派生点断言 `:3073`） | 写死两形态；`movie` 用精简副本、`shortdrama` 用真实配置派生副本；未知形态**硬失败** | `PILOT_FORMS` 改由 `declared_forms()` 派生；`pilot_form_config_path(form)` 对**任意已声明形态**返回**该形态真实配置的派生副本**（只改 `budget.ledger.root`；`:3073` 的派生点断言保留）；`movie` 分支**继续**用 `_MINIMAL_MOVIE_CONFIG`（其"精简副本"职责保留——它是形态**无关性**的举证面，不属形态枚举）；对**未声明**形态仍报错（`:3072` 行为保留：派生面之外的形态就是未知形态） | 新形态**硬失败**（`ValueError`）而无法运行任何双形态用例；或为了让新形态过而返回 movie 的精简副本（**假绿**，比变红危险得多） |
 
@@ -83,7 +84,11 @@
   `:118` 与 `:122-126` 的原位断言**仍存在**。
   **② 反例**：把新形态写成第三份模块常量（`AD = …`）；新形态只加进 `SHORTDRAMA` 常量而派生面未动；
   为让新形态过而删 `REQUIRED_PATHS` 任一既有条目。
-- **③ 机检断言**：`:434-453` 的固定 16 键集合**逐字未改**；`:468-477` 的禁用面 == `form_literals()` ∪
+- **③ 机检断言**：`:434-453` 的固定 **15** 键集合**逐字未改**（**实测纠错**：两处差异集各 **15** 键
+  ——`tests/unit/test_form_switch.py:341-379` 与 `tests/contract/test_pilot_contracts.py:434-453` 的字面集合
+  **逐字相同**，键为 `form` / `evaluator_weights` / `replay` / `promo` / `visual` / `sound` / `editing` /
+  `storyboard` / `screenplay` / `dev` / `pilot` / `calibration` / `dreaming` / `deployment` / `budget`；
+  此前文档里的键数表述偏大，已按 `yaml.safe_load` 实测更正）；`:468-477` 的禁用面 == `form_literals()` ∪
   `form_branch_patterns()`（与 ① 的禁用面**逐字相等**）；新增的逐对形态断言存在；`:469` 的
   `for root in ("core", "agents")` 全覆盖循环**仍在**（含 `agents/pilot`）。
   **③ 反例**：把固定集合换成派生集合（削弱 015 的证据）；把扫描面缩回 `core/` + `agents/`（排除 pilot）；
@@ -117,7 +122,7 @@
 | `tests/unit/test_billing_core_purity.py` 的 `FORMS`（`:31`）与 `FORM_LITERALS` / `FORM_PATTERNS`（`:34`） | 写死两形态 + 人工常量表 | **委派**到 `declared_forms()` / `form_literals()` / `form_branch_patterns()`；`:145` 的 `test_无形态字面量与形态分支` 与 `:210-224` 的"有牙齿"自检**原位保留** |
 | `tests/unit/test_billing_channels.py` 的 `FORMS`（`:52`） | 写死两形态 | **委派**；断言体不删 |
 | `tests/contract/test_billing_contracts.py` 的 `FORMS`（`:97`） | 写死两形态 | **委派**；断言体不删 |
-| `tests/unit/test_pilot_rehearsal.py` 的 `FORMS`（`:34`） | 写死两形态（次序与它处不同） | **委派**；用例里的**形态特定取值假设**（排练档与形态原值对照）改"**逐形态声明期望值**"（把期望值搬进配置或建"形态 → 期望"的显式登记），**不得**删除断言、**不得**把新形态从派生面排除 |
+| `tests/unit/test_pilot_rehearsal.py` 的 `FORMS`（`:34`） | 写死两形态（次序与它处不同） | **委派**；用例里的**形态特定取值假设**（排练档与形态原值对照）按裁决写死为"**期望值入配置 + 断言读配置**"：期望值落进该形态的配置（`configs/<form>.yaml` 的既有段/键，或 `pilot` 段的既有声明），断言**从配置读出**后与该形态的实际产出比较——**否决**第二条路径"建'形态 → 期望'的显式登记表"（形态→配置/期望的映射表与 C6 的"零人工常量"、C7/C9.7 的"副本数 ⇒ 1、禁止形态映射"**直接冲突**）；**不得**删除断言、**不得**把新形态从派生面排除 |
 | `tests/unit/test_dev_core_degraded_purity.py` 的 `FORM_LITERALS` / `FORM_PATTERNS`（`:28`） | 人工常量表（第三份副本） | **委派**；`:101` 的断言体与 `:167-179` 的 AST `import` 扫描**原位保留** |
 
 ### C9.7 "不新造第六处"的机检
@@ -156,7 +161,7 @@
 ### 反例（C9）
 
 1. 保留 `tests/unit/test_form_switch.py:423` 的 `if "pilot" not in path.parts` ⇒ 装配点仍在盲区，红。
-2. 把 `:341-379` 的固定 16 键差异集换成"差异集非空"一类弱断言 ⇒ 丢失 015 的核心证据，红。
+2. 把 `:341-379` 的固定 **15** 键差异集换成"差异集非空"一类弱断言 ⇒ 丢失 015 的核心证据，红。
 3. 删掉 `:441` 的"恰好两份"断言以求新形态通过 ⇒ 红（C10 明文禁止删除）。
 4. 在 `tests/conftest.py` 重新写死 `("movie", "shortdrama")` ⇒ ⑤ 对新形态硬失败 ⇒ 红（委派证明）。
 5. 让 `pilot_form_config_path` 对新形态返回 `_MINIMAL_MOVIE_CONFIG` ⇒ 用例在**错误前提**下通过（假绿），红。

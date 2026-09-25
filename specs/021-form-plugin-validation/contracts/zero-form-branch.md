@@ -215,8 +215,11 @@ def branch_violations(configs_dir: Path) -> tuple[FormHit, ...]: ...
   ⇒ `form_literals()` 的返回值**自动**包含该形态的 id 与全部别名（条目数 == 名面去重后条目数 ==
   `declared_forms()` 长度 + 全部 `form_aliases` 项去重后的和）；把该形态名字面量写进
   `core/` 或 `agents/` **即变红**。
-- **零人工常量清单**：形态名常量的**定义点数恒 1**（= `ops/form_guard.py` 的派生面）；
-  该模块与 `tests/unit/test_form_guard.py` 的源码内**不出现**任何形态名字面量（合成反例由派生值构造）。
+- **零人工常量清单（判定口径 = C7 的两条并列断言，缺一不可）**：① **反向扫描命中数恒 0**（任意
+  `ast.Tuple`/`List`/`Set`/`Dict` 字面量——**含函数体内与 `@pytest.mark.parametrize(...)` 装饰器实参**
+  ——含名称面字符串的命中数）；② `declared_forms` / `form_literals` 的**定义点唯一**（全仓同名
+  `FunctionDef` 各恰好一处 = `ops/form_guard.py` 的派生面）。该模块与
+  `tests/unit/test_form_guard.py` 的源码内**不出现**任何形态名字面量（合成反例由派生值构造）。
 - **派生失败即报错**：删掉某配置的 `form` 键 / `form_aliases` 键、把 `form` 改成非字符串、
   给两份配置填同一个 `form`、或让某别名等于另一配置的 `form` ⇒ **四条各自**报错率 100%
   （不静默跳过、不"取第一份"）。
@@ -239,7 +242,18 @@ def branch_violations(configs_dir: Path) -> tuple[FormHit, ...]: ...
 
 - 在 `core/`/`agents/` 里写 `if form == "movie": ...` / `if form in ("movie", "shortdrama"):` ⇒ 违规。
 - 形态→值的字典分派或映射表（`FORM_PATHS = {"movie": "configs/movie.yaml"}`）⇒ 违规（字面量层同时捉住）。
-- 形态名清单退回人工常量（例如在某测试里重新写死 `("movie", "shortdrama")`）⇒ 红（C7 的副本数机检）。
+- 形态名清单退回人工常量（例如在某测试里重新写死 `("movie", "shortdrama")`）⇒ 红（C7 的副本数机检 ①）。
+- **反向扫描只看模块级赋值**（跳过函数体与装饰器实参）⇒ 红：那是**空跑假绿**——五处枚举点
+  （`tests/unit/test_billing_gateway_cells.py:305`、`tests/contract/test_transfer_contracts.py:328`、
+  `tests/unit/test_calibration_transfer.py:739`、`tests/unit/test_no_vendor_literals.py:43` 与 `:159`）
+  会**全部逃逸**，而它们恰是"新形态名静默逃逸"的同一类位置。
+- 在 `ops/form_guard.py` 之外另起一份 `declared_forms` / `form_literals` 实现（或在守卫内部复制一份
+  同义函数、或在别的模块里再写一次同名派生）⇒ 红（C7 的副本数机检 ②：**定义点唯一**）。
+- **诚实边界（不作反例、也不得冒充已覆盖）**：字符串拼接 / 转义 / 运行期拼名
+  （`"movi" + "e"`、`\x6dovie`、从环境变量拼名）**不在**两条断言的判定面内——容器字面量 AST 扫描扫不到它，
+  C5 的文本层也扫不到（源码里没有完整形态名）。这是**有意保留的判据边界**：守卫是"不得写死形态名"的
+  **可机检近似**，拼接式规避靠代码评审兜住。**不得**因这两条断言全绿就宣称"零形态分支已被完全证明"；
+  也不得为覆盖它而放宽判定（例如改成模糊匹配会引入假阳性）。
 - 缺 `form_aliases` 键而静默按 `[]` 处理 ⇒ 红（"缺键即报错"，不留空）。
 - `form` 取值与文件名 stem 不一致（`configs/ad.yaml` 写 `form: adx`）⇒ 报错。
 - 把中文别名写进**代码**（`if form == "漫剧"`）⇒ 违规（中文按子串判定，同样在扫描面内）。
@@ -293,18 +307,38 @@ FORM_PATTERNS = form_branch_patterns()
 
 - **`tests/unit/test_form_switch.py:423` 的 `if "pilot" not in path.parts` 删去**：那是**补面**
   （方向是**变严**），不是"为过断言而改守卫"；`:421-429` 的循环体与断言语句本身**保留**。
-- **副本数的定义（可机检）**：副本数 = **形态名清单的定义点**数，必须恒 **1**
-  （= `ops/form_guard.py` 的派生面）；三处测试是**委派点**（引用者），不计入定义点。
+- **副本数的定义（可机检；由下面两条并列断言给出，缺一不可）**：副本数 = **形态名清单的定义点**数，
+  必须恒 **1**（= `ops/form_guard.py` 的派生面）；三处测试是**委派点**（引用者），不计入定义点。
+  **判定口径**：① **反向扫描**（任意容器字面量，含函数体与装饰器实参）含名称面字符串的**命中数恒 0**；
+  ② `declared_forms` / `form_literals` 的**定义点唯一**（全仓同名 `FunctionDef` 各恰好一处）。
+  单看 ① 的"0"与"定义点是否为 1"**不可区分**（0 与 1 无法用一个数字表达），故两条必须并列。
 
 **机检断言**：
 
-- **副本数恒 1**：反向扫描（AST）`tests/**`、`ops/**`、`core/**`、`agents/**` 中**模块级赋值**的
-  容器字面量（`Tuple`/`List`/`Set`/`Dict`）是否含**派生名称面**中的任一字符串 ⇒ 命中数恒 **0**
-  （守卫模块与测试自身零人工形态常量；合成反例由**派生值**运行时构造 ⇒ 不是模块级常量）。
+- **副本数恒 1（两条并列断言；单看任一条都不可判）**：
+  - **① 反向扫描命中数恒 0（AST）**：反向扫描 `tests/**`、`ops/**`、`core/**`、`agents/**`、`web/**`、
+    `dreaming/**` 中**任意** `ast.Tuple` / `ast.List` / `ast.Set` / `ast.Dict` **字面量**是否含**派生名称面**
+    （`form_literals()`）中的任一字符串 ⇒ 命中数恒 **0**。**扫描面不得只看模块级赋值**：
+    **函数体内**的容器与**装饰器实参**（`@pytest.mark.parametrize("form", ("movie", "shortdrama"))`
+    一类）**同样**在扫描面内——否则会**空跑假绿**。今天至少五处形态枚举落在这些位置：
+    `tests/unit/test_billing_gateway_cells.py:305`、`tests/contract/test_transfer_contracts.py:328`、
+    `tests/unit/test_calibration_transfer.py:739`、`tests/unit/test_no_vendor_literals.py:43` 与 `:159`
+    （前者为装饰器实参、后者为函数体内 `for ... in (...)` 元组）——**只扫模块级赋值时这五处全都扫不到**。
+    这五处是**待转换的枚举点**（与 `tests/unit/test_form_switch.py:30` 等同族）：A3/A4 的"同族副本逐处
+    改派生"处置面**随之扩展到这些位置**，转换（改为由 `declared_forms()` 驱动）后命中数恒 **0**。
+    守卫模块与 `tests/unit/test_form_guard.py` 自身的"零人工形态常量"由同一扫描面保证：
+    其合成反例由**派生值**在运行期构造 ⇒ 不是容器字面量。
+  - **② `declared_forms` / `form_literals` 的定义点唯一**：AST 断言全仓（`core/**`、`agents/**`、
+    `ops/**`、`tests/**`、`web/**`、`dreaming/**`）中**同名 `FunctionDef` 各恰好一处**
+    （即 `ops/form_guard.py` 的派生面）：`len(defs("declared_forms")) == 1` 且
+    `len(defs("form_literals")) == 1`；**≥2 处即红**（第二份派生面 / 第二份副本）。
+  - **为什么必须两条并列**：① 的命中数本来就是 **0**，"把形态名写死成容器字面量"与
+    "存在第二份派生实现"这两件事**无法用同一个数字区分**（0 与 1 不可区分）——① 管前者、② 管后者，
+    两条合起来才等价于"**副本数恒 1**"。
 - **三处委派点存在**：`tests/unit/test_form_switch.py` 的 `Test零形态分支静态断言`（字面量 + 分支两个用例）、
   `tests/unit/test_billing_core_purity.py` 的 `Test零形态与厂商字面量.test_无形态字面量与形态分支`、
   `tests/unit/test_dev_core_degraded_purity.py` 的 `Test零形态与厂商字面量.test_无形态字面量与形态分支`
-  ——**三处都必须仍在**且都调用守卫的派生函数（引用者数 ≥ 3，定义点数 == 1）。
+  ——**三处都必须仍在**且都调用守卫的派生函数（引用者数 ≥ 3，派生面的**定义点数 == 1**，见上 ②）。
 - **断言语义只增不减（逐条可机检）**：
   ① 三处的**循环体**必须仍遍历扫描面并逐文件读文本、**断言**必须仍为"违例集合为空 / 逐条报出
   `f"{path} 不得出现形态字面量：{banned}"` 形态的失败信息"（删除=红、把断言改成 `pass`=红）；
@@ -364,8 +398,10 @@ FORM_PATTERNS = form_branch_patterns()
   ```
 
   **保留**其后"任一不一致即拒绝启动并**点名两处实测值**（不静默择一、不按其一取值）"的**既有语义**；
-  `_require_same_duration` 的两个比较点（`:620-625` 与 `:629` 起的生效值/运行级比较）**逻辑零改动**
-  ——本收敛**只改 docstring 措辞**。
+  **`_require_duration_consistency`（`:604`）** 体内的两个比较点（`:620-625` 的形态原值比较，与 `:629`
+  起的生效值/运行级比较；两处各自调用被比较工具 `_require_same_duration`，后者定义在 `:289`）
+  **逻辑零改动** ——本收敛**只改 docstring 措辞**，比较点与被比较工具**都不动**（`:613` 的裸形态词
+  属 `_require_duration_consistency` 的 docstring，**不是** `_require_same_duration` 的说明）。
 
 - **例外登记（E1 的唯一既有命中点）**：
 

@@ -3,7 +3,8 @@
 本文给出**可复制执行**的验证序列与期望结果。**全部命令离线、零真实花费、零外部网络、零凭证**；
 命令与仓库既有工具链一致（`uv run …`，形态配置用 `configs/<form>.yaml`）。
 契约落点：`contracts/plugin-config.md`（C1~C4，声明形状与唯一装配点 / 版本冻结）、
-`contracts/zero-form-branch.md`（C5~C8，扫描面与形态名派生 / 副本收敛 / 裸词收敛）、
+`contracts/zero-form-branch.md`（守卫面四条各自成号：**C5** 字面量层扫描面与例外三条 /
+**C6** 判断分支层与形态名派生 / **C7** 三副本委派收敛 / **C8** 裸词收敛与 E1 例外登记）、
 `contracts/form-registration.md`（C9~C11，五处登记点 / 登记完备 / 020 口径完备）、
 `contracts/onboarding-ops.md`（C12~C14，接入改动清单 / 机制侧总账 / CLI 与离线演示）。
 
@@ -69,7 +70,7 @@ A6 两支命令合计给出的路径集合**只有未跟踪的 `specs/021-form-p
 
 ## B. 本特性落地后可跑（B1~B5；实现尚未落地）
 
-### B1 守卫与派生面（C5~C8）
+### B1 守卫与派生面（C5 / C6 / C7）
 
 ```bash
 uv run pytest tests/unit/test_form_guard.py -q                        # 派生面 / 两层扫描 / 符号名锚点 / 例外三条 / 注入即红
@@ -106,26 +107,36 @@ uv run python ops/form_plugin.py sync-versions --check --config configs/<new-for
 
 ```bash
 # 基线 = 机制落地后、新形态接入前的提交（**必须显式给出**）
+# `--out` **必须落临时目录**（I-07：`.gitignore` 无 `.specify` 规则 ⇒ 写进仓库内路径必然
+# 让"仓库根零新增文件/未跟踪集合前后相等"这条断言失真）；下面用 `mktemp -d` 示意
+OUT=$(mktemp -d)
 uv run python ops/form_plugin.py onboarding --baseline <机制落地 ref> \
-        --config configs/<new-form>.yaml --out .specify/onboarding
+        --config configs/<new-form>.yaml --out "$OUT"
 ```
 
-**期望结果**：退出码 **0**（`violations == []`），清单逐条给出路径 + `status` + **类别**
-（配置 / 插件 / 测试与文档 / 越界），`counts["既有模块被修改"] == 0`；产物含 `baseline_ref` /
+**期望结果**：退出码 **0**（`violations == []`），清单逐条给出路径 + `status` + **类别**（`category`
+的**英文枚举**：`config` / `plugin` / `test_doc` / `out_of_scope`——字段与取值域以
+`contracts/onboarding-ops.md` C12 的权威表为准），`counts["既有模块被修改"] == 0`；产物含 `baseline_ref` /
 `mechanism_ledger_ref` / `config_fingerprint`（BLAKE3 前 12 位）；`index.jsonl` **追加**一行。
 **越界取证**：人为在 `core/evaluators/composite.py` 里加一行注释 ⇒ 退出码 **1** 且**逐条点名**该路径。
+**零残留判据**：跑完后 `git ls-files --others --exclude-standard` 的输出集合**前后逐条相等**
+（`--out` 落仓库内路径 ⇒ 该判据必红）。
 
 ### B4 离线端到端演示（C14）
 
 ```bash
-uv run python ops/demo_form_plugin.py --form ad --out .specify/onboarding   # 九步；退出码 0 = 全步 ok
+# 演示脚本是**机制侧资产**（A5 创建）且**形态无关**：遍历 declared_forms()，对新形态零改动即可演示
+OUT=$(mktemp -d)
+uv run python ops/demo_form_plugin.py --form ad --out "$OUT"   # 九步；退出码 0 = 全步 ok
 ```
 
 **期望结果**：退出码 **0**，`steps` 九步逐条 `ok`；产物 `network: "none"`、
 `credentials_required: false`、`uncalibrated: true` 且 `uncalibrated_reason` 非空；
-**仓库根零新增文件**（默认临时工作目录，演示结束即清理）。九步逐条对应见
-`contracts/onboarding-ops.md` C14 的表（配置加载与预检 → 缺项即拒绝 → 插件装配 → 评估与合成分数 →
-留痕 → 两形态共用同一份插件代码 → 静态守卫 → 登记点完备 → 诚实分层与零成本）。
+**仓库根零新增文件**（产物落 `--out` 临时目录；演示的临时工作目录默认结束即清理）。
+九步逐条对应见 `contracts/onboarding-ops.md` C14 的表（配置加载与预检 → 缺项即拒绝 → 插件装配 →
+评估与合成分数 → 留痕 → 两形态共用同一份插件代码 → 静态守卫 → 登记点完备 → 诚实分层与零成本）。
+**形态无关的判据**：`ops/demo_form_plugin.py` 内**零形态字面量、零形态分支**（C5 / C6 的扫描面口径）；
+新增一份 `configs/<new-form>.yaml` 后，**对该形态零改动**即可演示（`--form` 只用于挑选演示对象）。
 
 ### B5 接入方流程（写配置 → 写插件 → 声明 → 校验 → 审计）
 
@@ -135,16 +146,18 @@ uv run python ops/demo_form_plugin.py --form ad --out .specify/onboarding   # �
 #    （**两类都必须经 impl 声明才生效**——目录不决定可用性）
 uv run python ops/form_plugin.py sync-versions --check --config configs/<new-form>.yaml   # 3) 版本一致性（只校验）
 uv run python ops/form_plugin.py registration --config configs/<new-form>.yaml            # 4) 五处登记点逐一
+OUT=$(mktemp -d)                                                                          # 5) 清单产物落临时目录
 uv run python ops/form_plugin.py onboarding --baseline <机制落地 ref> \
-        --config configs/<new-form>.yaml --out <目录>                                      # 5) 接入改动清单（越界即非 0）
-uv run python ops/demo_form_plugin.py --form <形态 id> --baseline <机制落地 ref>           # 6) 离线端到端
+        --config configs/<new-form>.yaml --out "$OUT"                                      # 接入改动清单（越界即非 0）
+OUT2=$(mktemp -d)
+uv run python ops/demo_form_plugin.py --form <形态 id> --out "$OUT2" --baseline <机制落地 ref>   # 6) 离线端到端
 ```
 
 **形态名约定**：形态名**一律由 `configs/*.yaml` 的 `form:` 派生**；中文别名由 `form_aliases` 键声明
 （**键名与派生口径以 `contracts/zero-form-branch.md` C6 为权威**，本文不另定一套写法）。
 本文在示例命令里只使用形态 id **`ad`** 与 **`animated`**。
 
-**命令行示例约定**：`<>` 包裹的取值（`<机制落地 ref>` / `<形态 id>` / `<目录>` / `<new-form>`）一律是
+**命令行示例约定**：`<>` 包裹的取值（`<机制落地 ref>` / `<形态 id>` / `<new-form>`）一律是
 **示例参数**，须替换为实际取值；它们**不是**配置取值，配置里（`configs/*.yaml`）**不得**出现 `<>` 占位
 （配置写数值/字符串，缺项/非法即报错、不取码内默认）。
 
@@ -183,11 +196,16 @@ uv run python ops/demo_form_plugin.py --form <形态 id> --baseline <机制落�
 
 **口径（FR-013）**：本特性自身对 `core/` / `agents/` / `ops/` 与**既有配置**的机制改动**必须**与
 "此后的新形态接入改动"**分开陈述**——**禁止**把机制改动本身写成"零代码改动"。下表与
-`ops/form_onboarding.py` 的 `MECHANISM_LEDGER` **逐条一致**（C13 机检 4：路径列与
-`MECHANISM_LEDGER_PATHS` 相等，**恰好 39 条**：新增 18 + 修改 21）；`kind` 列里的 **new** = 新增文件、
+`ops/form_onboarding.py` 的 `MECHANISM_LEDGER` **集合相等**（C13 机检 4：**路径集合**相等即通过，
+**不写死条数**；当前实测 **55 条**，仅作对照）；`kind` 列里的 **new** = 新增文件、
 **modified** = **既有模块被修改**（机制侧**必然**含 `modified` 项——这正是"机制侧不是零代码改动"的机器证明）。
+**计数只按 FR-013 的六项归属**（①~⑥，见"服务哪一项总账"列），**不按实现阶段号 A1~A5**
+（阶段号只表示实现顺序，不承载账目语义）。**按六项归属的当前实测分解（仅作对照，非判据；
+重复路径只在其首次归属项计数）**：① = **35**（新增 10 / 修改 25，含 A1 夹具同步面 15）／
+② = **5**（2 / 3）／③ = **4**（0 / 4）／④ = **2**（1 / 1）／⑤ = **4**（1 / 3）／⑥ = **5**（5 / 0），
+合计 **55**（新增 19 / 修改 36）。
 
-| # | 路径 | kind | 服务哪一项总账（FR-013 的序号） |
+| # | 路径 | kind | 服务哪一项总账（FR-013 的序号，①~⑥） |
 | --- | --- | --- | --- |
 | 1 | `core/evaluators/plugin.py` | new | ① 唯一装配点（声明解析 + `importlib` + 参数注入 + 一致性校验） |
 | 2 | `core/evaluators/errors.py` | **modified** | ① 错误类型（`EvaluatorError` 之下增声明/装配期错误） |
@@ -205,43 +223,98 @@ uv run python ops/demo_form_plugin.py --form <形态 id> --baseline <机制落�
 | 14 | `agents/editing/evaluators/__init__.py` | **modified** | ① `build_editing_evaluators` 改委派 |
 | 15 | `configs/movie.yaml` | **modified** | ① 新增 `evaluators` 声明段（既有取值零改动） |
 | 16 | `configs/shortdrama.yaml` | **modified** | ① 同上（与 movie 的该段逐字相同） |
-| 17 | `core/calibration/config.py` | **modified** | ① A4：cadence 取值域收口（取值域取自 `core/calibration/periods.py:30`，该文件一字不改） |
+| 17 | `core/calibration/config.py` | **modified** | ① cadence 取值域收口（取值域取自 `core/calibration/periods.py:30`，该文件一字不改） |
 | 18 | `tests/unit/test_evaluator_plugin_assembly.py` | new | ① 装配面单测 |
 | 19 | `tests/contract/test_plugin_contracts.py` | new | ① 插件契约测试（C1~C4 的可执行面） |
-| 20 | `ops/form_guard.py` | new | ②③ 形态名派生 + 两层扫描（**单一实现**） |
-| 21 | `tests/unit/test_form_guard.py` | new | ② 守卫自检（注入即红 / 派生失败即报错） |
-| 22 | `tests/unit/test_form_switch.py` | **modified** | ②⑤ 委派收敛 + 排除项删去 + "恰好两份"→登记完备 |
-| 23 | `tests/unit/test_billing_core_purity.py` | **modified** | ② 副本委派（断言体原位保留） |
-| 24 | `tests/unit/test_dev_core_degraded_purity.py` | **modified** | ② 副本委派（同上） |
-| 25 | `tests/contract/test_pilot_contracts.py` | **modified** | ③ 禁用元组改派生（差异集断言一字不改） |
-| 26 | `tests/unit/test_billing_channels.py` | **modified** | ③ 同族枚举副本改派生 |
-| 27 | `tests/contract/test_billing_contracts.py` | **modified** | ③ 同上 |
-| 28 | `tests/unit/test_pilot_rehearsal.py` | **modified** | ③ 同上（形态特定期望值改"逐形态声明期望值"） |
-| 29 | `agents/pilot/pilot.py` | **modified** | ④ `form_clause_completeness` 追加 + `:613` 裸形态词收敛 |
-| 30 | `tests/unit/test_form_clause_completeness.py` | new | ④ 020 口径逐项机检与 cadence 越界取证 |
-| 31 | `tests/unit/test_form_registration.py` | new | ⑤ 五处逐一 / 登记完备三条 / 不新造第六处 / 越界取证 |
-| 32 | `tests/unit/test_config_integrity.py` | **modified** | ⑤ 配置集合改派生 + 新增清单解析器与必需键条目 |
-| 33 | `tests/conftest.py` | **modified** | ⑤ `PILOT_FORMS` 与 `pilot_form_config_path` 改派生 |
-| 34 | `tests/unit/test_pilot_chain_seven.py` | **modified** | ⑤ `config_completeness` 返回段清单变长的扩展 |
-| 35 | `ops/form_onboarding.py` | new | ⑥ 清单 + 登记点完备性 + `MECHANISM_LEDGER` |
-| 36 | `ops/form_plugin.py` | new | ⑥ CLI 门面（`guard` / `registration` / `onboarding` / `sync-versions`） |
-| 37 | `ops/demo_form_plugin.py` | new | ⑥ 离线端到端演示（九步） |
-| 38 | `tests/unit/test_form_onboarding.py` | new | ⑥ 清单派生一致率 / 类别判定 / 越界取证 / append-only |
-| 39 | `tests/contract/test_form_onboarding_contracts.py` | new | ⑥ C12 / C13 的可执行面 |
+| 20 | `tests/unit/fixtures/evaluator_assembly_baseline.json` | new | ① 装配序列对照基线夹具（"改造前后逐字相同"的对照物） |
+| 21 | `ops/form_guard.py` | new | ②③ 形态名派生 + 两层扫描（**单一实现**） |
+| 22 | `tests/unit/test_form_guard.py` | new | ② 守卫自检（注入即红 / 派生失败即报错） |
+| 23 | `tests/unit/test_form_switch.py` | **modified** | ②⑤ 委派收敛 + 排除项删去 + "恰好两份"→登记完备 |
+| 24 | `tests/unit/test_billing_core_purity.py` | **modified** | ② 副本委派（断言体原位保留） |
+| 25 | `tests/unit/test_dev_core_degraded_purity.py` | **modified** | ② 副本委派（同上） |
+| 26 | `tests/contract/test_pilot_contracts.py` | **modified** | ③ 禁用元组改派生（差异集断言一字不改） |
+| 27 | `tests/unit/test_billing_channels.py` | **modified** | ③ 同族枚举副本改派生 |
+| 28 | `tests/contract/test_billing_contracts.py` | **modified** | ③ 同上 |
+| 29 | `tests/unit/test_pilot_rehearsal.py` | **modified** | ③ 同上（形态特定期望值按裁决改为"**期望值入配置 + 断言读配置**"） |
+| 30 | `agents/pilot/pilot.py` | **modified** | ④ `form_clause_completeness` 追加 + `:613` 裸形态词收敛 |
+| 31 | `tests/unit/test_form_clause_completeness.py` | new | ④ 020 口径逐项机检与 cadence 越界取证 |
+| 32 | `tests/unit/test_form_registration.py` | new | ⑤ 五处逐一 / 登记完备三条 / 不新造第六处 / 越界取证 |
+| 33 | `tests/unit/test_config_integrity.py` | **modified** | ⑤ 配置集合改派生 + 新增清单解析器与必需键条目 |
+| 34 | `tests/conftest.py` | **modified** | ⑤ `PILOT_FORMS` 与 `pilot_form_config_path` 改派生 |
+| 35 | `tests/unit/test_pilot_chain_seven.py` | **modified** | ⑤ `config_completeness` 返回段清单变长的扩展 |
+| 36 | `ops/form_onboarding.py` | new | ⑥ 清单 + 登记点完备性 + `MECHANISM_LEDGER` |
+| 37 | `ops/form_plugin.py` | new | ⑥ CLI 门面（`guard` / `registration` / `onboarding` / `sync-versions`） |
+| 38 | `ops/demo_form_plugin.py` | new | ⑥ 离线端到端演示（九步；**A5 创建、形态无关**——遍历 `declared_forms()`，对新形态零改动即可演示） |
+| 39 | `tests/unit/test_form_onboarding.py` | new | ⑥ 清单派生一致率 / 类别判定 / 越界取证 / append-only |
+| 40 | `tests/contract/test_form_onboarding_contracts.py` | new | ⑥ C12 / C13 的可执行面 |
+| 41 | `tests/contract/test_dev_contracts.py` | **modified** | ① A1 夹具同步面（补 `evaluators` 段） |
+| 42 | `tests/unbiasedness/test_dev_unbiased.py` | **modified** | ① 同上 |
+| 43 | `tests/unbiasedness/test_editing_unbiased.py` | **modified** | ① 同上 |
+| 44 | `tests/unbiasedness/test_screenplay_unbiased.py` | **modified** | ① 同上 |
+| 45 | `tests/unbiasedness/test_sound_unbiased.py` | **modified** | ① 同上 |
+| 46 | `tests/unbiasedness/test_storyboard_unbiased.py` | **modified** | ① 同上 |
+| 47 | `tests/unit/test_dev_compare_adopt.py` | **modified** | ① 同上 |
+| 48 | `tests/unit/test_dev_composite.py` | **modified** | ① 同上 |
+| 49 | `tests/unit/test_editing_composite.py` | **modified** | ① 同上 |
+| 50 | `tests/unit/test_screenplay_cli.py` | **modified** | ① 同上 |
+| 51 | `tests/unit/test_screenplay_compare_adopt.py` | **modified** | ① 同上 |
+| 52 | `tests/unit/test_screenplay_composite.py` | **modified** | ① 同上 |
+| 53 | `tests/unit/test_sound_composite.py` | **modified** | ① 同上 |
+| 54 | `tests/unit/test_storyboard_composite.py` | **modified** | ① 同上 |
+| 55 | `tests/unit/test_visual_consistency.py` | **modified** | ① 同上（visual 的装配调用点在此；**无** `test_visual_composite.py`） |
+
+**A1 夹具同步面的可派生口径（逐条登记，避免人工维护）**：**凡在 `tests/**` 内调用六个
+`build_*_evaluators` 的测试文件**都在上表第 41~55 行里（实测命中集 **16 个文件**，其中
+`tests/conftest.py` 已在第 34 行按 ⑤ 登记 ⇒ 本组 **15 条**）。机检 = 反向扫描这些符号的调用点，
+集合与上表相等；新增一处调用点而漏登记 ⇒ 红。
+**实测偏差如实登记**：plan 阶段 A1 以 `test_{…,visual}_composite.py` 与
+`tests/contract/test_{dev,screenplay,storyboard,editing,sound}_contracts.py` 的**形式**给出该面——
+实测 `tests/unit/test_visual_composite.py` **不存在**（visual 的调用点在 `tests/unit/test_visual_consistency.py`），
+`tests/contract/` 下**只有** `test_dev_contracts.py` 命中 ⇒ 上表以**实测集合**为准：
+**按真实路径登记**（第 55 行 `tests/unit/test_visual_consistency.py`、第 41 行
+`tests/contract/test_dev_contracts.py`），**不存在的路径一律不登、也不为凑数保留**。
+
+**不属于机制侧 ledger 的两类（避免自相矛盾）**：① `core/evaluators/plugins/**`（含其 `__init__.py`）——
+它是 **B 阶段接入侧**的新增面（清单里恒为 `category = "plugin"` ⇒ 放行）；② `specs/**` / `docs/**` 的
+机制侧文档变更——它们在清单里恒属 `test_doc` 放行类，**不重复登记**。
+（与 `contracts/onboarding-ops.md` C12 的 `plugin` 放行面、C13 的 `NOT_LEDGER_ITEMS` **同一口径**。）
+
+**排除面 `NOT_LEDGER_ITEMS`（机检在做集合比较前必须逐条剔除，与 C13 同一口径）**：本表**真·条目
+来源只有一处** = 上表的**路径列**；正文里另以反引号写出的下列路径**都不是条目**——
+`tests/unit/test_visual_composite.py`（**不存在**；视觉面的**真实路径 = 上表第 55 行的
+`tests/unit/test_visual_consistency.py`**）、`tests/contract/test_screenplay_contracts.py` 及
+storyboard / editing / sound 同族（**不存在**；`tests/contract/` 的真正命中只有上表第 41 行的
+`tests/contract/test_dev_contracts.py`）、`tests/unit/test_calibration_config.py`（存在但**明确不动**）、
+`plan.md` / `research.md` / `quickstart.md` / `data-model.md` / `spec.md`（**设计件的行文引用**——
+其中 **`plan.md` 正是"56 条"的元凶**：朴素抽取把正文里的 `plan.md` 当成一条 ledger 路径）、
+**以及一切"不含目录前缀的裸文件名"片段**（`__init__.py` / `test_dev_contracts.py` /
+`test_screenplay_contracts.py` 等）——片段同样**不作为条目**。
+⇒ **集合相等即通过，不比较条数、不比较顺序**；把正文引用一并算进去的**朴素抽取**会得到虚高计数
+（实测 63 条，剔除上述排除面 **8 条**后 = **55 条**）——那是抽取口径问题，**不是**两侧表集合不一致，
+**条数从来不是判据**（两处一致：C13 的"机检口径（唯一）"段与本段）。
 
 **三步验收流程（不得颠倒）**：① 机制支线提交（打一个可引用的 ref = `mechanism_ledger_ref`）→
-② 以 ① 为基线做新形态接入（只新增配置 + 插件 + 测试文档）→ ③ 跑
+② 以 ① 为基线做新形态接入（**只新增配置 + 插件**，外加测试与文档）→ ③ 跑
 `onboarding --baseline <①>` 必须 `violations == []`。
 **反证（证明机制侧不是零代码改动）**：以 **① 之前的 ref** 为基线跑同一条命令 ⇒ `violations` **必然非空**，
-且逐条命中上表的 **modified** 项（第 2 / 9~17 / 22~24 / 25~28 / 29 / 32~34 行）。
+且逐条命中上表的 **modified** 项（含六个装配函数、`agents/pilot/pilot.py`、`core/calibration/config.py`、
+两份既有配置与 A1 夹具同步面）。
+
+**`ops/demo_form_plugin.py` 的归属（I-09 裁决，写清以免 B1/B2 验收永远红）**：该脚本**由阶段 A5 创建**、
+**形态无关**（遍历 `declared_forms()`），⇒ 属**机制侧资产**、位于 `baseline_ref` **之前**，
+**不进**新形态接入的改动清单；**不得**把 `ops/demo_*.py` / `ops/form_*.py` 加进放行面
+（那会拆掉"**新增 ops CLI 即越界**"的牙齿）。
 
 ---
 
 ## 如何看产物（离线跑完后的逐件核对）
 
+**产物一律落 `--out` 临时目录**（I-07；`--out` **不接受**仓库内路径）——判据 = 跑完后
+`git ls-files --others --exclude-standard` 的输出集合**前后逐条相等**。下表路径中的 `<out>` 即该临时目录。
+
 | 产物 | 路径 | 看什么 |
 | --- | --- | --- |
-| 接入改动清单 | `<out>/onboarding-<form>-<seq:04d>.json` | `baseline_ref` / `mechanism_ledger_ref` / `form` / `config_path` / `config_fingerprint` / `changes[]`（逐条路径 + `status` + 类别 + 越界标记）/ `counts`（含 `既有模块被修改`）/ `violations[]` / `mechanism_changes_included` / `zero_code_onboarding` / `exit_code` |
+| 接入改动清单 | `<out>/onboarding-<form>-<seq:04d>.json` | `schema`（当前 `1`）/ `baseline_ref` / `mechanism_ledger_ref` / `form` / `config_path` / `config_fingerprint` / `changes[]`（逐条 `path` + `status` + `category`（**英文枚举** `config`/`plugin`/`test_doc`/`out_of_scope`）+ `violation` + `reason`）/ `counts`（**中文键名**：`配置`/`插件`/`测试与文档`/`越界`/`既有模块被修改`）/ `violations[]` / `mechanism_changes_included` / `zero_code_onboarding` / `exit_code`——**字段与取值域以 `contracts/onboarding-ops.md` C12 的权威表为准** |
 | 清单索引 | `<out>/index.jsonl` | 每行一次接入的固定字段——**append-only**，永不回改；同目录连跑两次 ⇒ 行数 +2、旧清单字节不变 |
 | 守卫报告 | `<out>/guard-report.json` | 逐条 `(相对路径, 所属符号名, 行号, 命中内容)`（**符号名锚点**）；字面量层与判断分支层分别计数；例外三条的判定结果 |
 | 登记报告 | `<out>/registration-report.json` | 五处逐一 `{site, symbol, kind, forms, delegated, missing[]}` + 登记完备三条结论 + 第六处反向扫描结论 |
@@ -256,7 +329,7 @@ uv run python ops/demo_form_plugin.py --form <形态 id> --baseline <机制落�
 | 契约 | 验证命令 | 成功标准 |
 | --- | --- | --- |
 | C1~C4 插件声明形状 / 唯一装配点 / 通用参数通道 / 版本冻结 | `pytest tests/unit/test_evaluator_plugin_assembly.py tests/contract/test_plugin_contracts.py`；B2 的 `sync-versions --check`；演示步 ③④⑥ | SC-004 / SC-005 |
-| C5~C8 扫描面与形态名派生 / 副本收敛 / 裸词收敛 | `pytest tests/unit/test_form_guard.py`；`ops/form_plugin.py guard`；演示步 ⑦；A3 / A4 的 `grep` 取证 | SC-003 |
+| C5 / C6 / C7 / C8 字面量层与例外三条 / 分支层与形态名派生 / 三副本委派收敛 / 裸词收敛与 E1 例外登记 | `pytest tests/unit/test_form_guard.py`；`ops/form_plugin.py guard`；演示步 ⑦；A3 / A4 的 `grep` 取证 | SC-003 |
 | C9~C11 五处登记点 / 登记完备 / 020 口径完备 | `pytest tests/unit/test_form_registration.py tests/unit/test_form_clause_completeness.py tests/unit/test_config_integrity.py tests/unit/test_form_switch.py`；`ops/form_plugin.py registration`；演示步 ①②⑧⑨ | SC-006 / SC-007 |
 | C12~C13 接入改动清单 / 机制侧总账分账 | `pytest tests/unit/test_form_onboarding.py tests/contract/test_form_onboarding_contracts.py`；`ops/form_plugin.py onboarding --baseline <ref>`；本文"机制侧总账"的反证 | SC-001 / SC-002 |
 | C14 CLI 与离线端到端演示 | `ops/demo_form_plugin.py --form ad`（退出码 0）；各入口 `--help` 0 / 缺 `--baseline` 2 / 有越界 1 | SC-008 |
@@ -293,6 +366,19 @@ uv run python ops/demo_form_plugin.py --form <形态 id> --baseline <机制落�
     `git ls-files --others --exclude-standard` → **全部未跟踪的 `specs/021-form-plugin-validation/**` 设计件**
     （本次实测为 **7 个**，因为该命令在 `quickstart.md` 落地之前执行）⇒ 只跑前者会把"新增"整类漏掉
     （C12 的"必须含未跟踪新增文件"由此得到现场举证）
+  - **A7 差异集键数实测（I-03 的纠错依据）**：用 `yaml.safe_load` 逐键比较
+    `configs/movie.yaml` 与 `configs/shortdrama.yaml` ⇒ 顶层差异集 **15 键**（`form` / `evaluator_weights` /
+    `replay` / `promo` / `visual` / `sound` / `editing` / `storyboard` / `screenplay` / `dev` / `pilot` /
+    `calibration` / `dreaming` / `deployment` / `budget`），与
+    `tests/unit/test_form_switch.py:341-379`、`tests/contract/test_pilot_contracts.py:434-453` 的字面集合**逐字相同**
+    ⇒ 三份契约中的键数表述**已按实测更正为 15 键**（旧表述的 16 是偏大值）
+  - **A8 `.gitignore` 实测（I-07 的依据）**：`cat .gitignore` ⇒ **无** `.specify` 规则（只有 `.venv/` /
+    `__pycache__/` / `.pytest_cache/` / `.coverage` / `.smoke-llm/` / `/billing/` 等）
+    ⇒ 产物落 `.specify/onboarding` **必然**改变未跟踪集合 ⇒ `--out` 一律改走**临时目录**
+  - **A9 A1 夹具同步面实测（I-04 的清单依据）**：`grep -rln -E "build_(dev|screenplay|storyboard|sound|editing)_evaluators|build_evaluators\(" tests/`
+    ⇒ 命中 **16 个文件**（`tests/conftest.py` + 15 个），即机制侧总账第 41~55 行那 15 条；
+    其中 **无** `tests/unit/test_visual_composite.py`、**无** `tests/contract/test_{screenplay,storyboard,editing,sound}_contracts.py`
+    （实测偏差已如实登记在本文"机制侧总账"节与 `contracts/onboarding-ops.md` C13）
 - **未跑（如实留白，B 组）**：`tests/unit/test_form_guard.py`、`tests/unit/test_form_registration.py`、
   `tests/unit/test_form_clause_completeness.py`、`tests/unit/test_form_onboarding.py`、
   `tests/unit/test_evaluator_plugin_assembly.py`、`tests/contract/test_plugin_contracts.py`、

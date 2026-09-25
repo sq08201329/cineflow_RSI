@@ -37,7 +37,7 @@
   （`agents/pilot/stages.py:248` 的 `build_backends`，`agents/pilot/backends.py:298` 的渠道反查）；
   判断分支扫描面（`tests/unit/test_form_switch.py:431-436`）才覆盖全部。
 - **五处登记点中三处两形态硬编码、一处"恰好两份"**：① `tests/unit/test_form_switch.py:30` 的 `FORMS`
-  与 `:341-379` 的固定 16 键差异集；② `tests/unit/test_config_integrity.py:19-20` 的 `SHORTDRAMA`/`MOVIE`
+  与 `:341-379` 的固定 **15** 键差异集；② `tests/unit/test_config_integrity.py:19-20` 的 `SHORTDRAMA`/`MOVIE`
   两常量 + `:23-40` 的 `CONFIG_CLASSES` + `:48-98` 的 `REQUIRED_PATHS` + `:153-154` 的参数化面；
   ③ `tests/contract/test_pilot_contracts.py:418-477` 的固定差异集（`:434-453`）与**写死的禁用元组**
   （`:469-477`）；④ `agents/pilot/pilot.py:377` 的 `config_completeness`（**按配置路径通用**，调用点 `:507`）；
@@ -190,8 +190,14 @@ form_aliases: [<名称>, ...]    # 新增顶层键（与 form 同级）：该形
   `gap_tolerance_days`（`configs/movie.yaml:620-621`、`configs/shortdrama.yaml:658-659`））；
   ④ `pilot.rehearsal.status ∈ ("declared", "unstandardized")`（`agents/pilot/pilot.py:53`）；
   ⑤ 承载业务数字的段带**非空** `note`（含"未标定"字样，沿用 `configs/movie.yaml:603` 的既有用法）；
-  ⑥ 无占位符（`tests/unit/test_config_integrity.py:174-178` 的 `TODO`/`FIXME`/`PLACEHOLDER`/`xxx` 禁列）。
-  ③ 的键名以 `contracts/form-registration.md` **C11** 为权威；本文件只登记**实体面**。
+  ⑥ 无占位符（`tests/unit/test_config_integrity.py:174-178` 的 `TODO`/`FIXME`/`PLACEHOLDER`/`xxx` 禁列）；
+  ⑦ **"不适用"的显式声明面**：段内键 **`not_applicable`**（只允许出现在 `budget` 段与
+  `calibration.transfer` 段——`budget.not_applicable`、`calibration.transfer.not_applicable`），
+  缺项/留空即报错（**不得**用"不适用"逃避填值）；
+  ⑧ **cadence 近似关系登记**：`calibration.cadence_note`（字符串）——未标定形态（`pilot.rehearsal.status
+  == "unstandardized"`）**必须**给出，且**不得**出现「已标定」「已达标」「已投产」字样。
+  ③ 的键名、以及 ⑦⑧ 两个名/键的**规则与取值域**均以 `contracts/form-registration.md` **C11** 为权威
+  （本文件只登记**实体面与名**，不复述其规则）；⑦⑧ 的机检断言同样归 **C11**。
 - **登记完备三条（替代"恰好两份"，禁止删除）**：① `form` 取值**两两唯一**（唯一数 == 配置文件数）；
   ② `declared_forms(configs_dir)` **⊆** 已登记形态派生集；③ 配置数 **≥ 2**（**下界保留**）。
   **禁止**把下界提到 3（那会把"机制可用"与"本次接入了几个形态"耦合，违反 FR-013 的机制/接入分离）。
@@ -230,13 +236,19 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
     或任一分支模式（即只列举/说明、不绑定取值）。
 - **声明的字面量集合（派生，非人工常量）**：`form_literals(configs_dir)`；**人工形态常量清单数恒 0**。
 - **不变量**：扫描面内字面量违规数恒 **0**（例外三条逐条可机检）；判断分支违规数恒 **0**；形态名常量表的
-  **定义点数恒 1**（= `ops/form_guard.py` 的派生面）；锚点按符号名定位率 100%；`tests/unit/test_billing_core_purity.py`
+  **副本数恒 1**（判定 = **I-9 的两条并列断言**：反向扫描"任意 `ast.Tuple`/`List`/`Set`/`Dict` 字面量
+  （**含函数体内与 `@pytest.mark.parametrize(...)` 装饰器实参**）含名称面字符串"的命中数恒 **0**，
+  **且** `declared_forms` / `form_literals` 的**定义点唯一**）；锚点按符号名定位率 100%；
+  `tests/unit/test_billing_core_purity.py`
   与 `tests/unit/test_dev_core_degraded_purity.py` 的既有断言体**逐字保留**。
 
 ### 7. 登记点登记项（RegistrationSite，复用 + 扩展；**不得新造第六处**）
 
 `ops/form_onboarding.py` 维护常驻白名单 `REGISTRATION_SITES`（**恰好五处**，含每处的符号名与判定函数），
 并**反向扫描**"形态清单被枚举/写死"的代码点，断言其集合 == 白名单面（新增一处即红）。
+该反向扫描的**覆盖面同 I-9/C7**：**任意** `ast.Tuple`/`List`/`Set`/`Dict` 字面量，**含函数体内与
+`@pytest.mark.parametrize(...)` 装饰器实参**（只看模块级赋值会**空跑假绿**：今天至少五处形态枚举
+落在装饰器实参与函数体元组里，见 I-9 与 `contracts/zero-form-branch.md` C7 的机检断言①）。
 登记项逐处（**符号名锚点**，行号只作辅助）：
 
 | # | 登记点 | 登记项（该形态必须在此处"已登记"） |
@@ -255,11 +267,13 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
 
 ### 8. 接入改动清单（OnboardingChangeManifest，新增；**产物面**）
 
-**落盘**：`--out` 目录下 `manifest-<form>-<序号>.json`（**写后不回改**）+ `index.jsonl` **追加**一行。
+**落盘**（文件名**以 `contracts/onboarding-ops.md` C12/C14 为权威**）：`--out` 目录下
+`onboarding-<form>-<seq:04d>.json`（**写后不回改**；同内容重跑产生**新序号**文件、旧的不覆盖）
+\+ `index.jsonl` **追加**一行。
 
-```
-{baseline_ref, form, config_path, config_fingerprint, change_count, violations[], exit_code}
-```
+- **A. 清单文件字段**（`onboarding-<form>-<seq:04d>.json`；**字段集的权威面是 C12**，下表只登记实体面，
+  与 C12 **逐键对齐、不另定同义键**；C12 另含 `mechanism_ledger_ref` / `mechanism_changes_included` /
+  `zero_code_onboarding` / `counts` 等键）：
 
 | 字段 | 类型 | 语义 |
 | --- | --- | --- |
@@ -267,19 +281,27 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
 | `form` | str | 该次接入的形态 id（= 配置的 `form:` 取值） |
 | `config_path` | str | 形态配置路径（相对仓库根） |
 | `config_fingerprint` | str | 该形态配置文件的 BLAKE3 前 12 位（沿用 `core/orchestration/models.py:36` 的 `fingerprint_of` 口径） |
-| `changes[]` | 列表 | 每条 = `{path, status ∈ {"A","M","D"}, category, violation, reason}`；**由 `git diff --name-status <baseline_ref>` 派生**（含工作区未提交改动）⇒ 与 git 实际改动集**一致率 100%**（"自报漏项"在机制上不可能发生） |
-| `category` | 枚举 | `config`（**新增** `configs/*.yaml`）/ `plugin`（**新增** `core/evaluators/plugins/**` 或 `agents/<agent>/evaluators/**`，且**仍须经 `impl` 声明**才生效）/ `test_doc`（`tests/**`、`docs/**`、`specs/**` 的新增或修改）/ `out_of_scope`（**越界**） |
+| `changes[]` | 列表 | 每条 = `{path, status ∈ {"A","M","D"}, category, violation, reason}`；**派生式 = `git diff --name-status <baseline_ref>` **∪** `git ls-files --others --exclude-standard`**（含工作区未提交改动，**并含未跟踪的新增文件**——后者正是"新增配置 + 插件"整类不被漏掉的唯一机制）⇒ 与 git 实际改动集**一致率 100%**（"自报漏项"在机制上不可能发生） |
+| `category` | 枚举（**英文**） | `config`（**新增** `configs/*.yaml`）/ `plugin`（**新增** `core/evaluators/plugins/**` 或 `agents/<agent>/evaluators/**`，且**仍须经 `impl` 声明**才生效）/ `test_doc`（`tests/**`、`docs/**`、`specs/**` 的新增或修改）/ `out_of_scope`（**越界**）；**取值域的权威面是 C12**，**不得**用中文类别名 |
 | `violation` | bool | `category == "out_of_scope"`：任何**既有文件**的修改/删除位于 `core/`/`agents/`/`ops/`/`web/`/`dreaming/`/`policies/`，或四类之外的新增文件 |
 | `violations[]` | 列表 | 越界路径的**逐条点名**（不得只报总数） |
 | `exit_code` | int | 0 = 全在界内；1 = 越界或判定失败；2 = 用法或配置错误（与既有工具一致） |
 
-- **append-only**：`index.jsonl` 只追加；文件名含形态 id 与序号 ⇒ 改写既有清单行的尝试被"文件名唯一 + 追加行"排开。
-- **字段归属**：清单机制与 CLI 的契约在 `contracts/onboarding-ops.md`（**C12/C13**，他人撰写）；
-  **本表键名以 `research.md` 决策 9 已钉死的六键为准**（`baseline_ref` / `form` / `config_fingerprint` /
-  `change_count` / `violations[]` / `exit_code`），C12/C13 必须与本表对齐、不得另定同义键。
+- **B. `index.jsonl` 的每次接入一行——**恰六键**（与 A 的清单文件字段**不是同一张表**，
+  两者不得混列）**（键名以 `research.md` 决策 9 已钉死的六键为准，C12 的 `index.jsonl` 行同义）：
+
+```
+{baseline_ref, form, config_fingerprint, change_count, violations[], exit_code}
+```
+
+- **append-only**：`index.jsonl` 只追加；清单文件名含形态 id 与序号（`<seq:04d>`）⇒ 改写既有清单行的
+  尝试被"文件名唯一 + 追加行"排开。
+- **字段归属**：清单机制与 CLI 的契约在 `contracts/onboarding-ops.md`（**C12/C13**，他人撰写）与
+  **C14**（CLI 与离线演示）；本文件只登记实体面并**引用**其编号。
 - **不变量**：`change_count == len(changes)`；既有模块被修改的文件数恒 **0**（在机制 ref 为基线的正确用法下）；
-  越界判出率 100% 且退出码非 0；"只报总数不报路径"次数恒 0；清单条目与 `git diff --name-status` 的
-  路径集合**逐字相等**。
+  越界判出率 100% 且退出码非 0；"只报总数不报路径"次数恒 0；清单条目与
+  `git diff --name-status <baseline_ref>` ∪ `git ls-files --others --exclude-standard` 的路径集合**逐字相等**
+  （**未跟踪的新增文件必须在内**——漏掉它，"新形态接入 = 仅新增配置 + 插件"的整类新增就会被漏出账）。
 
 ### 9. 机制侧总账（MechanismLedger，新增；**留痕面**）
 
@@ -289,6 +311,18 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
 ④ `agents/pilot/pilot.py:613` 裸形态词收敛；⑤ `tests/unit/test_form_switch.py:438-441` 升级为登记完备口径；
 ⑥ 接入改动清单机检。
 
+- **两个常驻名（登记项，规则与机检归 `contracts/onboarding-ops.md` **C13**，本文件只登记名）**：
+  - **`MECHANISM_LEDGER`** —— 上列六项的**常驻登记表**（落 `ops/form_onboarding.py`）；每项含其改动路径集。
+  - **`MECHANISM_LEDGER_PATHS`** —— 上表各 `items` 路径的**并集**（去重）；**判定口径 = 集合相等**
+    （文档表/`quickstart.md` 的路径面与常量**互为子集**即通过；**不写死条数**——任何"恰好 N 条"的
+    硬编码计数都**不作判据**，防止机制面增删路径时被迫改数字）。
+  - **穷举要求**：ledger **必须穷举机制侧的全部改动路径**，含 **① 夹具同步面**
+    （`tests/unit/test_{sound,screenplay,storyboard,editing,dev,visual}_composite.py`、
+    `tests/contract/test_{dev,screenplay,storyboard,editing,sound}_contracts.py`、`tests/unbiasedness/*`
+    等为内联配置字典补 `evaluators` 段的位置）与 **② 新增基线夹具**
+    **`tests/unit/fixtures/evaluator_assembly_baseline.json`**（"改造前后两形态装配序列逐字相同"
+    的对照机检所依赖的基线快照）——**漏登任一机制侧路径即 red**（那会让它以"接入改动"的名义
+    混进 `violations`，判据自相矛盾）。
 - **不变量**：机制侧总账**六项逐项在变更说明里可枚举**；把机制改动表述为"零代码改动"的次数恒 **0**；
   改造后既有两形态（`movie`/`shortdrama`）的**装配序列** `[(slot, evaluator_id@version), ...]`（含顺序）
   **逐字相同**；`movie["evaluators"] == shortdrama["evaluators"]`（逐字相等）；
@@ -340,7 +374,12 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
 - **I-8 插件业务无关**：插件（`core/evaluators/plugins/**` 与 `agents/<agent>/evaluators/plugins.py`）
   对 `agents.*`/`dreaming.*` 的 import 次数恒 **0**（AST）；插件内形态字面量/分支次数恒 **0**（文本层，
   由扫描面覆盖）；插件读环境变量/文件路径/外部网络的次数恒 **0**。
-- **I-9 形态名派生**：形态名清单**人工常量定义点数恒 1**（= `ops/form_guard.py` 的派生面）；
+- **I-9 形态名派生（副本数恒 1）**：判定口径为**两条并列断言**：
+  ① **反向扫描命中数恒 0**（AST：`tests/**`、`ops/**`、`core/**`、`agents/**`、`web/**`、`dreaming/**` 中
+  **任意** `ast.Tuple`/`List`/`Set`/`Dict` **字面量**——**含函数体内与 `@pytest.mark.parametrize(...)`
+  装饰器实参**——含 `form_literals()` 中任一字符串的命中数）；② **定义点唯一**（全仓 `declared_forms` /
+  `form_literals` 的同名 `FunctionDef` 各恰好一处，即 `ops/form_guard.py` 的派生面）；
+  两条**缺一不可**（单看 ① 的"0"与"定义点是否为 1"不可区分）；
   `form_literals()` 的条目数 == id 面 ∪ 别名面去重后的条目数；`declared_forms()` 长度 == `configs/*.yaml` 数；
   缺 `form:` 键或值非字符串则**报错率 100%**。
 - **I-10 零形态字面量**：扫描面（`core/` + `agents/`，**含 `agents/pilot`**）内的形态字面量违规数恒 **0**；
@@ -349,7 +388,9 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
 - **I-11 零形态分支**：同一扫描面内 `form ==`/`form==`/`form !=`/`form!=`/`form is `/`form in ` 六种模式
   的出现次数恒 **0**；形态→值的字典分派在同一面内出现次数恒 **0**（键必是形态名 ⇒ 被 I-10 同时捉住）。
 - **I-12 锚点按符号名**：`FormHit.symbol` 非空率 **100%**（模块级为 `"<module>"`）；机检定位不依赖行号。
-- **I-13 副本数恒 1**：形态名常量表的**定义点**数恒 **1**；三处委派点（`tests/unit/test_form_switch.py`
+- **I-13 副本数恒 1**：判定 = **两条并列断言**（与 I-9 同一口径）——① 反向扫描"任意容器字面量
+  （**含函数体内与装饰器实参**）含 `form_literals()` 字符串"的**命中数恒 0**；② `declared_forms` /
+  `form_literals` 的**定义点唯一**（全仓同名 `FunctionDef` 各恰好一处）；三处委派点（`tests/unit/test_form_switch.py`
   的 `Test零形态分支静态断言` 两个扫描用例、`tests/unit/test_billing_core_purity.py` 的
   `Test零形态与厂商字面量`、`tests/unit/test_dev_core_degraded_purity.py` 的
   `Test零形态与厂商字面量`）的**循环体与断言体逐字保留**（只换常量来源）。
@@ -361,7 +402,9 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
   装配/预检报错率 **100%**；放宽取值域（`core/calibration/periods.py:30`）的次数恒 **0**；
   "按周近似 + 如实标注"式含糊兜底的次数恒 **0**；"不适用"**显式声明率 100%**（留空/省略即报错）；
   既有两形态既有取值改动次数恒 **0**（`configs/movie.yaml:620` 的 7 与 `configs/shortdrama.yaml:658` 的 14 逐字节不变）。
-- **I-17 接入清单一致率**：清单路径集合 == `git diff --name-status <baseline_ref>` 的路径集合（一致率 **100%**）；
+- **I-17 接入清单一致率**：清单路径集合 == 「`git diff --name-status <baseline_ref>` **∪**
+  `git ls-files --others --exclude-standard`」的路径集合（一致率 **100%**；**未跟踪的新增文件必须在内**——
+  那是"新增配置 + 插件"整类不被漏掉的唯一机制）；
   既有模块被修改的文件数恒 **0**；越界逐条点名率 **100%**；"只报总数不报路径"次数恒 **0**；
   `change_count == len(changes)`；越界时退出码非 0。
 - **I-18 产物 append-only**：既有清单行/`index.jsonl` 既有行的改写次数恒 **0**；每条 `index.jsonl` 行
@@ -376,12 +419,16 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
 ## 磁盘布局（本特性全部产物在 `--out` 目录下）
 
 ```
-<out>/manifest-<form>-<序号>.json      # 接入改动清单（写后不回改；含基线 ref 与配置指纹）
-<out>/index.jsonl                      # 清单索引（append-only；每行六键）
-<out>/guard-<时间戳>.json              # 零分支守卫报告（两层违规点列表；FormHit 形状）
-<out>/registration-<form>.json         # 五处登记点逐一判定 + 登记完备三条 + 无第六处
-<out>/demo-<form>.json                 # 离线端到端演示输出（含 uncalibrated / uncalibrated_reason）
+<out>/onboarding-<form>-<seq:04d>.json  # 接入改动清单（写后不回改；含基线 ref 与配置指纹）
+<out>/index.jsonl                      # 清单索引（append-only；每行**恰六键**，见实体 8 的 B 表）
+<out>/guard-report.json                # 零分支守卫报告（两层违规点列表；FormHit 形状）
+<out>/registration-report.json         # 五处登记点逐一判定 + 登记完备三条 + 无第六处
+<out>/demo-report.json                 # 离线端到端演示输出（含 uncalibrated / uncalibrated_reason）
 ```
+
+- **文件名以 `contracts/onboarding-ops.md` C12/C14 为权威**（上列五个名字与 C12 的产物表逐字一致）；
+  本文件**不**另定文件名（早前版本的 `manifest-*` / `guard-<时间戳>.json` / `registration-<form>.json` /
+  `demo-<form>.json` 命名**已废弃**）。
 
 - **零新增落盘文件**于仓库权威目录：新形态配置落 `configs/`，插件落 `core/evaluators/plugins/` 或
   `agents/<agent>/evaluators/`，其余一律落 `--out`（**禁止**写入其它特性目录与仓库权威配置）。
@@ -402,7 +449,12 @@ def classify_exception(hit: FormHit) -> str | None              # 例外三条�
   每 Agent 槽位布局常量 **`SLOT_LAYOUT`**、错误类型 **`PluginDeclarationError`** / **`PluginAssemblyError`**
   （`core/evaluators/errors.py:8` 的 `EvaluatorError` 之下）、派生函数 **`declared_forms`**（id 面）与
   **`form_literals`**（名称面）、违规点形状 **`FormHit`**（`{path, symbol, line, hit, layer}`）、
-  类别取值域 **`{"config", "plugin", "test_doc", "out_of_scope"}`**。
+  类别取值域 **`{"config", "plugin", "test_doc", "out_of_scope"}`**（**英文**，权威面 `onboarding-ops.md` C12）；
+  **机制侧总账的两个常驻名 `MECHANISM_LEDGER` / `MECHANISM_LEDGER_PATHS`**（规则归 `onboarding-ops.md` **C13**；
+  `MECHANISM_LEDGER_PATHS` **只判集合相等、不写死条数**）；**"不适用"段内键 `not_applicable`** 与
+  **cadence 近似登记键 `calibration.cadence_note`**（两者的规则与取值域归 `form-registration.md` **C11**）；
+  **五个产物文件名**（权威面 `onboarding-ops.md` **C12/C14**）：`onboarding-<form>-<seq:04d>.json` /
+  `index.jsonl` / `guard-report.json` / `registration-report.json` / `demo-report.json`。
 - **本文件相对 plan/research 的两处**细化（不改口径，只把两条既有要求落成可判定的函数/不变量）：
   ① `declared_forms`（id 面）与 `form_literals`（名称面）**分两个函数**——`research.md:227` 的
   "`form:` 取值 + 别名键"与 `research.md:343` 的"`declared_forms() ⊆ registered_forms()`"必须同时成立，

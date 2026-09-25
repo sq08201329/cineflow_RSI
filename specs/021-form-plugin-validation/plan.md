@@ -78,7 +78,7 @@
 | 1 | **装配无实现引用、硬编码在六个函数**：全仓 `plugin`/`entry_point`/评估器侧 `import_module` 命中 **0**；六个装配函数逐个 `new` 并喂 Agent 配置字段（`agents/visual/loop.py:207`、`agents/dev/evaluators/__init__.py:31`、`agents/screenplay/evaluators/__init__.py:40`、`agents/storyboard/evaluators/__init__.py:26`、`agents/sound/evaluators/__init__.py:24`、`agents/editing/evaluators/__init__.py:27`） | A1：声明面 + 唯一装配点 + 通用参数通道；六函数改委派（**签名与返回形状不变**） |
 | 2 | **参数面硬编码**：参数经各 Agent 的 dataclass 逐字段读取校验（先例 `agents/visual/config.py:24` 的 `_require_judge`、`:54` 的 `from_dict`；`agents/sound/evaluators/__init__.py:26-30` 直取 `config.loudness`/`config.asr["cer_cap"]`）⇒ 新参数必须改既有 config 类 | A1：`params` 为唯一新增参数通道；既有参数**不搬迁**（单一事实源） |
 | 3 | **扫描面盲区与人工常量清单**：字面量扫描面**显式排除 `agents/pilot`**（`tests/unit/test_form_switch.py:423` 的 `if "pilot" not in path.parts`），而 `agents/pilot/backends.py` 是装配点；形态名清单是人工常量且**三份副本**（`:413`/`:414`、`tests/unit/test_billing_core_purity.py:34-35`、`tests/unit/test_dev_core_degraded_purity.py:28-29`）⇒ 新形态名**天然逃逸**；020 登记的扫描面**行号已漂移**（`specs/020-shortdrama-real-feedback/tasks.md:692`） | A2：扫描面补到 `core/` + `agents/` 全覆盖（含 pilot）+ 形态名派生 + 三副本**委派收敛**（语义只增不减）+ 锚点改符号名 |
-| 4 | **五处登记点中三处两形态硬编码、一处"恰好两份"**：① `tests/unit/test_form_switch.py:341-379` 固定 16 键差异集 + `:30` 的 `FORMS`；② `tests/unit/test_config_integrity.py:23-40`/`:48-98`/`:153-154`；③ `tests/contract/test_pilot_contracts.py:434-453`；④ `agents/pilot/pilot.py:377`（**按配置路径通用**，最靠得住）；⑤ `tests/conftest.py:2854` + `:3054-3079`（未知形态 `:3072` **硬失败**）；另"恰好两份"断言 `tests/unit/test_form_switch.py:438-441` 使第三份配置**必红** | A3：三处改**配置/形态派生**；④ 保住通用性并加 020 口径逐项机检；⑤ 改派生；"恰好两份"改**登记完备**口径 |
+| 4 | **五处登记点中三处两形态硬编码、一处"恰好两份"**：① `tests/unit/test_form_switch.py:341-379` 固定 **15 键**差异集（集合字面量在 `:345-369`，实测 15 项；同一 15 键另见 `tests/contract/test_pilot_contracts.py:434-453`）+ `:30` 的 `FORMS`；② `tests/unit/test_config_integrity.py:23-40`/`:48-98`/`:153-154`；③ `tests/contract/test_pilot_contracts.py:434-453`；④ `agents/pilot/pilot.py:377`（**按配置路径通用**，最靠得住）；⑤ `tests/conftest.py:2854` + `:3054-3079`（未知形态 `:3072` **硬失败**）；另"恰好两份"断言 `tests/unit/test_form_switch.py:438-441` 使第三份配置**必红** | A3：三处改**配置/形态派生**；④ 保住通用性并加 020 口径逐项机检；⑤ 改派生；"恰好两份"改**登记完备**口径 |
 
 **口径澄清 A（最易误读）：机制改动 = 本特性的交付主体，不是"零代码改动"。** G5 的"零代码改动"是**接入侧**
 的判据（B），其基线必须取机制落地后的提交；把 A 的改动混进 B 的账，会让判据自相矛盾（FR-004 末句、
@@ -168,14 +168,25 @@ ops/form_guard.py                  # 新（业务无关静态守卫，单一实�
                                    #   literal_violations / branch_violations（符号名锚点）/ classify_exception（例外三条）
 ops/form_onboarding.py             # 新：接入改动清单（git 派生 + 类别判定 + 越界逐条点名 + append-only 产物 +
                                    #   配置指纹）+ 五处登记点完备性 + 不新造第六处的常驻清单与反向扫描
+                                   #   + `MECHANISM_LEDGER`（FR-013 六项总账）与 `MECHANISM_LEDGER_PATHS`
+                                   #     （**穷举机制侧全部改动路径**：含 A1 的夹具同步面、新基线夹具与 A5 的演示脚本；
+                                   #      与文档表**集合相等**即通过、**不写死条数**；计数按 FR-013 六项归属，非按阶段号）
 ops/form_plugin.py                 # 新 CLI（门面）：guard / registration / onboarding / sync-versions
                                    #   （退出码与既有工具一致：0 通过 / 1 越界或判定失败 / 2 用法或配置错误）
-ops/demo_form_plugin.py            # 新：离线端到端演示（新形态从配置跑到跑通；零花费/零网络/零凭证；退出码 0）
-configs/movie.yaml                 # 既有：新增 `evaluators` 段（:6 的 evaluator_weights 之侧）；既有取值零改动
+ops/demo_form_plugin.py            # 新（**A5 创建**，机制侧资产）：**形态无关**的离线端到端演示——遍历
+                                   #   `declared_forms()` 对每个已声明形态跑同一套九步（配置预检 → 装配 → 评估 →
+                                   #   合成分数 → 留痕 → 共用插件 → 守卫 → 登记 → 诚实分层）；新形态**零改动**即可
+                                   #   演示；**B1/B2 只调用、不在 B 侧创建**（零花费/零网络/零凭证；退出码 0）
+configs/movie.yaml                 # 既有：新增 `evaluators` 段（:6 的 evaluator_weights 之侧）与 `form_aliases` 键；
+                                   #   既有取值零改动（两处新增都要求两形态**逐字相同** ⇒ A1 → A2 串行）
 configs/shortdrama.yaml            # 既有：同上，且与 movie 的 `evaluators` 段**逐字相同**（口径澄清 B）
 configs/<new-form>.yaml            # 新（B 阶段两份）：新形态配置（段集合与既有两形态一致 + 020 口径逐项声明 +
                                    #   "未标定"标注 + 新插件声明）
-tests/…                            # 见阶段 A1~B3 与 research.md 决策 12 的变红清单
+tests/unit/fixtures/               # 新目录（**A 侧机制资产**，不属接入改动）：机制侧对照夹具的落点（今天不存在）
+tests/unit/fixtures/evaluator_assembly_baseline.json
+                                   # 新（A1 产出）：既有两形态改造前后的装配序列基线（`(slot, id@version)` 逐字对照）；
+                                   #   编入 `MECHANISM_LEDGER_PATHS`，**不**计入接入改动
+tests/…                            # 见阶段 A1~B3 与 research.md 决策 12 的变红清单（含 A1 第 7 步的夹具同步面）
 ```
 
 **结构决策**: 三块落点各有其必然性。① **唯一装配点必须落 `core/evaluators/`**：它是评估器框架的组成
@@ -187,11 +198,16 @@ tests/…                            # 见阶段 A1~B3 与 research.md 决策 12
 会让 CLI 依赖测试（`ops/` 被测试直接导入有先例：`tests/unit/test_audit.py:10`、`tests/unit/test_check_credentials.py:19`）。
 ④ **既有评估器实现文件零改动**：`implementation_version` 把调用方实现文件字节并入哈希
 （`agents/sound/evaluators/_versioning.py:22-23`），改文件即改版本 ⇒ 改 `eval_breakdown` ⇒ 违反 FR-013
-（research.md 决策 4；这是本计划最重要的落点约束）。
+（research.md 决策 4；这是本计划最重要的落点约束）。⑤ **`tests/unit/fixtures/` 是 A 侧机制资产**（今天不存在，
+本特性新建）：承载"改造前后装配序列逐字相同"的对照基线 `evaluator_assembly_baseline.json`（研究：决策 14）。
+它**不属接入改动**（接入清单的基线取"机制落地后"，该目录已在基线之内）——把机制证据与接入改动分开，正是
+FR-013 的分账在**目录面**的体现。⑥ **离线演示是机制侧资产、且形态无关**（research.md 决策 13）：`ops/` 下的
+**新增**文件按 C12 属越界（接入改动只允许新增配置 / 插件 / 测试与文档三类）⇒ 演示**必须在 A5 创建**，且入口
+遍历 `declared_forms()`，使新形态接入后**零改动**即可演示。
 
 ## 阶段 0：调研（research.md）
 
-产出：[research.md](research.md)。关键决策摘要（**12 条**，与本计划逐条对齐）：
+产出：[research.md](research.md)。关键决策摘要（**15 条**，与本计划逐条对齐）：
 
 1. **插件声明形状与唯一装配点**——`evaluators.plugins.<agent>.<slot>.<evaluator_id>.{impl, version, params}`；
    `impl` 由唯一装配点 `importlib` 解析为 **callable**；装配集合 ↔ `evaluator_weights.<agent>` 键集**逐字相等**；
@@ -220,6 +236,17 @@ tests/…                            # 见阶段 A1~B3 与 research.md 决策 12
     （结构性零花费）+ 尽量复用既有插件；标注落 `pilot.rehearsal.status: unstandardized`（`agents/pilot/pilot.py:53`）
     + 承载业务数字的段带非空 `note`（含"未标定"字样）+ 产物复现标注。
 12. **会变红的既有测试与夹具清单（19 项）**及处理方式：**按扩展更新、不削弱；零删除、零放宽**。
+13. **离线演示前移到 A5 创建，且必须"形态无关"**——演示遍历 `declared_forms()`，新形态接入后**零改动**即可演示；
+    B1/B2 只**调用**、不在 B 侧创建（`ops/` 下新增文件按 C12 属越界）。被否决：B 阶段再建演示、把演示记作
+    "测试与文档"、为演示单开一次例外、让演示只服务某一形态。
+14. **机制侧总账 `MECHANISM_LEDGER` / `MECHANISM_LEDGER_PATHS` 的穷举与计数口径**——路径**穷举机制侧全部改动**
+   （含 A1 夹具同步面、新基线夹具 `tests/unit/fixtures/evaluator_assembly_baseline.json`、A5 演示脚本）；
+   **判据 = 文档表与常量集合相等，不写死条数**；计数按 **FR-013 六项总账归属**（非阶段号）；三个名一并登记
+   （`MECHANISM_LEDGER`/`MECHANISM_LEDGER_PATHS`、`not_applicable`、`calibration.cadence_note`，只引用不复述规则）。
+15. **并行面与同文件串行点（以文件为准）+ B 侧交汇点口径**——同文件串行点三处（`configs/{movie,shortdrama}.yaml`、
+   `agents/pilot/pilot.py`（A2/A3/A4）、`tests/unit/test_form_switch.py` 与 `tests/contract/test_pilot_contracts.py`）；
+   A3 可并行文件面 = **七处**（"五处"专指登记点数量）；B 侧交汇点 = 两形态并跑用例 + 对两形态各跑一次的清单/登记
+   机检与演示（**不是单点**）。
 
 ## 阶段 1：设计与契约
 
@@ -246,7 +273,6 @@ tests/…                            # 见阶段 A1~B3 与 research.md 决策 12
   一致、逐条类别与越界判定、越界 100% 报出、退出码语义）；C13 机制侧总账的登记与"**不得冒充零代码改动**"机检
   （基线取机制落地后；六项总账逐项可枚举；产物 append-only 与可回溯）；C14 CLI 与离线端到端演示（退出码 0/1/2、
   零花费/零网络/零凭证、"未标定"标注机检）
-  零凭证、"未标定"标注机检）
 - [quickstart.md](quickstart.md)：验证命令（`pytest` 面 + 三个 CLI 子命令 + 演示）+ 接入方流程（写配置 →
   写插件 → 声明 `impl/version/params` → `sync-versions --check` → `registration` → `onboarding --baseline`）+
   验收口径 + 验证记录回填区
@@ -275,6 +301,20 @@ tests/…                            # 见阶段 A1~B3 与 research.md 决策 12
 收口）、阶段 6（A5 接入改动清单与 CLI）；**B 接入侧** = 阶段 7（B1 广告形态接入）、阶段 8（B2 漫剧形态接入）、
 阶段 9（B3 离线端到端、登记与门禁同步、交付留痕）。**A 是机制侧总账（本特性的代码改动主体），B 才是"仅新增
 配置 + 插件"的举正面；两者在变更说明里必须分开陈述**（FR-013）。
+
+**并行面与同文件串行点**（以**文件**为准，不按阶段号；research.md 决策 15）：
+
+- **同文件串行点（硬）**：`configs/{movie,shortdrama}.yaml`（A1 加 `evaluators` 段 → A2 加 `form_aliases` 键；
+  两处都要求两形态**逐字相同** ⇒ 必须串行）；**`agents/pilot/pilot.py`（三处同文件：A2 的裸形态词收敛 →
+  A3 的 `config_completeness` 追加 → A4 的 020 口径机检）**；`tests/unit/test_form_switch.py` 与
+  `tests/contract/test_pilot_contracts.py`（A2 → A3）；`core/calibration/config.py`（A4 内部单文件串行）。
+  **A1 与 A2 的"可并行"仅在排除上述同文件面之后成立。**
+- **并列表口径（统一）**：A3 的**可并行文件面 = 七处**（五个登记点 + `ops/form_onboarding.py` 的
+  `REGISTRATION_SITES` + 同族"两形态枚举"副本面）；"**五处**"一律**专指登记点数量**（C9/C10 的对象），
+  **不得**用来描述可并行文件数（两个量不同名同数易混用）。
+- **B 侧交汇点 = 三条**（不是单点）：两形态并跑用例（B2 第 4 项）+ "对 B1 与 B2 **各跑一次**"的接入清单/登记
+  完备机检（B3 第 2 项）+ 对两形态各跑一次的离线演示（B3 第 1 项）——三者都需 B1 与 B2 都落地。演示脚本本身
+  **不是**交汇点（它形态无关，B 侧对它零改动）。
 
 ## 阶段 A1（实现阶段 2）：插件声明面与唯一装配点（FR-001/FR-002/FR-012 的机制主体）
 
@@ -314,12 +354,15 @@ tests/…                            # 见阶段 A1~B3 与 research.md 决策 12
 5. **两份既有配置新增 `evaluators` 段**，且两形态**逐字相同**（口径澄清 B）：为全部既有评估器写
    `impl`（指向 A1 第 3 步的新工厂）/ `version`（= 实现产出的 `spec.version`，由 `sync-versions` 生成后人工核对）/
    `params: {}`。**既有取值零改动**（含 `configs/movie.yaml:620` 的 7 与 `configs/shortdrama.yaml:658` 的 14）。
-6. **对照机检（前置，必须先落地）**：导出改造前后的两形态装配序列 `[(slot, id@version), ...]`（含顺序）并断言
-   **逐字相同**；同时断言 `movie["evaluators"] == shortdrama["evaluators"]`（保护既有差异集断言不被动）。
+6. **对照机检（前置，必须先落地）**：导出改造前后的两形态装配序列 `[(slot, id@version), ...]`（含顺序），落
+   **新基线夹具** `tests/unit/fixtures/evaluator_assembly_baseline.json`（**新目录**，见"项目结构"结构决策 ⑤），
+   并断言**逐字相同**；同时断言 `movie["evaluators"] == shortdrama["evaluators"]`（保护既有差异集断言不被动）。
 7. **夹具同步**（research.md 决策 12 第 14 项，本阶段最大风险）：为所有**内联配置字典**构造的夹具补
    `evaluators` 段（`tests/unit/test_{sound,screenplay,storyboard,editing,dev,visual}_composite.py`、
    `tests/unbiasedness/*`、`tests/contract/test_{dev,screenplay,storyboard,editing,sound}_contracts.py` 等）。
    **禁止**在实现里加"缺段即回落到硬编码装配"的兜底（那会留下影子装配路径，违反 FR-012）。
+   **本步与第 6 步的全部文件（含新基线夹具）都编入 `MECHANISM_LEDGER_PATHS`**（A5 第 2 步；漏登即
+   "机制侧改动未全部登记"红）。
 
 ## 阶段 A2：扫描面补面、形态名派生、三副本收敛与裸词收敛（FR-005/FR-006 的机制主体）
 
@@ -390,20 +433,24 @@ tests/…                            # 见阶段 A1~B3 与 research.md 决策 12
 **TDD 序**：先写 `tests/unit/test_form_clause_completeness.py`（新：逐项缺失即报错、`{1,7}` 之外即报错、
 "不适用"留空即报错、既有两形态取值零改动），再实现。
 
-1. **cadence 收口**：`core/calibration/config.py` 的 `CalibrationConfig.from_dict` 增一道校验（取值域取自
-   `core/calibration/periods.py:30`，**该文件一字不改**），错误文案点名取值域；与既有
+1. **cadence 收口 + 近似关系登记键**：`core/calibration/config.py` 的 `CalibrationConfig.from_dict` 增一道校验
+   （取值域取自 `core/calibration/periods.py:30`，**该文件一字不改**），错误文案点名取值域；与既有
    `core/calibration/drift_config.py:130-143`、`agents/promo/config.py:43` 同源同口径（同取值域，不新造量纲）。
-2. **"不适用"的显式声明面**：机检读**原始文档**（不经模型），要求 `calibration.transfer` 的
-   `source_forms`/`target_forms` 按真实适用性声明（020 的模型要求非空列表，`core/calibration/config.py:82-93`），
-   若某形态仅声明自身 ⇒ **必须**在该段给出非空的"不适用 + 理由"说明（键名以 `contracts/form-registration.md` C11
-   为权威）；`budget.runs.min_window_days` / `gap_tolerance_days` 同理（缺失或留空即报错）。
+   近似关系的**如实登记键 = `calibration.cadence_note`**（未标定形态必填，须含「近似」与「未标定」、不得宣称
+   已达标；取值域与规则见 `contracts/form-registration.md` C11——**本计划只登记名与落点、不复述规则**）。
+2. **"不适用"的显式声明面（键名 `not_applicable`）**：机检读**原始文档**（不经模型），要求 `calibration.transfer`
+   的 `source_forms`/`target_forms` 按真实适用性声明（020 的模型要求非空列表，`core/calibration/config.py:82-93`），
+   若某形态仅声明自身 ⇒ **必须**在该段给出非空的"不适用 + 理由"说明；`budget.runs.min_window_days` /
+   `gap_tolerance_days` 同理（缺失或留空即报错）。该说明落在**段内键 `not_applicable`（映射）**上，且
+   **只允许两处**（`calibration.transfer.not_applicable` 与 `budget.not_applicable`；键与取值域的完整规则见
+   `contracts/form-registration.md` C11——**只引用、不复述**；其它段出现即报错，防用"不适用"逃避填值）。
 3. **迁移口径联动**（`core/calibration/transfer.py:456` 的 `_registered_ids` 取 `evaluator_weights`、
    `:497-505` 对未声明形态显式拒绝、`:289-298` 的 `evaluator_registered` 要求目标形态登记同 id 同 version）
    ⇒ 新形态必须同步声明这两处，否则**空声明 = 沉默失效**（由 A4 的机检挡住）。
 4. **既有两形态取值零改动**：`configs/movie.yaml:620` 的 7 与 `configs/shortdrama.yaml:658` 的 14 **逐字节不变**
    （常驻断言：读原文件比对，改动即红）。
 
-## 阶段 A5：接入改动清单与 CLI（FR-003/FR-004/FR-014 的机制主体）
+## 阶段 A5：接入改动清单、CLI 与离线演示（FR-003/FR-004/FR-014 的机制主体）
 
 **TDD 序**：先写 `tests/unit/test_form_onboarding.py`（新：git 派生一致率、类别判定、故意越界 100% 报出、
 append-only、配置指纹、基线取错时的行为），再实现。
@@ -413,15 +460,33 @@ append-only、配置指纹、基线取错时的行为），再实现。
    `build_manifest(config_path, baseline_ref)` 产出完整清单（逐条路径 + 类别 + 越界标记 + 计数）；`write_manifest(...)`
    append-only 落盘（文件名含形态 id 与序号 + `index.jsonl` 追加行，含基线 ref 与配置指纹
    `core/orchestration/models.py:36` 的 `fingerprint_of`）；越界 ⇒ 返回码 1 并**逐条点名**（不得只报总数）。
-2. **`ops/form_plugin.py`（CLI 门面，薄转发）**：`guard`（跑两层扫描并打印 `(path, symbol, line, hit)`）、
+2. **`MECHANISM_LEDGER`（FR-013 六项总账）与 `MECHANISM_LEDGER_PATHS`（穷举机制侧全部改动路径）常驻**
+   （同模块）：`MECHANISM_LEDGER` 恰好**六项**，逐项对应 FR-013 的①~⑥（每项带 `{step, items:[{path, kind}]}`，
+   `step` 只是归属标注）；`MECHANISM_LEDGER_PATHS` = 六项 items 的路径并集去重，**必须穷举**：`core/` / `agents/` /
+   `ops/` / `tests/` 下的全部新增与修改件，**含** A1 的夹具同步面（六个 `*_composite.py`、五个 `*_contracts.py`、
+   `tests/unbiasedness/*`）、**新增基线夹具** `tests/unit/fixtures/evaluator_assembly_baseline.json` 与**本阶段创建的
+   演示脚本** `ops/demo_form_plugin.py`；接入侧件（`configs/<new-form>.yaml` 与其插件）**不得**入 ledger。
+   **判据 = 集合相等**：文档表（quickstart 的机制侧总账表）的路径列与常量 `set()` 相等即通过——**不写死条数**
+   （`len()` 只作展示与回归记录，**不得**成为第二个权威）；**计数分解按 FR-013 六项归属**（同一文件只按首要归属
+   计一次，如 `ops/form_guard.py` 归 ②③、`tests/unit/test_form_switch.py` 归 ②⑤）。见 research.md 决策 14。
+3. **`ops/form_plugin.py`（CLI 门面，薄转发）**：`guard`（跑两层扫描并打印 `(path, symbol, line, hit)`）、
    `registration`（五处逐一判定 + 登记完备三条 + 不新造第六处）、`onboarding --baseline <ref> --config <路径>
    --out <目录>`、`sync-versions --check|--write --config <路径>`；退出码与既有工具一致（0 / 1 / 2，先例
    `ops/transfer.py` 的退出码文档块与 `ops/billing.py` 的用法面）。**只读 git 与文件、只写 `--out`**（不触碰工作区、
    不 `git add`/`commit`）。
-3. **契约测试**：`tests/contract/test_form_onboarding_contracts.py`（新：C12/C13 的可执行面——基线语义、
-   一致率、越界判定、append-only 与回溯字段）。
-4. **机制侧总账的分离举证**：在变更说明与 quickstart 里逐项列出 FR-013 的六项总账（本特性 A1~A5 的产物），
-   并写明"**此后**新形态接入才真的仅新增配置 + 插件"——**不得**把 A 写成"零代码改动"。
+4. **新增 `ops/demo_form_plugin.py`**（离线端到端演示；**机制侧资产、形态无关**——见 research.md 决策 13）：入口
+   **遍历 `declared_forms()`**，对**每个已声明形态**跑同一套九步（配置预检 → 缺项即拒绝 → 装配 → 评估与合成分数
+   → 留痕 → 两形态共用插件代码 → 静态守卫 → 登记点完备 → 诚实分层与零成本）；**形态值只作参数透传**
+   （先例 `ops/pilot.py:250` 的 `--form`），脚本内**零形态字面量**、零 `os.environ`/`os.getenv`、**不 import**
+   任何 HTTP 客户端；真实花费 0 / 外部网络 0 / 凭证读取 0（演示内断言）；**新形态接入后零改动即可演示**；
+   **不在 B 侧创建、不新造第二个演示入口**（`ops/` 下**新增**文件按 C12 属越界 ⇒ 演示必须在机制侧落地）。
+5. **契约测试**：`tests/contract/test_form_onboarding_contracts.py`（新：C12/C13 的可执行面——基线语义、
+   一致率、越界判定、append-only 与回溯字段、ledger 的集合相等与六项归属计数）。
+6. **机制侧总账的分离举证**：在变更说明与 quickstart 里逐项列出 FR-013 的六项总账（本特性 A1~A5 的产物），
+   并写明"**此后**新形态接入才真的仅新增配置 + 插件"——**不得**把 A 写成"零代码改动"；交付面同时登记三个名
+   （**只引用、不复述规则**）：`MECHANISM_LEDGER` / `MECHANISM_LEDGER_PATHS`（本步，C13）、
+   `not_applicable`（段内键，只允许 `calibration.transfer.not_applicable` 与 `budget.not_applicable`，C11）、
+   `calibration.cadence_note`（未标定形态必填，C11）。
 
 ## 阶段 B1：广告形态接入（FR-003/FR-010/FR-011 的举正面之一）
 
@@ -436,10 +501,10 @@ append-only、配置指纹、基线取错时的行为），再实现。
    本形态特有的通用件落 **`core/evaluators/plugins/`**（新目录），并**必须**在该配置里经 `impl` 声明才生效
    （目录不决定可用性）。插件实现：零形态字面量/分支、零 `agents.*`/`dreaming.*` import（**C3** 插件本体的
    业务无关机检 + **C5/C6** 扫描面口径）、参数全来自 `params`、携带 `cost_per_call` 与 `version`。
-3. **演示**：`ops/demo_form_plugin.py`——临时目录派生新形态配置（账本根落 tmp，先例 `tests/conftest.py:3054-3079`）
-   → `config_completeness` → 装配全部声明（含注册中心注册）→ 对合成功件跑一次评估 → `composite_score_versioned`
-   （`core/evaluators/composite.py:37`）→ 落一个带 `eval_breakdown`（键为 `id@version`）的节点与一份运行记录
-   → 打印清单与登记点结果 → **退出码 0**；真实花费 0 / 外部网络 0 / 凭证读取 0（演示内断言）。
+3. **只调用演示、不新增任何 `ops/` 文件**（research.md 决策 13）：演示已在 A5 落地且**形态无关** ⇒ 本形态经
+   `declared_forms()` **自动进入遍历面**，`uv run python ops/demo_form_plugin.py` 对本形态**零改动**即可演示。
+   接入清单中 `ops/` 面路径数**恒为 0**（可机检：`changed_files()` 不出现 `ops/` 路径）——**不得**在 B 侧创建或
+   修改任何 `ops/` 文件（按 C12 属越界）。
 4. **接入改动清单**：以 A5 落地的机制 ref 为基线跑 `onboarding`，断言 `violations == []`（**既有模块被修改的
    文件数恒为 0**）；清单落盘（append-only + 配置指纹）。
 
@@ -450,16 +515,23 @@ append-only、配置指纹、基线取错时的行为），再实现。
 2. **声明复用同一批插件**：至少一条 `impl` 与 B1（或既有两形态）**完全相同**的声明 ⇒ 直接举证"同一插件被两个
    形态配置声明、两形态共用同一份插件代码、形态差异只在配置值"（US1 场景 3）；同 id 同 version 在**同一注册
    中心**内重复注册即被拒（`core/evaluators/registry.py:35-38`）由契约测试守住。
-3. **接入改动清单**：同样以机制 ref 为基线，断言越界为空；清单落盘。
-4. **两形态并跑**：一条用例跑完 B1+B2 两形态（各自装配 → 评估 → 合成分数），断言两形态**共用插件实例类型**
-   而得分/明细差异**全部来自配置值**。
+3. **接入改动清单**：同样以机制 ref 为基线，断言越界为空；清单落盘（`ops/` 面路径数同样恒为 0）。
+4. **两形态并跑（B 侧交汇点之一）**：一条用例跑完 B1+B2 两形态（各自装配 → 评估 → 合成分数），断言两形态
+   **共用插件实例类型**而得分/明细差异**全部来自配置值**；该用例需 B1 与 B2 **都落地**（串行点，见"并行面与
+   同文件串行点"段）。
+5. **本阶段与 B1 的文件面**：两份配置与各自插件**互不重叠、可并行**（不同文件）；**交汇点 = 两形态并跑用例 +
+   "对两形态各跑一次"的清单/登记机检**（后者见 B3 第 2 项）——**不是**单条任务。
 
 ## 阶段 B3：离线端到端、登记与门禁同步、交付留痕
 
-1. **离线端到端证据**（FR-010/SC-008）：`ops/demo_form_plugin.py` 对 B1（与 B2）形态各跑一次，退出码 0；
-   零真实花费、零外部网络、零凭证三项由演示内计数断言 + 用例再断言一遍。
+1. **离线端到端证据**（FR-010/SC-008）：跑 A5 落地的 `ops/demo_form_plugin.py`（**形态无关** ⇒ 对 B1 与 B2
+   **各跑一次**，或一次遍历覆盖全部已声明形态），退出码 0；零真实花费、零外部网络、零凭证三项由演示内计数断言
+   + 用例再断言一遍；**该步与 B2 第 4 项同属 B 侧交汇点**（需两形态都落地）。
 2. **登记点同步（逐处，缺一即逃逸）**：五处按 A3 的派生面自动纳入新形态 ⇒ 本阶段只需**验证**（`registration`
    子命令逐处判定已登记 + 登记完备三条 + 无第六处），并把"新形态的取值差异登记"补进 A3 新增的逐对断言面。
+   **必须对 B1 与 B2 两形态各跑一次**（`onboarding` 与 `registration` 各两遍，断言两次 `counts["既有模块被修改"]
+   == 0`、`baseline_ref` 一致而 `config_fingerprint` 不同）——**这是 B 侧交汇点的第二条**（见"并行面与同文件
+   串行点"段第 3 条），只跑一个形态会导致另一形态**假绿**。
 3. **产物与留痕**：接入改动清单 + 守卫报告 + 登记报告 + 演示输出落 `--out`（append-only；含基线 ref 与形态
    配置指纹）；quickstart 回填区登记实测结论（含"未标定"口径与开放问题 1/2 的上缴）。
 4. **门禁同步**：覆盖率口径不降（≥85%，含 web）；对抗 / 无偏性 / Immutable 审计 / 成本回归四条常驻门禁零放松；
@@ -477,7 +549,7 @@ append-only、配置指纹、基线取错时的行为），再实现。
 | 新顶层配置段 `evaluators` | 原则五要求形态差异是"**新增配置项**而非新增分支代码"（`.specify/memory/constitution.md:121`）；插件声明必须有权威载面 | *扩展 `evaluator_weights` 的值形状*：会让权重读取（`core/evaluators/weights.py:18`）被迫放宽取值域（数值或 `gate`），削弱既有门禁；*另建独立配置文件*：多一份权威面，且"配置声明集 = 全集"要在两份文件间求交 |
 | 新模块 `ops/form_guard.py`（形态名派生 + 两层扫描，单一实现） | 裁决 3/4 要求"形态名一律由配置派生、禁止人工常量、副本数 ⇒ 1"，且 CLI 与测试要用**同一实现** | *保留三份副本*：副本数 ⇒ 1 是 SC-003 的机检项，历史已证明副本必漂移（020 登记过引用漂移，`specs/020-shortdrama-real-feedback/tasks.md:692`）；*放 `core/`*：形态概念属配置面，`core/` 必须业务无关；*放 `tests/conftest.py`*：`ops/` 不能依赖 `tests/` |
 | 新模块 `ops/form_onboarding.py` + CLI `ops/form_plugin.py` | FR-004/FR-014 要求"接入改动清单"可机检、append-only、可回溯，且退出码语义与既有工具一致 | *写成一个测试*：无法作为交付物被接入方使用（FR-014 明确要 CLI 与产物）；*把清单塞进 `ops/pilot.py`*：`pilot.py` 是链路装配面，塞入 git 审计会让"运行链路"与"仓库审计"混淆（且 `ops/pilot.py` 已有 `--form` 透传语义） |
-| 新演示 `ops/demo_form_plugin.py` | FR-010 要求"至少一条离线端到端证据"，且必须可被独立复跑 | *把演示做成用例*：用例是门禁、不是交付物；*复用既有 `ops/demo_*_loop.py`*：那些演示绑定既有两形态与既有评估器组合，改它们会触碰既有断言面（且"新形态从配置跑到跑通"要有独立入口） |
+| 新演示 `ops/demo_form_plugin.py`（**A5 创建**、形态无关、机制侧资产） | FR-010 要求"至少一条离线端到端证据"，且必须可被独立复跑；`ops/` 下的**新增**文件按 C12 属越界 ⇒ 它**必须**落机制侧，否则 B1/B2 的接入清单永远越界（research.md 决策 13） | *把演示做成用例*：用例是门禁、不是交付物；*复用既有 `ops/demo_*_loop.py`*：那些演示绑定既有两形态与既有评估器组合，改它们会触碰既有断言面（且"新形态从配置跑到跑通"要有独立入口）；*在 B 阶段再建演示*：会把越界项写进接入账，并诱发"放宽类别判定"（决策 13 已否决） |
 
 ## 风险与回滚
 
@@ -485,6 +557,8 @@ append-only、配置指纹、基线取错时的行为），再实现。
 | --- | --- | --- |
 | **改到既有评估器实现文件 ⇒ 版本哈希变化 ⇒ `eval_breakdown` 变（FR-013 失守）** | **高** | 硬性前置：机制改动**只**落新文件与装配函数体（阶段 A1 的结构决策 ④）；落地时先做"改造前后装配序列逐字相同"的对照机检；回滚 = 六个装配函数恢复原函数体（新文件与配置段可保留不用，`evaluators` 段不影响任何既有路径） |
 | **内联配置字典夹具大面积变红 ⇒ 有人用"实现兜底"绕过（留下影子装配路径）** | **高** | 阶段 A1 第 7 步把这批夹具**显式列清单**并逐处补齐；契约测试常驻断言"缺 `evaluators` 段即装配期报错"（任何兜底都会让该断言红）；回滚不适用（这是必须做对的一条） |
+| **演示脚本落在 B 侧 ⇒ 接入清单永远越界（B1/B2 验收不可能转绿）** | **高（已裁决消除）** | **演示前移到 A5 创建且形态无关**（research.md 决策 13）：`ops/` 下新增文件按 C12 属越界，故演示必须在机制侧落地；B1/B2 只调用它，接入清单的 `ops/` 面路径数恒为 0（可机检）；回滚 = 恢复"演示在机制侧 + 遍历 `declared_forms()`"这一形态（**不得**改为在 B 侧创建或放宽类别判定） |
+| **机制侧 ledger 漏登记（夹具同步面 / 新基线夹具）⇒ "全部登记"不可机检、接入清单假绿** | **中** | `MECHANISM_LEDGER_PATHS` **穷举**机制侧全部改动路径（含 A1 第 6/7 步的夹具面与 `tests/unit/fixtures/evaluator_assembly_baseline.json`、A5 的演示脚本）；**判据 = 文档表与常量集合相等**（两面同源，任一侧漏条即红）；计数按 FR-013 六项归属（research.md 决策 14） |
 | **扫描面补面后 `core/` + `agents/` 出现新的假阳性** | 中 | 判定口径按"ASCII 词边界 + 中文子串"（先例 `tests/unit/test_billing_core_purity.py:54-56`）；假阳性的处置是**中性化措辞**，**不得**加例外（例外只三条，加例外须走契修订流程）；回滚 = 逐条中性化（不回退扫描面） |
 | **五处登记点派生化改动触碰既有断言（尤其 `tests/unit/test_pilot_rehearsal.py:34` 的形态特定假设）** | 中 | 处理原则只有一条："按扩展更新、**不削弱**"（research.md 决策 12 逐项结论）；形态特定期望值改为"逐形态声明/登记"，**不得**把新形态从派生面排除、**不得**删断言；回滚 = 逐处回退该文件（机制面不动） |
 | **cadence 校验收口后既有夹具里出现 `{1,7}` 之外的值 ⇒ 变红** | 低 | 已核实：既有测试与夹具的 `period_days` 取值只有 `1` 与 `7`（`tests/unit/test_calibration_config.py:51`、`tests/unit/test_drift_cadence.py:102`）；若新增用例需要越界值 ⇒ 用临时文件注入（不回退校验） |
