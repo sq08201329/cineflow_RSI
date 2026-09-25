@@ -260,8 +260,9 @@ class Test日历单点:
         import yaml
 
         from core.billing.budget import REPO_ROOT
+        from ops.form_guard import declared_forms
 
-        for form in ("movie", "shortdrama"):
+        for form in declared_forms(REPO_ROOT / "configs"):
             payload = yaml.safe_load(
                 (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
             )

@@ -92,9 +92,11 @@ from core.llm_gateway.profiles import (
     snapshot_entry_cells,
 )
 from core.llm_gateway.routing import Role
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FORMS = ("movie", "shortdrama")
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 MOMENT = dt.datetime(2026, 9, 1, 3, 0, tzinfo=dt.UTC)  # 渠道本地（Asia/Shanghai）= 09-01 11:00
 REFUSE_AT = 1e-6  # 额度小到"任何预估额都超"
 CELLS = {

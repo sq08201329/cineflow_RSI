@@ -409,6 +409,9 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
         ("deployment", lambda: DeploymentConfig.from_yaml(path)),
         # 019：预算门禁的档位声明（缺段/缺档即拒绝启动——"忘记声明额度"不得悄悄跑通）
         ("budget", lambda: BudgetConfig.from_yaml(path)),
+        # 021（C1/C11）：插件声明面的清单解析器入预检清单——删掉 `evaluators` 段即**拒绝启动**
+        # （"漏声明插件清单"不得静默逃逸；缺 Agent 子键 / 缺叶子三键同样即报错）
+        ("evaluators", lambda: _declared_plugins(path)),
         ("web", lambda: WebConfig.from_yaml(path)),
     ):
         try:
@@ -416,6 +419,10 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
         except Exception as exc:  # noqa: BLE001 - 预检统一收口：缺项即拒绝启动
             raise PrecheckError(f"配置完整性预检失败（{name} 段）：{exc}") from exc
         checked.append(name)
+    # 020 口径的逐项声明完备性（C11）：cadence / 窗口口径与生效日 / 渠道档位 / 归属日生效日 /
+    # 迁移六键 / "不适用"显式声明——缺任一项即拒绝启动并点名段与键（不取码内默认）
+    form_clause_completeness(path)
+    checked.append("form_clauses")
     # 七个环节的权重键（环节 → 配置段名走单一映射声明，不得以 stage_id 直推）
     for agent in _stage_sections():
         try:
@@ -431,6 +438,239 @@ def _stage_sections() -> tuple[str, ...]:
     return tuple(
         stages_module.STAGE_CONFIG_SECTION[stage_id] for stage_id in stages_module.PILOT_STAGE_IDS
     )
+
+
+def _declared_plugins(config_path: Path) -> tuple[str, ...]:
+    """插件声明面的清单解析（六个 Agent 逐一；缺段 / 缺子键 ⇒ 报错，不回落硬编码装配）。
+
+    六个绑定工厂模块按**符号名静态导入**（不是第二解析路径：本函数不解析 `module:attr`
+    声明，只把 `AGENT`/`SLOT_LAYOUT` 两个布局常量取回来喂给唯一装配点）。
+    """
+    from agents.dev.evaluators import plugins as dev_plugins
+    from agents.editing.evaluators import plugins as editing_plugins
+    from agents.screenplay.evaluators import plugins as screenplay_plugins
+    from agents.sound.evaluators import plugins as sound_plugins
+    from agents.storyboard.evaluators import plugins as storyboard_plugins
+    from agents.visual.evaluators import plugins as visual_plugins
+    from core.evaluators.plugin import parse_manifest
+
+    document = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise PrecheckError(f"形态配置顶层不是映射：{config_path}")
+    # 缺段**先点名**（否则 `parse_manifest` 会把整份文档当成声明子树，报出难懂的"槽位非法"）
+    evaluators = document.get("evaluators")
+    plugins = evaluators.get("plugins") if isinstance(evaluators, Mapping) else None
+    if not isinstance(plugins, Mapping) or not plugins:
+        raise PrecheckError("缺插件声明段 evaluators.plugins——缺段即拒绝启动，不回落硬编码装配")
+    checked: list[str] = []
+    for module in (
+        screenplay_plugins,
+        storyboard_plugins,
+        visual_plugins,
+        sound_plugins,
+        editing_plugins,
+        dev_plugins,
+    ):
+        parse_manifest(document, module.AGENT, slots=module.SLOT_LAYOUT)
+        checked.append(f"evaluators:{module.AGENT}")
+    return tuple(checked)
+
+
+# 迁移面的六键（020 C15/C17；缺任一即拒绝启动，不取码内默认）
+_TRANSFER_KEYS: tuple[str, ...] = (
+    "basis",
+    "source_forms",
+    "target_forms",
+    "conditions",
+    "storage",
+    "adoption",
+)
+# "不适用"的显式声明面（020 C11）：只允许两处、闭合取值域（不新造第三处）
+NOT_APPLICABLE_SITES: dict[str, tuple[str, ...]] = {
+    "calibration.transfer": ("source_forms", "target_forms"),
+    "budget": ("channels",),
+}
+
+
+def _clause(document: Mapping, path: str) -> Any:
+    """按**点分键路径**取 020 口径取值；段/键缺失即报错并**点名段与键**（不取码内默认）。"""
+    cursor: Any = document
+    walked: list[str] = []
+    for key in path.split("."):
+        if not isinstance(cursor, Mapping) or key not in cursor:
+            raise PrecheckError(
+                f"020 口径声明缺失：{path}（缺段/键 {'.'.join([*walked, key])}）"
+                "——缺项即拒绝启动，不取码内默认"
+            )
+        cursor = cursor[key]
+        walked.append(key)
+    return cursor
+
+
+def _check_not_applicable(
+    document: Mapping, segment: str, keys: tuple[str, ...], *, apply: bool
+) -> None:
+    """'不适用'的双向无歧义：适用 ⇒ 不得声明不适用；不适用 ⇒ 必须给出非空理由且含「不适用」。"""
+    section = document.get(segment.split(".", 1)[0])
+    cursor: Any = section
+    for key in segment.split(".")[1:]:
+        cursor = cursor[key] if isinstance(cursor, Mapping) else None
+    declared = cursor.get("not_applicable") if isinstance(cursor, Mapping) else None
+    if apply:
+        if declared is not None:
+            raise PrecheckError(
+                f"020 口径：{segment} 判为**适用**，不得声明 not_applicable（双向无歧义）"
+            )
+        return
+    if not isinstance(declared, Mapping):
+        raise PrecheckError(
+            f"020 口径：{segment} 判为**不适用** ⇒ 必须在 {segment}.not_applicable 给出显式理由"
+            f"（键取值域 {list(keys)}；留空/省略即报错，不得用「不适用」逃避填值）"
+        )
+    for key in keys:
+        reason = declared.get(key)
+        if not isinstance(reason, str) or not reason.strip() or "不适用" not in reason:
+            raise PrecheckError(
+                f"020 口径：{segment}.not_applicable.{key} 必须是非空理由且含「不适用」二字，"
+                f"实测 {reason!r}"
+            )
+    extra = sorted(set(declared) - set(keys))
+    if extra:
+        raise PrecheckError(
+            f"020 口径：{segment}.not_applicable 只允许键 {list(keys)}，实测多出 {extra}"
+        )
+
+
+def form_clause_completeness(config_path: str | Path) -> tuple[str, ...]:
+    """020 口径的**逐项声明完备性**（读**原始文档**，不经模型；缺项即拒绝启动并点名段与键）。
+
+    逐项（契约 C11 的逐项表）：`calibration.period_days ∈ SUPPORTED_CADENCES`、窗口口径
+    取值域单元素、窗口口径生效日非空 ISO 日期、`budget.channels.<id>.tiers` 非空且**档位不跨
+    渠道串用**、`promo.attribution_date_required_since` 存在、`calibration.transfer` **六键**
+    齐备、"**不适用**必须显式声明"（留空/省略即报错）。
+
+    **按配置路径通用**（形态值只作参数透传：不按形态名分支决定要不要检查，对新形态无需改代码
+    即生效）；**不**给"缺段即回落到码内默认"的兜底——缺段/缺键一律拒绝启动。
+    """
+    from datetime import date
+
+    from core.billing.budget import BudgetConfig, declared_channels, tiers_of
+    from core.calibration.periods import SUPPORTED_CADENCES, WINDOW_SEMANTICS
+
+    path = Path(config_path)
+    if not path.is_file():
+        raise PrecheckError(f"形态配置不存在：{path}")
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(document, Mapping):
+        raise PrecheckError(f"形态配置顶层不是映射：{path}")
+
+    checked: list[str] = []
+    # ① cadence：取值域**唯一入口**（不发明"双周/月"等第三档量纲；越界即报错、不回落）
+    period_days = _clause(document, "calibration.period_days")
+    if isinstance(period_days, bool) or period_days not in SUPPORTED_CADENCES:
+        raise PrecheckError(
+            f"020 口径：calibration.period_days 必须 ∈ {SUPPORTED_CADENCES}"
+            f"（实测 {period_days!r}）——越界即拒绝启动，不回落日级/周级"
+        )
+    checked.append("cadence")
+    # ② 窗口口径：取值域单元素
+    window_semantics = _clause(document, "calibration.window_semantics")
+    if window_semantics != WINDOW_SEMANTICS:
+        raise PrecheckError(
+            "020 口径：calibration.window_semantics 取值域单元素"
+            f"（唯一取值 {WINDOW_SEMANTICS!r}），实测 {window_semantics!r}"
+        )
+    checked.append("window_semantics")
+    # ③ 窗口口径生效日：非空 ISO 日期
+    change_date = _clause(document, "calibration.window_semantics_change_date")
+    normalized = change_date.isoformat() if isinstance(change_date, date) else change_date
+    if not isinstance(normalized, str) or not normalized.strip():
+        raise PrecheckError(
+            f"020 口径：calibration.window_semantics_change_date 必须为非空 ISO 日期"
+            f"（实测 {change_date!r}）"
+        )
+    try:
+        date.fromisoformat(normalized)
+    except ValueError as exc:
+        raise PrecheckError(
+            f"020 口径：calibration.window_semantics_change_date 必须为 ISO 日期（YYYY-MM-DD），"
+            f"实测 {change_date!r}"
+        ) from exc
+    checked.append("window_change_date")
+    # ④ 渠道命名空间：档位非空且**不跨渠道串用**；不登记投放渠道 ⇒ 必须显式声明"不适用"
+    budget = _clause(document, "budget")
+    if not isinstance(budget, Mapping):
+        raise PrecheckError("020 口径：budget 段必须为映射")
+    cfg = BudgetConfig.from_yaml(path)
+    specs = declared_channels(cfg)
+    promo_registered = False
+    seen: dict[str, str] = {}
+    for spec in specs:
+        tiers = tiers_of(cfg, spec.channel_id)
+        if not tiers:
+            raise PrecheckError(
+                f"020 口径：budget.channels.{spec.channel_id}.tiers 不得为空（缺档即拒绝启动）"
+            )
+        for tier_id in tiers:
+            owner = seen.get(tier_id)
+            if owner is not None and owner != spec.channel_id:
+                raise PrecheckError(
+                    f"020 口径：档位 {tier_id!r} 跨渠道串用（{owner} 与 {spec.channel_id}）"
+                    "——档位在渠道命名空间内唯一"
+                )
+            seen[tier_id] = spec.channel_id
+        if spec.adapter == backends_module.PROMO_CHANNEL_ADAPTER:
+            promo_registered = True
+    _check_not_applicable(document, "budget", ("channels",), apply=promo_registered)
+    checked.append("channels")
+    # ⑤ 归属日必填口径生效日（恒适用 ⇒ 不得声明"不适用"）
+    required_since = _clause(document, "promo.attribution_date_required_since")
+    if not str(required_since).strip():
+        raise PrecheckError("020 口径：promo.attribution_date_required_since 不得为空")
+    checked.append("attribution_date")
+    # ⑥ 迁移面六键齐备（缺任一即拒绝启动）；不参与跨形态互通 ⇒ 必须显式声明"不适用"
+    transfer = _clause(document, "calibration.transfer")
+    if not isinstance(transfer, Mapping):
+        raise PrecheckError("020 口径：calibration.transfer 必须为映射")
+    missing = [key for key in _TRANSFER_KEYS if key not in transfer]
+    if missing:
+        raise PrecheckError(
+            f"020 口径：calibration.transfer 缺键 {missing}"
+            f"（六键 {list(_TRANSFER_KEYS)} 齐备才可启动）"
+        )
+    form = str(document.get("form", "")).strip()
+    transfer_forms = (
+        *_as_sequence(transfer["source_forms"]),
+        *_as_sequence(transfer["target_forms"]),
+    )
+    declared_forms_in_transfer = {str(item).strip() for item in transfer_forms}
+    unshared = not (declared_forms_in_transfer - {form})
+    _check_not_applicable(
+        document,
+        "calibration.transfer",
+        ("source_forms", "target_forms"),
+        apply=not unshared,
+    )
+    checked.append("transfer")
+    # ⑦ "不适用"只允许上面两处（其它段出现即报错：防用"不适用"逃避填值）
+    for segment in document:
+        if segment in NOT_APPLICABLE_SITES:
+            continue
+        section = document[segment]
+        if isinstance(section, Mapping) and "not_applicable" in section:
+            raise PrecheckError(
+                f"020 口径：{segment} 段不得出现 not_applicable"
+                f"（只允许 {sorted(NOT_APPLICABLE_SITES)}）"
+            )
+    checked.append("not_applicable")
+    return tuple(checked)
+
+
+def _as_sequence(value: Any) -> tuple[Any, ...]:
+    """列表型口径取值（标量 ⇒ 单元素；空/缺 ⇒ 空元组，由调用点判定适用性）。"""
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return (value,) if value is not None else ()
 
 
 def _declared_tier_limits(config_path: Path) -> dict[str, float]:

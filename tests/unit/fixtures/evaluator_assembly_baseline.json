@@ -4,186 +4,186 @@
       "slots": [
         [
           "gates",
-          "rule.beat_structure@1.0.0+b29e669b1194"
+          "rule.beat_structure@1.0.0+654f8687d673"
         ],
         [
           "gates",
-          "rule.page_minutes@1.0.0+84a9dc12b2db"
+          "rule.page_minutes@1.0.0+d2c690093224"
         ],
         [
           "gates",
-          "rule.scene_character@1.0.0+3121b4d6323c"
+          "rule.scene_character@1.0.0+4d5c2776aef2"
         ],
         [
           "gates",
-          "rule.dialogue_action_ratio@1.0.0+b2f0973d7cd4"
+          "rule.dialogue_action_ratio@1.0.0+211c89a18e0f"
         ],
         [
           "proxies",
-          "proxy.entity_consistency@1.0.0+2dbec610fa3b"
+          "proxy.entity_consistency@1.0.0+7a3b29c65f46"
         ],
         [
           "proxies",
-          "proxy.timeline_conflict@1.0.0+daa049ab7b79"
+          "proxy.timeline_conflict@1.0.0+8359445ba8e0"
         ],
         [
           "judge",
-          "judge.dramatic_tension@1.0.0+j07dea312293b669bc7a1d40et512"
+          "judge.dramatic_tension@1.0.0+b5cfad15d7b6"
         ]
       ],
       "all": [
-        "rule.beat_structure@1.0.0+b29e669b1194",
-        "rule.page_minutes@1.0.0+84a9dc12b2db",
-        "rule.scene_character@1.0.0+3121b4d6323c",
-        "rule.dialogue_action_ratio@1.0.0+b2f0973d7cd4",
-        "proxy.entity_consistency@1.0.0+2dbec610fa3b",
-        "proxy.timeline_conflict@1.0.0+daa049ab7b79",
-        "judge.dramatic_tension@1.0.0+j07dea312293b669bc7a1d40et512"
+        "rule.beat_structure@1.0.0+654f8687d673",
+        "rule.page_minutes@1.0.0+d2c690093224",
+        "rule.scene_character@1.0.0+4d5c2776aef2",
+        "rule.dialogue_action_ratio@1.0.0+211c89a18e0f",
+        "proxy.entity_consistency@1.0.0+7a3b29c65f46",
+        "proxy.timeline_conflict@1.0.0+8359445ba8e0",
+        "judge.dramatic_tension@1.0.0+b5cfad15d7b6"
       ]
     },
     "storyboard": {
       "slots": [
         [
           "gates",
-          "rule.shot_grammar@1.0.0+870fc9634905"
+          "rule.shot_grammar@1.0.0+4e933d9cb55f"
         ],
         [
           "gates",
-          "rule.coverage@1.0.0+5b1f7a09effb"
+          "rule.coverage@1.0.0+12d9d0a28a10"
         ],
         [
           "gates",
-          "rule.axis_rule@1.0.0+1284b0c8300f"
+          "rule.axis_rule@1.0.0+7d25e193290a"
         ],
         [
           "alignment",
-          "proxy.emotion_alignment@1.0.0+abdad579762b5fab70ec06"
+          "proxy.emotion_alignment@1.0.0+6d83107fb41b"
         ],
         [
           "judge",
-          "judge.script_fit@1.0.0+jd80a23e6d6bc6494b91fe3c6t512"
+          "judge.script_fit@1.0.0+ac03f77d5b87"
         ]
       ],
       "all": [
-        "rule.shot_grammar@1.0.0+870fc9634905",
-        "rule.coverage@1.0.0+5b1f7a09effb",
-        "rule.axis_rule@1.0.0+1284b0c8300f",
-        "proxy.emotion_alignment@1.0.0+abdad579762b5fab70ec06",
-        "judge.script_fit@1.0.0+jd80a23e6d6bc6494b91fe3c6t512"
+        "rule.shot_grammar@1.0.0+4e933d9cb55f",
+        "rule.coverage@1.0.0+12d9d0a28a10",
+        "rule.axis_rule@1.0.0+7d25e193290a",
+        "proxy.emotion_alignment@1.0.0+6d83107fb41b",
+        "judge.script_fit@1.0.0+ac03f77d5b87"
       ]
     },
     "visual": {
       "slots": [
         [
           "compliance",
-          "rule.format_compliance@1.0.0"
+          "rule.format_compliance@1.0.0+1ddfcdc8f817"
         ],
         [
           "proxies",
-          "proxy.aesthetic@1.0.0+9c22e4083ae6"
+          "proxy.aesthetic@1.0.0+8f45b04b2bb4"
         ],
         [
           "proxies",
-          "proxy.identity_consistency@1.0.0+b879d1f0833d"
+          "proxy.identity_consistency@1.0.0+2209f4e8425c"
         ],
         [
           "proxies",
-          "proxy.flicker@1.0.0+f0c633386ec2"
+          "proxy.flicker@1.0.0+99fe9495517b"
         ],
         [
           "judge",
-          "judge.cinematic@1.0.0+036732174a39"
+          "judge.cinematic@1.0.0+e4bf09eb9a95"
         ]
       ],
       "all": [
-        "rule.format_compliance@1.0.0",
-        "proxy.aesthetic@1.0.0+9c22e4083ae6",
-        "proxy.identity_consistency@1.0.0+b879d1f0833d",
-        "proxy.flicker@1.0.0+f0c633386ec2",
-        "judge.cinematic@1.0.0+036732174a39"
+        "rule.format_compliance@1.0.0+1ddfcdc8f817",
+        "proxy.aesthetic@1.0.0+8f45b04b2bb4",
+        "proxy.identity_consistency@1.0.0+2209f4e8425c",
+        "proxy.flicker@1.0.0+99fe9495517b",
+        "judge.cinematic@1.0.0+e4bf09eb9a95"
       ]
     },
     "sound": {
       "slots": [
         [
           "all",
-          "rule.loudness_compliance@1.0.0+b16fed79fdcd"
+          "rule.loudness_compliance@1.0.0+5c49a65ed68d"
         ],
         [
           "all",
-          "rule.av_sync@1.0.0+8e6abcee3678"
+          "rule.av_sync@1.0.0+6a249a0995ea"
         ],
         [
           "all",
-          "proxy.asr_transcript@1.0.0+bb13debb9c20"
+          "proxy.asr_transcript@1.0.0+7c6b8fbf094c"
         ],
         [
           "all",
-          "proxy.emotion_music_match@1.0.0+5884d9885256"
+          "proxy.emotion_music_match@1.0.0+624b5ecc8e68"
         ]
       ],
       "all": [
-        "rule.loudness_compliance@1.0.0+b16fed79fdcd",
-        "rule.av_sync@1.0.0+8e6abcee3678",
-        "proxy.asr_transcript@1.0.0+bb13debb9c20",
-        "proxy.emotion_music_match@1.0.0+5884d9885256"
+        "rule.loudness_compliance@1.0.0+5c49a65ed68d",
+        "rule.av_sync@1.0.0+6a249a0995ea",
+        "proxy.asr_transcript@1.0.0+7c6b8fbf094c",
+        "proxy.emotion_music_match@1.0.0+624b5ecc8e68"
       ]
     },
     "editing": {
       "slots": [
         [
           "gates",
-          "rule.duration_compliance@1.0.0+df6b60431e34"
+          "rule.duration_compliance@1.0.0+4db106c3c492"
         ],
         [
           "gates",
-          "rule.shot_distribution@1.0.0+a6990800e988"
+          "rule.shot_distribution@1.0.0+74ae5a9aa1ae"
         ],
         [
           "gates",
-          "rule.transition_rules@1.0.0+4aa666ac4d4e"
+          "rule.transition_rules@1.0.0+79e559452dcd"
         ],
         [
           "pacing",
-          "proxy.pacing_curve@1.0.0+74f52abd7eae"
+          "proxy.pacing_curve@1.0.0+b9eca2534f1c"
         ],
         [
           "judge",
-          "judge.narrative_flow@1.0.0+j1667061166b266deb33c90dft512"
+          "judge.narrative_flow@1.0.0+6678c46f5e7c"
         ]
       ],
       "all": [
-        "rule.duration_compliance@1.0.0+df6b60431e34",
-        "rule.shot_distribution@1.0.0+a6990800e988",
-        "rule.transition_rules@1.0.0+4aa666ac4d4e",
-        "proxy.pacing_curve@1.0.0+74f52abd7eae",
-        "judge.narrative_flow@1.0.0+j1667061166b266deb33c90dft512"
+        "rule.duration_compliance@1.0.0+4db106c3c492",
+        "rule.shot_distribution@1.0.0+74ae5a9aa1ae",
+        "rule.transition_rules@1.0.0+79e559452dcd",
+        "proxy.pacing_curve@1.0.0+b9eca2534f1c",
+        "judge.narrative_flow@1.0.0+6678c46f5e7c"
       ]
     },
     "dev": {
       "slots": [
         [
           "gates",
-          "rule.slate_structure@1.0.0+2f95824e343c"
+          "rule.slate_structure@1.0.0+604f97b9f38c"
         ],
         [
           "gates",
-          "rule.slate_combination@1.0.0+a6d702eb8292"
+          "rule.slate_combination@1.0.0+9038cee3fe3c"
         ],
         [
           "proxies",
-          "proxy.genre_regression@1.0.0+752281fd660f"
+          "proxy.genre_regression@1.0.0+5278bb5e1ef0"
         ],
         [
           "proxies",
-          "proxy.buzz_heat@1.0.0+4847fa9f46f1"
+          "proxy.buzz_heat@1.0.0+042384779a5a"
         ]
       ],
       "all": [
-        "rule.slate_structure@1.0.0+2f95824e343c",
-        "rule.slate_combination@1.0.0+a6d702eb8292",
-        "proxy.genre_regression@1.0.0+752281fd660f",
-        "proxy.buzz_heat@1.0.0+4847fa9f46f1"
+        "rule.slate_structure@1.0.0+604f97b9f38c",
+        "rule.slate_combination@1.0.0+9038cee3fe3c",
+        "proxy.genre_regression@1.0.0+5278bb5e1ef0",
+        "proxy.buzz_heat@1.0.0+042384779a5a"
       ]
     }
   },
@@ -192,186 +192,186 @@
       "slots": [
         [
           "gates",
-          "rule.beat_structure@1.0.0+bdb05683ff26"
+          "rule.beat_structure@1.0.0+654f8687d673"
         ],
         [
           "gates",
-          "rule.page_minutes@1.0.0+6ede07707889"
+          "rule.page_minutes@1.0.0+d2c690093224"
         ],
         [
           "gates",
-          "rule.scene_character@1.0.0+3121b4d6323c"
+          "rule.scene_character@1.0.0+4d5c2776aef2"
         ],
         [
           "gates",
-          "rule.dialogue_action_ratio@1.0.0+2dcc8e077209"
+          "rule.dialogue_action_ratio@1.0.0+211c89a18e0f"
         ],
         [
           "proxies",
-          "proxy.entity_consistency@1.0.0+2dbec610fa3b"
+          "proxy.entity_consistency@1.0.0+7a3b29c65f46"
         ],
         [
           "proxies",
-          "proxy.timeline_conflict@1.0.0+daa049ab7b79"
+          "proxy.timeline_conflict@1.0.0+8359445ba8e0"
         ],
         [
           "judge",
-          "judge.dramatic_tension@1.0.0+j07dea312293b669bc7a1d40et512"
+          "judge.dramatic_tension@1.0.0+b5cfad15d7b6"
         ]
       ],
       "all": [
-        "rule.beat_structure@1.0.0+bdb05683ff26",
-        "rule.page_minutes@1.0.0+6ede07707889",
-        "rule.scene_character@1.0.0+3121b4d6323c",
-        "rule.dialogue_action_ratio@1.0.0+2dcc8e077209",
-        "proxy.entity_consistency@1.0.0+2dbec610fa3b",
-        "proxy.timeline_conflict@1.0.0+daa049ab7b79",
-        "judge.dramatic_tension@1.0.0+j07dea312293b669bc7a1d40et512"
+        "rule.beat_structure@1.0.0+654f8687d673",
+        "rule.page_minutes@1.0.0+d2c690093224",
+        "rule.scene_character@1.0.0+4d5c2776aef2",
+        "rule.dialogue_action_ratio@1.0.0+211c89a18e0f",
+        "proxy.entity_consistency@1.0.0+7a3b29c65f46",
+        "proxy.timeline_conflict@1.0.0+8359445ba8e0",
+        "judge.dramatic_tension@1.0.0+b5cfad15d7b6"
       ]
     },
     "storyboard": {
       "slots": [
         [
           "gates",
-          "rule.shot_grammar@1.0.0+299038b411e2"
+          "rule.shot_grammar@1.0.0+4e933d9cb55f"
         ],
         [
           "gates",
-          "rule.coverage@1.0.0+5b1f7a09effb"
+          "rule.coverage@1.0.0+12d9d0a28a10"
         ],
         [
           "gates",
-          "rule.axis_rule@1.0.0+1284b0c8300f"
+          "rule.axis_rule@1.0.0+7d25e193290a"
         ],
         [
           "alignment",
-          "proxy.emotion_alignment@1.0.0+a52dd7b69c1a8fab70ec06"
+          "proxy.emotion_alignment@1.0.0+6d83107fb41b"
         ],
         [
           "judge",
-          "judge.script_fit@1.0.0+jd80a23e6d6bc6494b91fe3c6t512"
+          "judge.script_fit@1.0.0+ac03f77d5b87"
         ]
       ],
       "all": [
-        "rule.shot_grammar@1.0.0+299038b411e2",
-        "rule.coverage@1.0.0+5b1f7a09effb",
-        "rule.axis_rule@1.0.0+1284b0c8300f",
-        "proxy.emotion_alignment@1.0.0+a52dd7b69c1a8fab70ec06",
-        "judge.script_fit@1.0.0+jd80a23e6d6bc6494b91fe3c6t512"
+        "rule.shot_grammar@1.0.0+4e933d9cb55f",
+        "rule.coverage@1.0.0+12d9d0a28a10",
+        "rule.axis_rule@1.0.0+7d25e193290a",
+        "proxy.emotion_alignment@1.0.0+6d83107fb41b",
+        "judge.script_fit@1.0.0+ac03f77d5b87"
       ]
     },
     "visual": {
       "slots": [
         [
           "compliance",
-          "rule.format_compliance@1.0.0"
+          "rule.format_compliance@1.0.0+1ddfcdc8f817"
         ],
         [
           "proxies",
-          "proxy.aesthetic@1.0.0+9c22e4083ae6"
+          "proxy.aesthetic@1.0.0+8f45b04b2bb4"
         ],
         [
           "proxies",
-          "proxy.identity_consistency@1.0.0+b879d1f0833d"
+          "proxy.identity_consistency@1.0.0+2209f4e8425c"
         ],
         [
           "proxies",
-          "proxy.flicker@1.0.0+f0c633386ec2"
+          "proxy.flicker@1.0.0+99fe9495517b"
         ],
         [
           "judge",
-          "judge.cinematic@1.0.0+e270b19b9ab3"
+          "judge.cinematic@1.0.0+e4bf09eb9a95"
         ]
       ],
       "all": [
-        "rule.format_compliance@1.0.0",
-        "proxy.aesthetic@1.0.0+9c22e4083ae6",
-        "proxy.identity_consistency@1.0.0+b879d1f0833d",
-        "proxy.flicker@1.0.0+f0c633386ec2",
-        "judge.cinematic@1.0.0+e270b19b9ab3"
+        "rule.format_compliance@1.0.0+1ddfcdc8f817",
+        "proxy.aesthetic@1.0.0+8f45b04b2bb4",
+        "proxy.identity_consistency@1.0.0+2209f4e8425c",
+        "proxy.flicker@1.0.0+99fe9495517b",
+        "judge.cinematic@1.0.0+e4bf09eb9a95"
       ]
     },
     "sound": {
       "slots": [
         [
           "all",
-          "rule.loudness_compliance@1.0.0+b16fed79fdcd"
+          "rule.loudness_compliance@1.0.0+5c49a65ed68d"
         ],
         [
           "all",
-          "rule.av_sync@1.0.0+a2cdba5ff9c8"
+          "rule.av_sync@1.0.0+6a249a0995ea"
         ],
         [
           "all",
-          "proxy.asr_transcript@1.0.0+bb13debb9c20"
+          "proxy.asr_transcript@1.0.0+7c6b8fbf094c"
         ],
         [
           "all",
-          "proxy.emotion_music_match@1.0.0+5884d9885256"
+          "proxy.emotion_music_match@1.0.0+624b5ecc8e68"
         ]
       ],
       "all": [
-        "rule.loudness_compliance@1.0.0+b16fed79fdcd",
-        "rule.av_sync@1.0.0+a2cdba5ff9c8",
-        "proxy.asr_transcript@1.0.0+bb13debb9c20",
-        "proxy.emotion_music_match@1.0.0+5884d9885256"
+        "rule.loudness_compliance@1.0.0+5c49a65ed68d",
+        "rule.av_sync@1.0.0+6a249a0995ea",
+        "proxy.asr_transcript@1.0.0+7c6b8fbf094c",
+        "proxy.emotion_music_match@1.0.0+624b5ecc8e68"
       ]
     },
     "editing": {
       "slots": [
         [
           "gates",
-          "rule.duration_compliance@1.0.0+dda011a25a60"
+          "rule.duration_compliance@1.0.0+4db106c3c492"
         ],
         [
           "gates",
-          "rule.shot_distribution@1.0.0+2b8cda57fff5"
+          "rule.shot_distribution@1.0.0+74ae5a9aa1ae"
         ],
         [
           "gates",
-          "rule.transition_rules@1.0.0+79b490c2abed"
+          "rule.transition_rules@1.0.0+79e559452dcd"
         ],
         [
           "pacing",
-          "proxy.pacing_curve@1.0.0+7e7284c09977"
+          "proxy.pacing_curve@1.0.0+b9eca2534f1c"
         ],
         [
           "judge",
-          "judge.narrative_flow@1.0.0+jfcb2a4e866b266deb33c90dft512"
+          "judge.narrative_flow@1.0.0+6678c46f5e7c"
         ]
       ],
       "all": [
-        "rule.duration_compliance@1.0.0+dda011a25a60",
-        "rule.shot_distribution@1.0.0+2b8cda57fff5",
-        "rule.transition_rules@1.0.0+79b490c2abed",
-        "proxy.pacing_curve@1.0.0+7e7284c09977",
-        "judge.narrative_flow@1.0.0+jfcb2a4e866b266deb33c90dft512"
+        "rule.duration_compliance@1.0.0+4db106c3c492",
+        "rule.shot_distribution@1.0.0+74ae5a9aa1ae",
+        "rule.transition_rules@1.0.0+79e559452dcd",
+        "proxy.pacing_curve@1.0.0+b9eca2534f1c",
+        "judge.narrative_flow@1.0.0+6678c46f5e7c"
       ]
     },
     "dev": {
       "slots": [
         [
           "gates",
-          "rule.slate_structure@1.0.0+fe92e238c91a"
+          "rule.slate_structure@1.0.0+604f97b9f38c"
         ],
         [
           "gates",
-          "rule.slate_combination@1.0.0+a7f2c0dafab4"
+          "rule.slate_combination@1.0.0+9038cee3fe3c"
         ],
         [
           "proxies",
-          "proxy.genre_regression@1.0.0+a9bf5634fd76"
+          "proxy.genre_regression@1.0.0+5278bb5e1ef0"
         ],
         [
           "proxies",
-          "proxy.buzz_heat@1.0.0+002995008a83"
+          "proxy.buzz_heat@1.0.0+042384779a5a"
         ]
       ],
       "all": [
-        "rule.slate_structure@1.0.0+fe92e238c91a",
-        "rule.slate_combination@1.0.0+a7f2c0dafab4",
-        "proxy.genre_regression@1.0.0+a9bf5634fd76",
-        "proxy.buzz_heat@1.0.0+002995008a83"
+        "rule.slate_structure@1.0.0+604f97b9f38c",
+        "rule.slate_combination@1.0.0+9038cee3fe3c",
+        "proxy.genre_regression@1.0.0+5278bb5e1ef0",
+        "proxy.buzz_heat@1.0.0+042384779a5a"
       ]
     }
   },

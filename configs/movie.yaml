@@ -67,142 +67,142 @@ evaluators:
       compliance:
         rule.format_compliance:
           impl: "agents.visual.evaluators.plugins:format_compliance"
-          version: "1.0.0"
+          version: "1.0.0+1ddfcdc8f817"
           params: {}
       proxies:
         proxy.aesthetic:
           impl: "agents.visual.evaluators.plugins:aesthetic"
-          version: "1.0.0+9c22e4083ae6"
+          version: "1.0.0+8f45b04b2bb4"
           params: {}
         proxy.identity_consistency:
           impl: "agents.visual.evaluators.plugins:identity_consistency"
-          version: "1.0.0+b879d1f0833d"
+          version: "1.0.0+2209f4e8425c"
           params: {}
         proxy.flicker:
           impl: "agents.visual.evaluators.plugins:flicker"
-          version: "1.0.0+f0c633386ec2"
+          version: "1.0.0+99fe9495517b"
           params: {}
       judge:
         judge.cinematic:
           impl: "agents.visual.evaluators.plugins:cinematic"
-          version: "1.0.0+036732174a39"
+          version: "1.0.0+e4bf09eb9a95"
           params: {}
     sound:
       all:
         rule.loudness_compliance:
           impl: "agents.sound.evaluators.plugins:loudness_compliance"
-          version: "1.0.0+b16fed79fdcd"
+          version: "1.0.0+5c49a65ed68d"
           params: {}
         rule.av_sync:
           impl: "agents.sound.evaluators.plugins:av_sync"
-          version: "1.0.0+8e6abcee3678"
+          version: "1.0.0+6a249a0995ea"
           params: {}
         proxy.asr_transcript:
           impl: "agents.sound.evaluators.plugins:asr_transcript"
-          version: "1.0.0+bb13debb9c20"
+          version: "1.0.0+7c6b8fbf094c"
           params: {}
         proxy.emotion_music_match:
           impl: "agents.sound.evaluators.plugins:emotion_music_match"
-          version: "1.0.0+5884d9885256"
+          version: "1.0.0+624b5ecc8e68"
           params: {}
     editing:
       gates:
         rule.duration_compliance:
           impl: "agents.editing.evaluators.plugins:duration_compliance"
-          version: "1.0.0+df6b60431e34"
+          version: "1.0.0+4db106c3c492"
           params: {}
         rule.shot_distribution:
           impl: "agents.editing.evaluators.plugins:shot_distribution"
-          version: "1.0.0+a6990800e988"
+          version: "1.0.0+74ae5a9aa1ae"
           params: {}
         rule.transition_rules:
           impl: "agents.editing.evaluators.plugins:transition_rules"
-          version: "1.0.0+4aa666ac4d4e"
+          version: "1.0.0+79e559452dcd"
           params: {}
       pacing:
         proxy.pacing_curve:
           impl: "agents.editing.evaluators.plugins:pacing_curve"
-          version: "1.0.0+74f52abd7eae"
+          version: "1.0.0+b9eca2534f1c"
           params: {}
       judge:
         judge.narrative_flow:
           impl: "agents.editing.evaluators.plugins:narrative_flow"
-          version: "1.0.0+j1667061166b266deb33c90dft512"
+          version: "1.0.0+6678c46f5e7c"
           params: {}
     storyboard:
       gates:
         rule.shot_grammar:
           impl: "agents.storyboard.evaluators.plugins:shot_grammar"
-          version: "1.0.0+870fc9634905"
+          version: "1.0.0+4e933d9cb55f"
           params: {}
         rule.coverage:
           impl: "agents.storyboard.evaluators.plugins:coverage"
-          version: "1.0.0+5b1f7a09effb"
+          version: "1.0.0+12d9d0a28a10"
           params: {}
         rule.axis_rule:
           impl: "agents.storyboard.evaluators.plugins:axis_rule"
-          version: "1.0.0+1284b0c8300f"
+          version: "1.0.0+7d25e193290a"
           params: {}
       alignment:
         proxy.emotion_alignment:
           impl: "agents.storyboard.evaluators.plugins:emotion_alignment"
-          version: "1.0.0+abdad579762b5fab70ec06"
+          version: "1.0.0+6d83107fb41b"
           params: {}
       judge:
         judge.script_fit:
           impl: "agents.storyboard.evaluators.plugins:script_fit"
-          version: "1.0.0+jd80a23e6d6bc6494b91fe3c6t512"
+          version: "1.0.0+ac03f77d5b87"
           params: {}
     screenplay:
       gates:
         rule.beat_structure:
           impl: "agents.screenplay.evaluators.plugins:beat_structure"
-          version: "1.0.0+b29e669b1194"
+          version: "1.0.0+654f8687d673"
           params: {}
         rule.page_minutes:
           impl: "agents.screenplay.evaluators.plugins:page_minutes"
-          version: "1.0.0+84a9dc12b2db"
+          version: "1.0.0+d2c690093224"
           params: {}
         rule.scene_character:
           impl: "agents.screenplay.evaluators.plugins:scene_character"
-          version: "1.0.0+3121b4d6323c"
+          version: "1.0.0+4d5c2776aef2"
           params: {}
         rule.dialogue_action_ratio:
           impl: "agents.screenplay.evaluators.plugins:dialogue_action_ratio"
-          version: "1.0.0+b2f0973d7cd4"
+          version: "1.0.0+211c89a18e0f"
           params: {}
       proxies:
         proxy.entity_consistency:
           impl: "agents.screenplay.evaluators.plugins:entity_consistency"
-          version: "1.0.0+2dbec610fa3b"
+          version: "1.0.0+7a3b29c65f46"
           params: {}
         proxy.timeline_conflict:
           impl: "agents.screenplay.evaluators.plugins:timeline_conflict"
-          version: "1.0.0+daa049ab7b79"
+          version: "1.0.0+8359445ba8e0"
           params: {}
       judge:
         judge.dramatic_tension:
           impl: "agents.screenplay.evaluators.plugins:dramatic_tension"
-          version: "1.0.0+j07dea312293b669bc7a1d40et512"
+          version: "1.0.0+b5cfad15d7b6"
           params: {}
     dev:
       gates:
         rule.slate_structure:
           impl: "agents.dev.evaluators.plugins:slate_structure"
-          version: "1.0.0+2f95824e343c"
+          version: "1.0.0+604f97b9f38c"
           params: {}
         rule.slate_combination:
           impl: "agents.dev.evaluators.plugins:slate_combination"
-          version: "1.0.0+a6d702eb8292"
+          version: "1.0.0+9038cee3fe3c"
           params: {}
       proxies:
         proxy.genre_regression:
           impl: "agents.dev.evaluators.plugins:genre_regression"
-          version: "1.0.0+752281fd660f"
+          version: "1.0.0+5278bb5e1ef0"
           params: {}
         proxy.buzz_heat:
           impl: "agents.dev.evaluators.plugins:buzz_heat"
-          version: "1.0.0+4847fa9f46f1"
+          version: "1.0.0+042384779a5a"
           params: {}
 
 # 回放形态参数（功能 002）：worker_count 为虚拟时钟并行工作者数 W；
@@ -681,6 +681,10 @@ llm:
 # **额度取值为最小规模档且"未标定"**：具体数字由运营给定（规格开放问题 1）——未标定期间
 # 按最小规模运行并如实标注；运营给定后**只改本段**（机制面一行不动）。
 budget:
+  # 020（C11）：本形态**不登记投放渠道**（`adapter: promo_platform` 的渠道只登记在短剧态）
+  # ⇒ 必须显式声明「不适用」并给出理由（留空/省略即拒绝启动；不得用"不适用"逃避填值）
+  not_applicable:
+    channels: "本形态不登记投放渠道（adapter 为 promo_platform 的渠道只登记在短剧态）⇒ 渠道档位口径不适用"
   channels: # 渠道登记（本形态**只登记 LLM 渠道**；C 路径投放渠道只登记在短剧态，见 shortdrama.yaml）
     llm:
       adapter: pilot_llm # 真实调用面的装配入口（链内唯一装配点 + 校准入口，见 agents/pilot/backends.py）

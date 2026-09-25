@@ -6,12 +6,12 @@
 
 1. `plugin_declarations(payload)` —— 从真实 `configs/movie.yaml` 复制 `evaluators.plugins`
    结构（`impl` / `params` / 槽位与 `evaluator_id` 键集），供不改版本相关取值的夹具直接采用；
-2. `resync_plugin_versions(payload, ...)` —— 夹具**改了版本相关取值**（阈值/窗口/规则库等，
-   它们经 `implementation_version(*parts)` 进版本号）时，按该夹具的实际取值**重新钉住**
-   每一处 `version`：声明值必须与实现产出**逐字相等**（021 C4），否则装配期报错。
-   钉法 = 按 `impl` 解析出目标可调用对象、注入 `agent_config`（+ 需要的 `gateway`/`artifacts`）
-   调用一次读 `spec.version`——与唯一的装配点同口径，**不是**第二套装配路径（它只取版本值，
-   不装配、不注册、不返回实例）。
+2. `resync_plugin_versions(payload, ...)` —— 夹具派生后**重新钉住**每一处 `version`：按 `impl`
+   解析出目标可调用对象、注入 `agent_config`（+ 需要的 `gateway`/`artifacts`）调用一次，取
+   **实现身份版本**（`implementation_identity_version`：实现模块字节 + 插件 id）——与唯一装配点
+   **同口径的单一实现**，**不是**第二套装配路径（它只取版本值，不装配、不注册、不返回实例）。
+   **形态/口径参数不进版本**（裁决 2026-09-25）⇒ 改口径取值的夹具**不再**需要重钉版本；
+   本助手保留给"新增/替换 `impl`"一类**实现身份**变化的场景。
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ import inspect
 from pathlib import Path
 
 import yaml
+
+from core.evaluators.plugin import implementation_identity_version
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _REFERENCE_CONFIG = REPO_ROOT / "configs" / "movie.yaml"
@@ -95,7 +97,7 @@ def _derived_version(impl: str, agent_config, provided: dict) -> str:
         target = getattr(target, segment)
     kwargs = {"agent_config": agent_config}
     for name in inspect.signature(target).parameters:
-        # 与唯一装配点同款"按签名 opt-in"；本处只取 `spec.version`，未提供的槽位值不参与版本口径
+        # 与唯一装配点同款"按签名 opt-in"；本处只取**实现身份版本**（形态/参数不进版本）
         if name in _INJECTION_SLOTS and name != "agent_config":
             kwargs[name] = provided.get(name)
-    return target(**kwargs).spec.version
+    return implementation_identity_version(target(**kwargs))

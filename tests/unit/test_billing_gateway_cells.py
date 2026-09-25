@@ -37,9 +37,12 @@ from core.llm_gateway.profiles import (
     snapshot_entry_cells,
 )
 from core.llm_gateway.routing import Role
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIGS = {form: REPO_ROOT / "configs" / f"{form}.yaml" for form in ("movie", "shortdrama")}
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
+CONFIGS = {form: REPO_ROOT / "configs" / f"{form}.yaml" for form in FORMS}
 PROFILE_ID = "deepseek-flash"  # `generation` 角色映射的生成档（夹具矩阵挂它）
 # 四格取值两两不同：取错格位即算错钱（断言可证伪）
 CELLS = {
@@ -302,7 +305,7 @@ class Test改价不漂移:
 
 
 class Test交付配置的实情:
-    @pytest.mark.parametrize("form", ["movie", "shortdrama"])
+    @pytest.mark.parametrize("form", FORMS)
     def test_真实配置未声明价目矩阵(self, form):
         """矩阵取值是**厂商费率**（事实数字）：运营给定前不发明，故真实配置不声明矩阵。"""
         payload = yaml.safe_load(CONFIGS[form].read_text(encoding="utf-8"))

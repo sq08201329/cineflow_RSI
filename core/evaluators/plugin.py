@@ -21,9 +21,13 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+import blake3
 
 from core.evaluators.base import Evaluator, EvaluatorKind, EvaluatorSpec
 from core.evaluators.errors import PluginAssemblyError, PluginDeclarationError
@@ -33,6 +37,8 @@ INJECTION_SLOTS = ("agent_config", "gateway", "artifacts", "registry")
 _LEAF_KEYS = ("impl", "version", "params")
 _DERIVED_KEY = "all"
 _UNSPECIFIED = "<未声明>"
+_VERSION_SEPARATOR = "+"
+_VERSION_DIGEST_LEN = 12
 
 _KIND_BY_PREFIX = {
     "rule.": EvaluatorKind.RULE,
@@ -71,6 +77,30 @@ class PluginManifest:
             (slot, tuple(decl for decl in self.declarations if decl.slot == slot))
             for slot in self.slots
         )
+
+
+def implementation_identity_version(evaluator: Evaluator, *, base: str | None = None) -> str:
+    """**实现身份版本**（`base+<12 位十六进制>`）：`实现模块字节` + `evaluator_id`。
+
+    **不含形态/口径参数**（裁决 2026-09-25，修正 A1 的口径）：声明的 `version` 必须**稳定**——
+    否则任何参数调整（测试夹具、演示配置、运营调档）都会让整链装配失败；形态与参数的变化由
+    **配置指纹 + 装配快照**承载（那才是它该管的）。**行为变更仍必然换版本**：实现模块字节变
+    ⇒ 摘要变（原则一）。`base` 缺省沿用实现自报的前缀（如 `1.0.0`）。
+    """
+    spec = evaluator.spec
+    module = sys.modules.get(type(evaluator).__module__)
+    source_file = getattr(module, "__file__", None)
+    source = (
+        Path(source_file).read_bytes()
+        if source_file
+        else type(evaluator).__module__.encode("utf-8")
+    )
+    hasher = blake3.blake3()
+    hasher.update(source)
+    hasher.update(spec.evaluator_id.encode("utf-8"))
+    resolved_base = base or spec.version.split(_VERSION_SEPARATOR, 1)[0]
+    digest = hasher.hexdigest()[:_VERSION_DIGEST_LEN]
+    return f"{resolved_base}{_VERSION_SEPARATOR}{digest}"
 
 
 def declaration_subtree(document: Mapping | None, agent: str) -> Mapping | None:
@@ -314,10 +344,22 @@ def _validate_result(declaration: PluginDeclaration, result: Any, registry: Any)
             f"前缀 {declaration.evaluator_id.split('.')[0]!r} "
             f"应为 {expected_kind.value!r}、实现为 {spec.kind!r}"
         )
-    if spec.version != declaration.version:
+    identity = implementation_identity_version(result)
+    if declaration.version != identity:
         raise PluginAssemblyError(
             f"{declaration.path} 声明的 version 与实现的 version 不一致："
-            f"声明 {declaration.version!r}、实现 {spec.version!r}（不静默取任一侧）"
+            f"声明 {declaration.version!r}、实现身份 {identity!r}"
+            f"（实现自报 {spec.version!r}；不静默取任一侧）"
+        )
+    if spec.version != identity:
+        # 形态/口径参数不进版本（裁决 2026-09-25）：装配面统一钉为**实现身份版本**
+        result.spec = EvaluatorSpec(
+            evaluator_id=spec.evaluator_id,
+            version=identity,
+            kind=spec.kind,
+            deterministic=spec.deterministic,
+            cost_per_call=spec.cost_per_call,
+            calibration=dict(spec.calibration),
         )
     if registry is not None:
         registry.register(result)

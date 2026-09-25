@@ -33,13 +33,17 @@ from agents.pilot.scale import derived_shot_count
 from agents.pilot.stages import PILOT_STAGE_IDS, build_stage_specs
 from core.billing.runlog import RUN_ENTRY_FIELDS
 from core.orchestration.models import StageStatus
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 FORM = "shortdrama"
 SEVEN = ("dev", "script", "storyboard", "visual", "sound", "editing", "promo")
 # 019 的构造点普查口径（core/ + agents/ + ops/，不含 tests）
 GATEWAY_SCAN_ROOTS = ("core", "agents", "ops")
-GATEWAY_CONSTRUCTION_COUNT = 13
+# 021（A-01/T2178②）：普查计数**写死 14**（新增构造点必须显式登记；不构造网关的路径计数不动）
+GATEWAY_CONSTRUCTION_COUNT = 14
 _CHAT_CALL_SITE_COUNT = 8
 _CAPTURED: dict = {}
 
@@ -172,7 +176,7 @@ class TestC2_C3链首与预算:
 
     def test_调用点档位齐备且计数仍_8(self):
         tiers = set()
-        for form in ("movie", "shortdrama"):
+        for form in FORMS:
             payload = yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text("utf-8"))
             # 020（C11）：档位在**渠道内** —— 取各渠道 `channels.<id>.tiers` 的键并集
             for channel in payload["budget"]["channels"].values():
@@ -275,7 +279,7 @@ class TestC5到C7交接:
 
 class TestC8_C9网格与升版:
     def test_两形态容量上下界(self):
-        for form in ("movie", "shortdrama"):
+        for form in FORMS:
             payload = yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text("utf-8"))
             grid = payload["storyboard"]["render"]["index_grid"]
             shots = derived_shot_count(
@@ -360,7 +364,11 @@ class TestC11到C13证据面:
         assert profile["volume"]["shot_count"] == record.stage("storyboard").detail["shot_count"]
         assert profile["volume"] == _package_json(run_context, "state.json")["volume"]
 
-    def test_构造点普查仍_13_处(self):
+    def test_构造点普查仍_14_处(self):
+        """构造点普查**写死 14**（021 A-01/T2178②；019 的 13 是登记漂移，实测 14）。
+
+        "不构造网关"的路径（如 `agents/pilot/run_report.py`）不得让计数漂移；新增构造点即红。
+        """
         sites: list[str] = []
         for root in GATEWAY_SCAN_ROOTS:
             for path in sorted((REPO_ROOT / root).rglob("*.py")):

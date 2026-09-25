@@ -31,14 +31,19 @@ from core.evaluators.errors import (
     RegistrationError,
 )
 from core.evaluators.plugin import INJECTION_SLOTS, assemble, parse_manifest
+from ops.form_guard import declared_forms
+from tests.plugin_stubs import stub_version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 BASELINE = json.loads(
     (REPO_ROOT / "tests" / "unit" / "fixtures" / "evaluator_assembly_baseline.json").read_text(
         encoding="utf-8"
     )
 )
-FORMS = ("movie", "shortdrama")
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 
 AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "dev")
 SYMBOLS = {
@@ -187,14 +192,22 @@ def _assemble_stub(
     evaluator_id: str,
     slot: str = "gates",
     slots=None,
-    version: str = "1.0.0+stub00000000",
+    version: str | None = None,
     params=None,
     weights=None,
     agent_config=None,
     **provided,
 ):
-    """单条声明的装配：`evaluator_id` 与权重键按用例显式给出（合成反例的定位面）。"""
-    leaf = {"impl": impl, "version": version, "params": dict(params or {})}
+    """单条声明的装配：`evaluator_id` 与权重键按用例显式给出（合成反例的定位面）。
+
+    声明的 `version` 缺省 = 存根模块的**实现身份版本**（与唯一装配点同口径，形态/参数无关）；
+    需要构造"声明与实现不一致"的反例时显式传入别的值。
+    """
+    leaf = {
+        "impl": impl,
+        "version": version or stub_version(evaluator_id),
+        "params": dict(params or {}),
+    }
     layout = tuple(slots) if slots is not None else (slot,)
     document = {slot: {evaluator_id: leaf}}
     manifest = parse_manifest(document, "stubagent", slots=layout)
@@ -340,9 +353,15 @@ class Test装配期规则:
         with pytest.raises(
             PluginAssemblyError, match="声明的 version 与实现的 version 不一致"
         ) as exc:
-            _assemble_stub("tests.plugin_stubs:wrong_version", evaluator_id="rule.wrong_version")
-        assert "1.0.0+other1234567" in str(exc.value)
-        assert "1.0.0+stub00000000" in str(exc.value)
+            _assemble_stub(
+                "tests.plugin_stubs:wrong_version",
+                evaluator_id="rule.wrong_version",
+                version="1.0.0+stub00000000",  # 故意与实现身份不一致的声明值
+            )
+        message = str(exc.value)
+        assert "1.0.0+stub00000000" in message  # 声明侧
+        assert stub_version("rule.wrong_version") in message  # 实现身份侧
+        assert "1.0.0+other1234567" in message  # 实现自报侧（口径可事后指认）
 
     def test_参数严格性双向反例(self):
         with pytest.raises(PluginAssemblyError, match="参数严格性不符") as exc:
@@ -401,12 +420,22 @@ class Test装配期规则:
                 )
 
     def test_保序_槽位内序列等于声明序列(self):
+        from tests.plugin_stubs import stub_version
+
         document = {
             "gates": {
-                "rule.declared_only": _stub_leaf("tests.plugin_stubs:declared_only"),
+                "rule.declared_only": {
+                    "impl": "tests.plugin_stubs:declared_only",
+                    "version": stub_version("rule.declared_only"),
+                    "params": {},
+                },
             },
             "proxies": {
-                "proxy.declared_only": _stub_leaf("tests.plugin_stubs:declared_only_proxy"),
+                "proxy.declared_only": {
+                    "impl": "tests.plugin_stubs:declared_only_proxy",
+                    "version": stub_version("proxy.declared_only"),
+                    "params": {},
+                },
             },
         }
         manifest = parse_manifest(document, "stubagent", slots=("gates", "proxies"))

@@ -20,7 +20,10 @@ from core.billing.budget import (
     BudgetConfigError,
 )
 from core.llm_gateway.profiles import ProfileConfigError
+from ops.form_guard import declared_forms
 
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 LLM_ADAPTER = "pilot_llm"  # 配置里 LLM 渠道的装配引用（取值域不变：019 既有取值）
 
 
@@ -159,9 +162,9 @@ class Test口径备注:
 
     def test_未标定标注在真实配置的每个档位上(self):
         """运营给定前按最小规模档运行：每个档位的口径备注必须标注"未标定"。"""
-        for form in ("movie", "shortdrama"):
+        for form in FORMS:
             cfg = BudgetConfig.from_yaml(REPO_ROOT / "configs" / f"{form}.yaml")
-            for spec in cfg.channels.values():  # 两形态的每个渠道、每个档位都标"未标定"
+            for spec in cfg.channels.values():  # 各形态的每个渠道、每个档位都标"未标定"
                 assert spec.tiers and all("未标定" in tier.note for tier in spec.tiers.values())
 
 
@@ -193,7 +196,7 @@ class Test两形态差异由配置承载:
 
         零形态分支由 `test_billing_core_purity` 常驻机检。
         """
-        for form in ("movie", "shortdrama"):
+        for form in FORMS:
             payload = yaml.safe_load(
                 (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
             )

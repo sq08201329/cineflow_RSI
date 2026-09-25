@@ -26,11 +26,12 @@ import re
 
 import yaml
 
-from ops.form_guard import form_branch_patterns, form_literals, violations_in
+from ops.form_guard import declared_forms, form_branch_patterns, form_literals, violations_in
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "core" / "billing"
-FORMS = ("movie", "shortdrama")
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 
 # 形态值字面量（同 tests/unit/test_form_switch.py 的 BANNED_LITERALS 口径）：**唯一**来源是
 # `ops/form_guard.py` 的派生面（形态名由 `configs/*.yaml` 的 `form:` + `form_aliases` 派生）

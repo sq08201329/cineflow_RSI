@@ -40,6 +40,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from ops.form_guard import declared_forms  # noqa: E402 - 需先补仓库根进 sys.path
+
 MOVIE = REPO_ROOT / "configs" / "movie.yaml"
 SHORTDRAMA = REPO_ROOT / "configs" / "shortdrama.yaml"
 LLM_ADAPTER = "pilot_llm"
@@ -123,7 +125,7 @@ def _step_1_配置形状与缺项拒绝(root: Path, report: dict) -> None:
     from core.calibration.errors import CalibrationConfigError
 
     shapes = {}
-    for form in ("movie", "shortdrama"):
+    for form in declared_forms(REPO_ROOT / "configs"):
         cfg = BudgetConfig.from_yaml(REPO_ROOT / "configs" / f"{form}.yaml")
         calibration = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / f"{form}.yaml")
         transfer = calibration.transfer

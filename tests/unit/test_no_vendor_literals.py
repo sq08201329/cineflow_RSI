@@ -17,7 +17,11 @@ import re
 
 import yaml
 
+from ops.form_guard import declared_forms
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 SCAN_ROOTS = ("core", "agents", "dreaming")
 # 除外：网关自身（路由/档案/后端实现里合法出现厂商变量名与协议实现）
 EXCLUDED_PREFIXES = ("core/llm_gateway/",)
@@ -40,7 +44,7 @@ def _declared_literals() -> tuple[list[str], list[str]]:
     """从两套形态配置读出"不得出现在业务代码里"的字面量：档案 id 与端点 host。"""
     model_names: set[str] = set()
     hosts: set[str] = set()
-    for name in ("movie", "shortdrama"):
+    for name in FORMS:
         payload = yaml.safe_load(
             (REPO_ROOT / "configs" / f"{name}.yaml").read_text(encoding="utf-8")
         )
@@ -156,7 +160,7 @@ class Test调用点声明环节:
     def test_每个调用点声明_stage_且取值在档位键集内(self):
         tier_ids: set[str] = set()
         llm_tier_ids: set[str] = set()
-        for form in ("movie", "shortdrama"):
+        for form in FORMS:
             payload = yaml.safe_load(
                 (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
             )

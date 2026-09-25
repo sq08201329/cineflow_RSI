@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.evaluators.base import ArtifactRef, EvalResult, Evaluator, EvaluatorKind, EvaluatorSpec
+from core.evaluators.plugin import implementation_identity_version
 
 
 class StubEvaluator(Evaluator):
@@ -26,6 +27,15 @@ class StubEvaluator(Evaluator):
 
     def evaluate(self, artifact: ArtifactRef, context: dict) -> EvalResult:
         return EvalResult(score=1.0)
+
+
+def stub_version(evaluator_id: str) -> str:
+    """存根评估器的**实现身份版本**（与唯一装配点同口径：实现模块字节 + 插件 id）。
+
+    装配面按此口径比对声明值（形态/口径参数不进版本，裁决 2026-09-25）⇒ 合成反例的声明
+    缺省值必须与之一致，否则"合规用例"会因版本口径而非被测行为变成红灯。
+    """
+    return implementation_identity_version(StubEvaluator(evaluator_id))
 
 
 @dataclass

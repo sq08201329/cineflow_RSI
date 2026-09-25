@@ -173,7 +173,9 @@ class Test环境助手同源自检:
     def test_助手变量集合与配置档案逐项一致(self, llm_profile_vars):
         import yaml
 
-        for name in ("movie", "shortdrama"):
+        from ops.form_guard import declared_forms
+
+        for name in declared_forms(REPO_ROOT / "configs"):
             payload = yaml.safe_load(open(f"configs/{name}.yaml", encoding="utf-8"))
             expected = {
                 str(profile_id): {

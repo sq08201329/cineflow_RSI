@@ -47,9 +47,11 @@ from core.billing.budget import (
 )
 from core.billing.reconcile import CLASSIFICATIONS, UNCLASSIFIED, load_report
 from core.billing.runlog import RecordingChannelCall, RunLogError, load_run, run_path
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FORMS = ("movie", "shortdrama")
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 LLM_ADAPTER = "pilot_llm"  # 019 既有装配引用（原样保留、不重命名）
 PROMO_ADAPTER = "promo_platform"  # C11 权威定名：投放渠道的装配引用
 MEDIA_CHANNEL = "media"

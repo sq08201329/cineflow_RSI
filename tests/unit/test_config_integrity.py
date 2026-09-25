@@ -15,9 +15,19 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ops.form_guard import declared_forms
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHORTDRAMA = REPO_ROOT / "configs" / "shortdrama.yaml"
 MOVIE = REPO_ROOT / "configs" / "movie.yaml"
+# 配置集合由**派生面**给出（id 面：各份 `configs/*.yaml` 的 `form:` 取值，两两唯一）
+# ⇒ 每份 `configs/*.yaml` 都跑**全部加载器**与**全部"缺项即红"条目**（新形态自动纳入）
+CONFIGS_DIR = REPO_ROOT / "configs"
+# 形态 id 面（登记完备与参数化面**一律**用它；中文别名不进登记面）
+FORMS = declared_forms(CONFIGS_DIR)
+FORM_CONFIG_PATHS = tuple(CONFIGS_DIR / f"{form}.yaml" for form in FORMS)
+# 插件声明面覆盖的六个 Agent（`evaluators.plugins.<agent>` 子树；缺任一子键即拒绝启动）
+PLUGIN_AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "dev")
 
 # (机检名, 模块, 配置类)：短剧配置必须逐个通过
 CONFIG_CLASSES = (
@@ -37,6 +47,10 @@ CONFIG_CLASSES = (
     ("deployment", "core.deployment.config", "DeploymentConfig"),
     ("budget", "core.billing.budget", "BudgetConfig"),
     ("web", "web.queries", "WebConfig"),
+    # 021（C1/C2）：`evaluators` 段的**清单解析器**（`core/evaluators/plugin.py` 的
+    # `parse_manifest`，唯一声明面入口）——缺段 / 缺 Agent 子键 / 缺叶子三键 / 权重键集不齐
+    # 即拒绝启动（"漏声明插件清单"不得静默逃逸）
+    ("evaluators", "core.evaluators.plugin", "parse_manifest"),
 )
 # 020（T2067②）：`calibration.transfer` 的可比性条件在 `CalibrationConfig` 的 `TransferConfig`
 # 内**必需读取**（缺项即报错）⇒ **不新增**配置类、不新增加载器名（表内 `calibration` 已覆盖）。
@@ -94,8 +108,40 @@ REQUIRED_PATHS = (
     # 020（C18）：运行窗口下限与断档容差（两形态取值不同，缺项即报错）
     ("budget", ("budget", "runs", "min_window_days")),
     ("budget", ("budget", "runs", "gap_tolerance_days")),
+    # 021（C1）：插件声明面的**叶子三键**（`impl` / `version` / `params`；缺任一即拒绝启动）
+    ("evaluators", ("evaluators", "plugins", "sound", "all", "rule.av_sync", "impl")),
+    ("evaluators", ("evaluators", "plugins", "sound", "all", "rule.av_sync", "version")),
+    ("evaluators", ("evaluators", "plugins", "sound", "all", "rule.av_sync", "params")),
+    # 021（C2）：`<evaluator_id>` 键集必须 == `evaluator_weights.<agent>` 键集
+    # （删掉任一权重键 ⇒ 声明↔权重漂移 ⇒ 拒绝启动，不得静默少装配一个评估器）
+    ("evaluators", ("evaluator_weights", "sound", "proxy.asr_transcript")),
     ("web", ("web", "data_dirs")),
 )
+
+
+def _load_manifests(path: Path):
+    """`evaluators` 段清单解析器（六个 Agent 逐一解析 + 声明↔权重键集齐备）。
+
+    缺 `evaluators` 段 / 缺某 Agent 子键 / 缺叶子三键 ⇒ `PluginDeclarationError`；
+    `<evaluator_id>` 键集 != `evaluator_weights.<agent>` 键集 ⇒ 漂移即拒绝（不静默少装配）。
+    """
+    from core.evaluators.errors import PluginAssemblyError
+    from core.evaluators.plugin import parse_manifest
+
+    document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    manifolds = {}
+    for agent in PLUGIN_AGENTS:
+        module = importlib.import_module(f"agents.{agent}.evaluators.plugins")
+        manifest = parse_manifest(document, module.AGENT, slots=module.SLOT_LAYOUT)
+        declared = {declaration.evaluator_id for declaration in manifest.declarations}
+        weighted = set(document["evaluator_weights"][agent])
+        if declared != weighted:
+            raise PluginAssemblyError(
+                f"evaluator_weights.{agent} 与声明面不一致："
+                f"缺权重键 {sorted(declared - weighted)}、多余权重键 {sorted(weighted - declared)}"
+            )
+        manifolds[agent] = manifest
+    return manifolds
 
 
 def _load_config(name: str, path: Path):
@@ -103,8 +149,10 @@ def _load_config(name: str, path: Path):
     module_name, class_name = next(
         (module, cls) for key, module, cls in CONFIG_CLASSES if key == name
     )
-    config_class = getattr(importlib.import_module(module_name), class_name)
-    return config_class.from_yaml(path)
+    loader = getattr(importlib.import_module(module_name), class_name)
+    if not hasattr(loader, "from_yaml"):
+        return _load_manifests(Path(path))  # 清单解析器：入参是文档 + Agent，不是 from_yaml
+    return loader.from_yaml(path)
 
 
 def _load_weights(agent: str, path: Path):
@@ -129,16 +177,34 @@ class Test形态标识与段完整性:
         payload = yaml.safe_load(SHORTDRAMA.read_text(encoding="utf-8"))
         assert set(payload["evaluator_weights"]) == set(WEIGHT_AGENTS)
 
+    def test_全部形态配置段集合一致(self):
+        """**每份** `configs/*.yaml` 的顶层段集合一致（不靠删段表达形态差异）。"""
+        sections = [
+            set(yaml.safe_load(path.read_text(encoding="utf-8"))) for path in FORM_CONFIG_PATHS
+        ]
+        assert len(sections) >= 2, "配置数下界 ≥2（登记完备口径，见 C10）"
+        for other in sections[1:]:
+            assert other == sections[0], "形态差异靠值表达，段集合必须一致"
+
+    def test_文件名stem与form取值一致(self):
+        """形态 id 可零人工常量反查回唯一配置路径（登记完备 ①/② 的前提）。"""
+        for path in FORM_CONFIG_PATHS:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            assert payload["form"] == path.stem
+
 
 @pytest.mark.parametrize("name", [key for key, _, _ in CONFIG_CLASSES])
+@pytest.mark.parametrize("config_path", FORM_CONFIG_PATHS, ids=declared_forms(CONFIGS_DIR))
 class Test全部配置类加载器:
-    def test_短剧配置可加载(self, name):
-        loaded = _load_config(name, SHORTDRAMA)
+    def test_短剧配置可加载(self, name, config_path):
+        loaded = _load_config(name, config_path)
         assert loaded is not None
 
-    def test_电影配置同样可加载(self, name):
-        # 对照面：两套配置都过同一加载器（同链双形态的前提）
-        assert _load_config(name, MOVIE) is not None
+    def test_电影配置同样可加载(self, name, config_path):
+        # 对照面：**每份** `configs/*.yaml` 都过同一加载器（同链多形态的前提）
+        assert _load_config(name, config_path) is not None
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert payload["form"] == config_path.stem  # 文件名 stem == form 取值（反查唯一路径）
 
 
 @pytest.mark.parametrize("agent", WEIGHT_AGENTS)
@@ -151,11 +217,12 @@ def test_权重读取覆盖全部_Agent(agent):
 
 
 @pytest.mark.parametrize("name,keys", REQUIRED_PATHS)
-@pytest.mark.parametrize("config_path", (SHORTDRAMA, MOVIE), ids=("shortdrama", "movie"))
+@pytest.mark.parametrize("config_path", FORM_CONFIG_PATHS, ids=FORMS)
 def test_缺项即红(name, keys, config_path, tmp_path):
     """删掉必需段后加载器必须报错（不静默回退）——本机检的牙齿。
 
-    **两形态各自跑一遍**（T2069）：不得有一侧静默取默认。
+    **每份 `configs/*.yaml` 各自跑一遍**（T2069 + 021 T2140）：参数化面由 `declared_forms()`
+    派生 ⇒ 不得有任何一份配置静默取默认（新形态自动纳入本条目）。
     """
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     cursor = payload

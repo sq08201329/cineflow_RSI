@@ -29,9 +29,12 @@ from agents.pilot import stages as stages_module
 from agents.pilot.pilot import PilotConfig, PilotInputs, PrecheckError, precheck
 from agents.pilot.stages import ScreenplayConfig, VisualConfig, build_runtime, build_stage_specs
 from core.evaluators.weights import load_evaluator_weights
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FORMS = ("shortdrama", "movie")
+# 形态 id 面（021 T2146③）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面；
+# 形态**特定期望值**一律写入形态配置（下方用例从配置读），**不建**"形态 → 期望值"映射登记表
+FORMS = declared_forms(REPO_ROOT / "configs")
 # 链首插入后的拓扑序（独立声明，不复用实现常量）
 SEVEN = ("dev", "script", "storyboard", "visual", "sound", "editing", "promo")
 # 演示档（30 秒档；短剧形态原值为 120 秒/2 分钟，故这是"缩档"而非"等值"）
@@ -277,19 +280,26 @@ class Test缺项与拒绝语义:
             precheck(form=form, config_path=config, inputs=_inputs(0.5), data_dir=tmp_path / "pre")
 
     def test_两处时长不一致即拒绝启动并点名实测值(self, tmp_path):
-        form = "movie"
+        """形态名与两处实测值**都由配置派生**（T2146③ / A-06：期望值入配置 + 断言读配置）。
+
+        `screenplay.target_duration_min × 60` 与 `editing.target_duration_s` 必须指向同一个
+        成片时长；任一不一致即拒绝启动并**点名两处实测值**（不静默择一、不按其一取值）。
+        """
+        form = FORMS[0]  # 形态名取自派生面（不写死）
+        base = _real_config(tmp_path, form)
+        payload = yaml.safe_load(base.read_text(encoding="utf-8"))
+        screenplay_seconds = int(round(float(payload["screenplay"]["target_duration_min"]) * 60))
+        broken_seconds = screenplay_seconds + 60  # 与剧本侧折算值**必定**不一致
 
         def _break(payload: dict) -> None:
-            payload["editing"]["target_duration_s"] = 120  # 与 screenplay 90 分钟（5400 秒）矛盾
+            payload["editing"]["target_duration_s"] = broken_seconds
 
-        config = _derived(
-            _real_config(tmp_path, form), tmp_path, name="movie-mismatch", mutate=_break
-        )
+        config = _derived(base, tmp_path, name=f"{form}-mismatch", mutate=_break)
         with pytest.raises(PrecheckError) as excinfo:
             precheck(form=form, config_path=config, inputs=_inputs(0.5), data_dir=tmp_path / "pre")
         message = str(excinfo.value)
-        assert "5400 s" in message  # 两处实测值逐字点名（不静默择一）
-        assert "120 s" in message
+        assert f"{screenplay_seconds} s" in message  # 两处实测值逐字点名（不静默择一）
+        assert f"{broken_seconds} s" in message
 
     def test_运行级时长与生效档不一致即拒绝(self, tmp_path):
         form = "shortdrama"
@@ -303,13 +313,17 @@ class Test缺项与拒绝语义:
 
 class Test档位粒度:
     def test_30秒演示档可声明且可经浮点分钟对齐(self, tmp_path):
-        form = "movie"  # 真实 movie 配置声明 30 秒排练档（0.5 分钟）
+        """演示档（30 秒 / 0.5 分钟）**由形态配置声明**：期望值从配置读（T2146③ / A-06）。"""
+        form = FORMS[0]  # 形态名取自派生面（不写死）
         config = _real_config(tmp_path, form)
+        declared = yaml.safe_load(config.read_text(encoding="utf-8"))["pilot"]["rehearsal"]["scale"]
+        minutes = float(declared["script_target_minutes"])
         report = precheck(
-            form=form, config_path=config, inputs=_inputs(0.5), data_dir=tmp_path / "pre"
+            form=form, config_path=config, inputs=_inputs(minutes), data_dir=tmp_path / "pre"
         )
-        assert report["pilot_volume"]["effective"]["target_duration_s"] == pytest.approx(30.0)
-        assert report["pilot_volume"]["effective"]["script_target_minutes"] == pytest.approx(0.5)
+        effective = report["pilot_volume"]["effective"]
+        assert effective["target_duration_s"] == pytest.approx(float(declared["target_duration_s"]))
+        assert effective["script_target_minutes"] == pytest.approx(minutes)
 
     def test_浮点分钟指纹确定性(self):
         assert _inputs(0.5).to_dict()["target_duration_min"] == 0.5

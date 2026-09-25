@@ -21,9 +21,11 @@ from core.evaluators.base import EvaluatorKind, EvaluatorSpec
 from core.evaluators.errors import RegistrationError, ValidationError
 from core.evaluators.plugin import assemble, parse_manifest
 from core.evaluators.registry import Registry
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FORMS = ("movie", "shortdrama")
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 PLUGIN_AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "dev")
 PLUGIN_FILES = tuple(f"agents/{agent}/evaluators/plugins.py" for agent in PLUGIN_AGENTS)
 # 插件解析面：唯一装配点（其余 `importlib.import_module` 调用点是把 CLI 模块取回来转发，
@@ -104,7 +106,9 @@ class Test声明集等于可用插件全集:
             )
 
     def test_声明version不得覆盖实现(self):
-        """`EvaluatorSpec` 冻结未被反射改写；装配点零 `dataclasses.replace` / 版本归一化。"""
+        """声明面只**校验**实现身份版本，不反射改写实现：装配点零 `dataclasses.replace` /
+        零 `object.__setattr__` / 零 `spec.version =` 赋值（版本由 `EvaluatorSpec` 重新构造后
+        按**实现身份口径**钉住）；`EvaluatorSpec` 冻结未被反射改写。"""
         source = (REPO_ROOT / "core" / "evaluators" / "plugin.py").read_text(encoding="utf-8")
         assert "dataclasses.replace" not in source and "replace(spec" not in source
         assert "spec.version =" not in source and "spec.key =" not in source

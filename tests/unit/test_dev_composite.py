@@ -16,10 +16,12 @@ from agents.dev.evaluators.composite import (
     composite_dev,
     evaluate_dev,
 )
+from agents.dev.evaluators.slate_structure import SlateStructureEvaluator
 from core.evaluators.base import ArtifactRef, EvaluatorKind
 from core.evaluators.errors import PluginAssemblyError, RegistrationError
 from core.evaluators.quantize import quantize_score
 from core.evaluators.registry import Registry
+from core.orchestration.models import fingerprint_of
 from tests.stubs import StubProxyEvaluator
 
 _GATE_IDS = ("rule.slate_structure", "rule.slate_combination")
@@ -150,13 +152,30 @@ class Test装配:
         assert all(e.spec.kind is EvaluatorKind.PROXY_MODEL for e in assembly["proxies"])
 
     def test_装配随形态配置变化(self, dev_config_fragment, dev_config):
-        """形态参数进装配：条目数区间/标记区间/重复率上限不同 ⇒ 门禁版本或判定面随之变化。"""
+        """形态参数进装配：条目数区间/标记区间/重复率上限不同 ⇒ 门禁的**口径取值**随之变化。
+
+        021 裁决（2026-09-25）：装配面 `version` **只含实现身份**（形态/口径参数不进版本）
+        ⇒ 版本对两个形态**相同**；参数差异的承载面是**配置指纹**（`fingerprint_of`）与
+        实现侧自报版本（可事后指认，见下方断言）。
+        """
+        short_cfg = DevConfig.from_dict(dev_config_fragment(slate={"min": 5, "max": 10}))
         movie = build_dev_evaluators(dev_config)
-        short = build_dev_evaluators(
-            DevConfig.from_dict(dev_config_fragment(slate={"min": 5, "max": 10}))
-        )
-        assert [e.spec.version for e in short["gates"]] != [e.spec.version for e in movie["gates"]]
+        short = build_dev_evaluators(short_cfg)
+        # 实现身份版本与形态参数无关（声明版本因此稳定，参数调整不再打断整链装配）
+        assert [e.spec.version for e in short["gates"]] == [e.spec.version for e in movie["gates"]]
+        assert [e.spec.evaluator_id for e in short["gates"]] == [
+            e.spec.evaluator_id for e in movie["gates"]
+        ]
         assert short["proxies"][0].spec.version == movie["proxies"][0].spec.version
+        # 参数差异由**配置指纹**承载（形态参数进装配的机检面：指纹不同即参数确实不同）
+        assert fingerprint_of(str(short_cfg.slate_entries)) != fingerprint_of(
+            str(dev_config.slate_entries)
+        )
+        # 实现侧自报版本仍随口径参数变化（行为可事后指认，原则一）
+        assert (
+            SlateStructureEvaluator(slate_entries=short_cfg.slate_entries).spec.version
+            != SlateStructureEvaluator(slate_entries=dev_config.slate_entries).spec.version
+        )
 
     def test_权重键漂移即拒绝装配(self, dev_config_fragment):
         """021（C2）：一一对应校验由唯一装配点承担 ⇒ 报错类型为 `PluginAssemblyError`

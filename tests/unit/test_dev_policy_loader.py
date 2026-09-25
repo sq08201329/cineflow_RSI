@@ -30,10 +30,13 @@ from agents.dev.policy_loader import (
     load_deployed_policy,
     load_policy_text,
 )
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # 仓库引导树人工策略（谱系根，部署指针在形态配置 `deployment.dev.current_policy_version`）
 BOOTSTRAP_VERSION = "34525518074d"
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 
 # 合规策略（只做结构计算：静态检查白名单内，无环境对象）
 _VALID_SOURCE = '''\
@@ -211,7 +214,7 @@ class Policy:
 
 class Test部署指针与单一实现:
     def test_版本取形态配置部署指针(self, pilot_form_config_path):
-        for form in ("movie", "shortdrama"):
+        for form in FORMS:
             config_path = pilot_form_config_path(form)
             assert deployed_policy_version(config_path) == BOOTSTRAP_VERSION
             loaded = load_deployed_policy(config_path)

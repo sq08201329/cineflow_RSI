@@ -51,10 +51,13 @@ from core.calibration.transfer import (
     transfer_report,
 )
 from core.evaluators.errors import ValidationError
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHORTDRAMA = REPO_ROOT / "configs" / "shortdrama.yaml"
 MOVIE = REPO_ROOT / "configs" / "movie.yaml"
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 PERIOD = "2026-09-25"
 EVALUATOR_KEY = "judge.dramatic_tension@1.0.0"
 AGENT_ID = "screenplay"
@@ -531,7 +534,7 @@ class Test可比性条件配置化:
                 TransferConfig.from_dict({**section, "transfer": transfer})
 
     def test_两形态均须声明(self):
-        for name in ("movie", "shortdrama"):
+        for name in FORMS:
             config = CalibrationConfig.from_yaml(REPO_ROOT / "configs" / f"{name}.yaml")
             assert config.transfer.basis == "conclusion_only"
             assert config.transfer.adoption == "manual"
@@ -736,12 +739,14 @@ class Test迁移面CLI:
         code, out = _cli(["transfer-report", "--data-dir", str(data_dir)], capsys)
         assert code == 1 and "拒采信" in out["error"]
 
-    @pytest.mark.parametrize("form", ("movie", "shortdrama"))
+    @pytest.mark.parametrize("form", FORMS)
     def test_缺_transfer_任一键即退出二(self, form, tmp_path, capsys):
         payload = _section(form)
         payload["calibration"]["transfer"].pop("conditions")
         path = tmp_path / f"{form}.yaml"
         path.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+        # 目标形态 = 派生面里**另一个**形态的真实配置（不是固定两形态的特判）
+        other_form = next(name for name in FORMS if name != form)
         code, out = _cli(
             [
                 "transfer",
@@ -750,7 +755,7 @@ class Test迁移面CLI:
                 "--from",
                 str(path),
                 "--to",
-                str(MOVIE if form == "shortdrama" else SHORTDRAMA),
+                str(REPO_ROOT / "configs" / f"{other_form}.yaml"),
                 "--evaluator",
                 EVALUATOR_KEY,
                 "--period",

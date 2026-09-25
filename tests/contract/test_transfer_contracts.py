@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ops.form_guard import declared_forms
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHORTDRAMA = REPO_ROOT / "configs" / "shortdrama.yaml"
 MOVIE = REPO_ROOT / "configs" / "movie.yaml"
@@ -325,7 +327,7 @@ class TestC17CLI与退出码:
         code, out = _cli(["transfer-report", "--data-dir", str(data_dir)], capsys)
         assert code == 1 and "拒采信" in out["error"]
 
-    @pytest.mark.parametrize("form", ("shortdrama", "movie"))
+    @pytest.mark.parametrize("form", declared_forms(REPO_ROOT / "configs"))
     @pytest.mark.parametrize(
         "missing", ("basis", "source_forms", "target_forms", "conditions", "storage", "adoption")
     )
@@ -336,7 +338,9 @@ class TestC17CLI与退出码:
         payload["calibration"]["transfer"].pop(missing)
         path = tmp_path / f"{form}.yaml"
         path.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
-        other = SHORTDRAMA if form == "movie" else MOVIE
+        # 对照形态取派生面里**另一个**形态的真实配置（不是"另一形态"特判，也不是固定两形态）
+        other_form = next(name for name in declared_forms(REPO_ROOT / "configs") if name != form)
+        other = REPO_ROOT / "configs" / f"{other_form}.yaml"
         code, out = _cli(
             [
                 "transfer",

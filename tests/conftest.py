@@ -17,6 +17,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine
 
+from ops.form_guard import declared_forms
+
 
 @pytest.fixture()
 def sqlite_engine():
@@ -2851,7 +2853,9 @@ def deployment_history_root(tmp_path):
 # 全部为新增夹具，既有夹具行为不变；素材均为**合成内容**（不使用任何版权素材）。
 # ---------------------------------------------------------------------------
 
-PILOT_FORMS = ("movie", "shortdrama")
+# 形态 id 面（021 T2144）：由 `configs/*.yaml` 的 `form:` 派生（两两唯一）——零人工常量元组、
+# 新增一份形态配置即**自动**纳入（夹具层不再对新形态硬失败）
+PILOT_FORMS = declared_forms(REPO_ROOT / "configs")
 
 
 @pytest.fixture()
@@ -3053,23 +3057,43 @@ def pilot_materials(
 
 @pytest.fixture()
 def pilot_form_config_path(tmp_path):
-    """形态配置夹具：两形态都返回**派生副本**（账本根落 tmp），差异只在取哪份真实配置。
+    """形态配置夹具：**每个已声明形态**都返回该形态真实配置的**派生副本**（账本根落 tmp）。
 
-    返回工厂 `_path(form)` → Path。`movie` 用精简副本（只含加载器必需段 + form），证明"同链
-    双形态"不依赖仓库配置的具体取值；`shortdrama` 用真实的 `configs/shortdrama.yaml` 的派生
-    副本（**内容逐字保留，只改 `budget.ledger.root`**；配置完整性由 T1511 另行机检）——
-    真实试水链路会按配置落账本与运行记录，测试不得把运行期产物写进仓库。
+    返回工厂 `_path(form)` → Path。形态集合由派生面给出（`PILOT_FORMS`）⇒ 新增一份形态配置即
+    **自动**可用（不再硬失败）。除 `movie` 外，任意已声明形态取该形态真实配置的派生副本
+    （**内容逐字保留，只改 `budget.ledger.root`**；配置完整性由 T1511 另行机检）——真实试水链路
+    会按配置落账本与运行记录，测试不得把运行期产物写进仓库。`movie` 继续用**精简副本**：它是
+    "同链多形态"的形态**无关性**举证面（不依赖仓库配置的具体取值），不属形态枚举面。
+    **未声明**形态仍硬失败（`ValueError`）——派生面之外的形态就是未知形态，不做静默兜底。
     """
 
     def _path(form: str):
+        if form not in PILOT_FORMS:
+            # 派生面之外的形态就是**未知形态**（保留既有硬失败：不做静默兜底、不返回他人配置）
+            raise ValueError(f"未声明形态：{form!r}（已声明形态：{list(PILOT_FORMS)}）")
         target = tmp_path / f"configs/{form}.yaml"
         target.parent.mkdir(parents=True, exist_ok=True)
-        if form == "shortdrama":
-            source = (REPO_ROOT / "configs" / "shortdrama.yaml").read_text(encoding="utf-8")
-        elif form == "movie":
+        if form == "movie":
+            # `movie` 用**精简副本**：它是"形态**无关性**"的举证面（同链双形态不依赖仓库配置的
+            # 具体取值），不属形态枚举面 ⇒ 该职责保留（精简副本只含加载器必需段 + form）
             source = _MINIMAL_MOVIE_CONFIG
+            if "evaluators:" not in source:
+                # 021（C1/T2125）：内联精简副本必须补齐**插件声明面**（缺段 ⇒ 预检拒绝启动）；
+                # 声明面逐字取真实配置的 `evaluators.plugins` 结构，以**追加段**的方式拼上
+                # （原文字节一字不动——夹具下游有逐字文本断言，重排会被误判为"口径变了"）
+                import yaml
+
+                from tests.plugin_fixtures import reference_plugins
+
+                section = yaml.safe_dump(
+                    {"evaluators": {"plugins": reference_plugins()}},
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
+                source = f"{source.rstrip()}\n{section}"
         else:
-            raise ValueError(f"未知形态：{form!r}")
+            # 任意**已声明**形态 ⇒ 该形态**真实配置**的派生副本（内容逐字保留，只改账本根）
+            source = (REPO_ROOT / "configs" / f"{form}.yaml").read_text(encoding="utf-8")
         assert "root: billing" in source  # 派生点存在（口径变了即红，不静默落到仓库根）
         target.write_text(
             source.replace("root: billing", f"root: {tmp_path / 'billing'}"), encoding="utf-8"
@@ -3522,6 +3546,9 @@ web:
 budget:
   # 019 精简档：与真实配置**同键集**（渠道 id / 环节 id / 格式 id），取值压到夹具量级
   # （`thresholds_snapshot` 一类的取值差异由 T1923 的用例承担）。缺段即预检拒绝启动。
+  # 021（C11）：本夹具不登记投放渠道（`adapter: promo_platform`）⇒ 必须显式声明「不适用」
+  not_applicable:
+    channels: "本夹具不登记投放渠道（promo_platform 渠道只在短剧真实配置）⇒ 档位口径不适用"
   channels:
     llm:
       adapter: pilot_llm

@@ -39,7 +39,8 @@ from agents.storyboard.script import ScriptSegment
 from core.orchestration.dag import build_dag
 from core.orchestration.executor import ExecutionContext, run
 from core.orchestration.models import RunStatus, StageOutcome, StageSpec, StageStatus
-from ops.form_guard import form_branch_patterns, form_literals, violations_in
+from ops.form_guard import declared_forms, form_branch_patterns, form_literals, violations_in
+from ops.form_onboarding import pairwise_differences, pairwise_violations
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # 零形态分支的禁用面**唯一**来自守卫派生面（与 `tests/unit/test_form_switch.py` 同源）：
@@ -47,6 +48,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS_DIR = REPO_ROOT / "configs"
 FORM_LITERALS = form_literals(CONFIGS_DIR)
 FORM_PATTERNS = form_branch_patterns()
+# 形态 id 面（021 T2141）：逐对差异集的遍历面由派生面给出 ⇒ 新形态自动纳入
+FORMS = declared_forms(CONFIGS_DIR)
 
 
 class _Cfg:
@@ -452,9 +455,6 @@ class TestC10到C13试水运行:
             "screenplay",
             "calibration",
             "dreaming",
-            # 021：插件声明面按形态声明——`version` 为派生值（实现文件字节 + 该形态口径参数哈希）
-            # ⇒ 两形态该段结构相同但 `version` 逐形态不同，故并入顶层差异集（同 017 的 dev 登记）
-            "evaluators",
             # 014：deployment 段的抽检超期告警窗口按形态声明（运营节奏即形态，见下）
             "deployment",
             # 019：budget 段按形态声明（短剧额度更小、时间窗更短；键集本身两形态一致）
@@ -462,6 +462,9 @@ class TestC10到C13试水运行:
         }
         for key in ("web", "cost_regression"):
             assert movie[key] == short[key]
+        # 021：插件声明面**两形态逐字相同**（`version` = 实现身份版本，不含形态/口径参数；
+        # 形态与参数的变化由配置指纹 + 装配快照承载——裁决 2026-09-25）
+        assert movie["evaluators"] == short["evaluators"]
         # deployment 段：**唯一**按形态声明的键是 spot_check.pending_alert_days
         # （014 复核超期告警窗口——运营节奏即形态），其余逐字相同
         assert (
@@ -473,6 +476,19 @@ class TestC10到C13试水运行:
         short_normalized = json.loads(json.dumps(short["deployment"]))
         short_normalized["spot_check"].pop("pending_alert_days")
         assert normalized == short_normalized
+        # 021（T2141）：**逐对**形态断言——口径与 `tests/unit/test_form_switch.py` 的
+        # `test_逐对形态差异集非空且不含形态无关段` **逐字一致**（共用 `ops/form_onboarding.py`
+        # 的实现，不各写一份）：每一对形态的顶层差异集非空 ∧ 必含 `form` ∧ 必不含
+        # `web` / `cost_regression`（形态无关基建段逐字相同）
+        pairs = pairwise_differences(configs_dir=CONFIGS_DIR)
+        assert pairs, "派生面只有一个形态 ⇒ 逐对断言空跑"
+        for pair in pairs:
+            assert pairwise_violations(pair) == (), pairwise_violations(pair)
+            assert pair.differing, f"{pair.left} × {pair.right} 的顶层差异集必须非空"
+            for key in ("web", "cost_regression"):
+                assert key not in pair.differing, (
+                    f"{pair.left} × {pair.right}：形态无关基建段 {key} 必须逐字相同"
+                )
         # 代码侧零形态分支（core/ 与 agents/ 全量扫描）：禁用面与 `tests/unit/test_form_switch.py`
         # 的 `Test零形态分支静态断言` **同源**（都由 `ops/form_guard.py` 派生，逐字相等）
         offenders = []

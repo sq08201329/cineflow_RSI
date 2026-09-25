@@ -17,6 +17,7 @@ from core.llm_gateway.profiles import (
     migrate_legacy,
 )
 from core.llm_gateway.routing import Role, role_values
+from ops.form_guard import declared_forms
 
 
 class TestC1档案解析与校验:
@@ -111,13 +112,13 @@ class TestC3旧扁平迁移:
             migrate_legacy(llm_profiles_config_factory("legacy_missing_prices"))
 
     def test_仓库真实配置走新写法且档案齐备(self):
-        """形态配置（movie/shortdrama）必须自带 llm 段：档案、角色、默认档案三件齐备。"""
+        """**每份**形态配置必须自带 llm 段：档案、角色、默认档案三件齐备。"""
         import pathlib
 
         import yaml
 
         repo_root = pathlib.Path(__file__).resolve().parents[2]
-        for name in ("movie", "shortdrama"):
+        for name in declared_forms(repo_root / "configs"):
             payload = yaml.safe_load(
                 (repo_root / "configs" / f"{name}.yaml").read_text(encoding="utf-8")
             )

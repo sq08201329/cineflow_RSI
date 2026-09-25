@@ -25,11 +25,25 @@ from core.orchestration.models import (
     StageSpec,
     fingerprint_of,
 )
-from ops.form_guard import form_branch_patterns, form_literals, iter_sources, violations_in
+from ops.form_guard import (
+    declared_forms,
+    form_branch_patterns,
+    form_literals,
+    iter_sources,
+    violations_in,
+)
+from ops.form_onboarding import (
+    MIN_CONFIG_COUNT,
+    pairwise_differences,
+    pairwise_violations,
+    registration_completeness,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS_DIR = REPO_ROOT / "configs"
-FORMS = ("movie", "shortdrama")
+# 形态名**不是人工常量**：由 `configs/*.yaml` 的 `form:` 派生（id 面，两两唯一）
+# ⇒ 新增一份形态配置即**自动**纳入本文件的全部遍历面（新形态无法静默逃逸）
+FORMS = declared_forms(CONFIGS_DIR)
 
 # 同一条链读取的三个预算字段（形态差异的真实来源；阶段代码不认识形态）
 BUDGET_STAGES = (
@@ -143,13 +157,18 @@ class Test差异逐项可归因:
     形态差异的归因必须以真配置为准，夹具精简副本只用于同链双形态的运行验证。
     """
 
-    def _pair(self, form="shortdrama"):
-        movie = REPO_ROOT / "configs" / "movie.yaml"
-        short = REPO_ROOT / "configs" / f"{form}.yaml"
-        return (
-            yaml.safe_load(movie.read_text(encoding="utf-8")),
-            yaml.safe_load(short.read_text(encoding="utf-8")),
-        )
+    def _pair(self, left: str | None = None, right: str | None = None):
+        """形态对：两个形态名**一律取自派生面**（`declared_forms()`），零人工常量元组。
+
+        默认取派生面的首末两项——今天即 015 的对照对 `movie × shortdrama`；新增形态时
+        **每一对**形态的差异集另由 `test_逐对形态差异集非空且不含形态无关段` 覆盖（不靠此处）。
+        """
+        names = FORMS
+
+        def _load(form: str) -> dict:
+            return yaml.safe_load((CONFIGS_DIR / f"{form}.yaml").read_text(encoding="utf-8"))
+
+        return (_load(left or names[0]), _load(right or names[-1]))
 
     def test_权重与阈值差异(self):
         from core.evaluators.weights import load_evaluator_weights
@@ -354,9 +373,6 @@ class Test差异逐项可归因:
             "editing",
             "storyboard",
             "screenplay",
-            # 021：插件声明面按形态声明——`version` 是**派生值**（实现文件字节 + 该形态的
-            # 口径参数哈希），两形态的 30 条声明因此**逐形态不同**（结构/impl/params 相同）
-            "evaluators",
             # 017：开发段的选题约束按形态声明（条目数区间/组合约束/标记数/模拟源参数）
             "dev",
             # 018：pilot 段按形态声明体量档（场景数/每场景行数/排练档取值/性能阈值状态）——
@@ -372,16 +388,38 @@ class Test差异逐项可归因:
             # 遍历 evaluator_weights 的七个 Agent，budget 段不属其中，故不并入）
             "budget",
         }
-        # 形态无关基建段逐字相同（web / cost_regression 不因形态而变）；
+        # 形态无关基建段逐字相同（web / cost_regression 不因形态而变）；`evaluators`
+        # 段同样**逐字相同**（021：`version` = 实现身份版本，不含形态/口径参数
+        # ⇒ 声明面不随形态变；裁决 2026-09-25 修正 A1 的"参数进版本"口径）；
         # deployment 段**唯一**按形态声明的键是 `spot_check.pending_alert_days`
         # （014 复核超期告警窗口：运营节奏即形态——短剧投放密集，复核窗口更短），
         # 其余逐字相同（该键的取值口径另由 test_deployment_config 的用例守住）
         for key in ("web", "cost_regression"):
             assert movie[key] == short[key]
+        # 021：插件声明面**两形态逐字相同**（`version` = 实现身份版本，不含形态/口径参数；
+        # 形态与参数的变化由配置指纹 + 装配快照承载，不靠版本号——裁决 2026-09-25）
+        assert movie["evaluators"] == short["evaluators"]
         assert (
             movie["deployment"]["spot_check"]["pending_alert_days"]
             != short["deployment"]["spot_check"]["pending_alert_days"]
         )
+
+    def test_逐对形态差异集非空且不含形态无关段(self):
+        """**每一对**形态的顶层差异集（T2138 新增的常驻断言，口径与 T2141 逐字一致）。
+
+        形态名由派生面给出 ⇒ 新形态自动进入其遍历面（静默逃逸消除）；口径（非空 ∧ 必含
+        `form` ∧ 必不含 `web`/`cost_regression`）与 `tests/contract/test_pilot_contracts.py`
+        的同一断言**共用 `ops/form_onboarding.py` 的实现**（不各写一份）。
+        """
+        pairs = pairwise_differences(configs_dir=CONFIGS_DIR)
+        assert pairs, "派生面只有一个形态 ⇒ 逐对断言空跑"
+        for pair in pairs:
+            assert pairwise_violations(pair) == (), pairwise_violations(pair)
+            assert pair.differing, f"{pair.left} × {pair.right} 的顶层差异集必须非空"
+            for key in ("web", "cost_regression"):
+                assert key not in pair.differing, (
+                    f"{pair.left} × {pair.right}：形态无关基建段 {key} 必须逐字相同"
+                )
 
     def test_020新增取值差异登记(self):
         """T2067①：020 新增的**取值差异**逐键登记（顶层差异集本身不含新段，故另立用例守住）。
@@ -391,7 +429,10 @@ class Test差异逐项可归因:
         - `budget.channels` 的**投放渠道条目仅短剧态**（movie 不登记投放渠道 ⇒ 该路径不因
           投放渠道或其凭证而失败）；同一档位不得跨渠道串用。
         """
-        movie, short = self._pair()
+        # 本条登记的是**这两个形态**（015/020 对照对）的既有取值事实：按形态名取各自真实配置，
+        # 不经"派生面的首末两项"（那般取值在新增形态后会漂移，这条登记事实会跟着漂）
+        movie = yaml.safe_load((CONFIGS_DIR / "movie.yaml").read_text(encoding="utf-8"))
+        short = yaml.safe_load((CONFIGS_DIR / "shortdrama.yaml").read_text(encoding="utf-8"))
         assert short["budget"]["runs"]["min_window_days"] == 14
         assert movie["budget"]["runs"]["min_window_days"] == 7
         assert movie["budget"]["runs"]["gap_tolerance_days"] == 0  # 容差保持现值（开放问题）
@@ -445,9 +486,24 @@ class Test零形态分支静态断言:
                 assert banned not in source, f"{path} 不得出现形态判断：{banned}"
 
     def test_形态切换只经配置文件(self):
-        """形态以配置文件为唯一载体：两套配置存在即两个形态，代码侧无形态枚举/映射表。"""
-        configs = sorted(path.name for path in (REPO_ROOT / "configs").glob("*.yaml"))
-        assert configs == ["movie.yaml", "shortdrama.yaml"]
+        """形态以配置文件为唯一载体（**登记完备**口径，替代"恰好两份"；禁止删除）。
+
+        原断言（`configs == ["movie.yaml", "shortdrama.yaml"]`）的**原意**完整保留——"形态以
+        配置文件为唯一载体、代码侧无形态枚举/映射表"——只是把"数量形状"换成"结构形状"（C10）：
+
+        ① 每份 `configs/*.yaml` 的 `form:` 取值**两两唯一**（唯一数 == 配置文件数）；
+        ② 五处登记点的形态集合 ⊆ 派生形态集（**双向相等**，缺项即逐处点名）；
+        ③ 配置数 **≥ 2**（下界**保留**、**不得**提到 3——那会把"机制可用"与本次接入的形态
+        数量耦合，违反 FR-013 的机制/接入分离）。
+
+        "代码侧无形态枚举/映射表"由 ①+② 与 `ops/form_onboarding.py` 的反向扫描
+        （`tests/unit/test_form_registration.py`）**共同**承载：强度只增不减。三条并列断言
+        一律用 **id 面** `declared_forms()`（中文别名不进登记面）。
+        """
+        report = registration_completeness(configs_dir=CONFIGS_DIR)
+        assert report.unique, "① 每份 configs/*.yaml 的 form: 取值必须两两唯一"
+        assert report.registered_matches, report.violations()
+        assert report.at_least_two, f"③ 配置数必须 ≥ {MIN_CONFIG_COUNT}（下界保留）"
 
     def test_渠道解析不得出现形态字面量或形态判断(self):
         """T2077②′（C-02 守卫面落差补齐）：本特性在 `agents/pilot/backends.py` 新增渠道解析，

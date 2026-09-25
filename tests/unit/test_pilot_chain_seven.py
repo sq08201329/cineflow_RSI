@@ -45,10 +45,13 @@ from agents.pilot.stages import (
 from core.orchestration.dag import build_dag
 from core.orchestration.errors import OrchestrationError, StageFailedError
 from core.orchestration.models import RunStatus, StageStatus
+from ops.form_guard import declared_forms
 
 FORM = "shortdrama"
 FIXED_TIMESTAMP = "2026-01-01T00:00:00+00:00"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 # 链首插入后的拓扑序（契约 C1 的字面量：本文件独立声明，不复用实现常量）
 SEVEN = ("dev", "script", "storyboard", "visual", "sound", "editing", "promo")
 # 环节 id → 该环节对应的 Agent loop 模块（树前缀实测的对照面）
@@ -77,7 +80,7 @@ def runtime(pilot_form_config_path, pilot_dirs, tmp_path):
 def tiers(tmp_path):
     """两形态 `budget.tiers` 键集（调用点声明的环节 id 必须逐一声明额度）。"""
     keys: set[str] = set()
-    for form in ("movie", "shortdrama"):
+    for form in FORMS:
         payload = yaml.safe_load((REPO_ROOT / "configs" / f"{form}.yaml").read_text("utf-8"))
         # 020（C11）：档位在**渠道内** —— 取各渠道 `channels.<id>.tiers` 的键并集
         for channel in payload["budget"]["channels"].values():
@@ -119,6 +122,10 @@ class Test清单同步不变量:
         from core.evaluators.weights import load_evaluator_weights
 
         checked = config_completeness(pilot_form_config_path(FORM))
+        # 021（T2142/T2143）：返回段清单**扩展**两项——插件声明面（`evaluators`）与 020 口径
+        # 逐项机检（`form_clauses`）；既有项一个不少（下方逐环节断言即既有项的守卫）
+        assert "evaluators" in checked, "插件声明面（evaluators 段）未登记加载器"
+        assert "form_clauses" in checked, "020 口径逐项机检（form_clauses）未入预检清单"
         # 每条链上环节的配置段名（`script → screenplay`）都必须有加载器与权重登记
         for stage_id in SEVEN:
             section = STAGE_CONFIG_SECTION[stage_id]

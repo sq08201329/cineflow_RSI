@@ -35,8 +35,11 @@ from agents.pilot.pilot import (
     precheck,
     run_pilot,
 )
+from ops.form_guard import declared_forms
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# 形态 id 面（021 T2146）：由 `configs/*.yaml` 的 `form:` 派生 ⇒ 新增形态自动进入遍历面
+FORMS = declared_forms(REPO_ROOT / "configs")
 MANIFEST = REPO_ROOT / "docs" / "pilot-upgrade-manifest.json"
 
 from tests.conftest import declared_profile_variables  # noqa: E402 - 功能 016 同源助手
@@ -549,7 +552,7 @@ class Test清单切换口径与代码一致:
         import yaml
 
         mechanism = self._mechanism()
-        for name in ("movie", "shortdrama"):
+        for name in FORMS:
             payload = yaml.safe_load(
                 (REPO_ROOT / "configs" / f"{name}.yaml").read_text(encoding="utf-8")
             )
