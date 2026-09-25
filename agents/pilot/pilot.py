@@ -402,6 +402,9 @@ def config_completeness(config_path: str | Path) -> tuple[str, ...]:
         ("pooling", lambda: PoolingConfig.from_yaml(path)),
         ("dreaming", lambda: DreamConfig.from_yaml(path)),
         ("calibration", lambda: CalibrationConfig.from_yaml(path)),
+        # 020：迁移口径与可比性条件（`calibration.transfer` 六键齐备；缺项即拒绝启动——
+        # `CalibrationConfig` 已必需读取，此处**显式登记**使预检清单与契约 C15/C17 一一对应）
+        ("transfer", lambda: CalibrationConfig.from_yaml(path).transfer),
         ("drift", lambda: DriftConfig.from_yaml(path)),
         ("deployment", lambda: DeploymentConfig.from_yaml(path)),
         # 019：预算门禁的档位声明（缺段/缺档即拒绝启动——"忘记声明额度"不得悄悄跑通）

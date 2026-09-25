@@ -377,6 +377,33 @@ class Test差异逐项可归因:
             movie["deployment"]["spot_check"]["pending_alert_days"]
             != short["deployment"]["spot_check"]["pending_alert_days"]
         )
+
+    def test_020新增取值差异登记(self):
+        """T2067①：020 新增的**取值差异**逐键登记（顶层差异集本身不含新段，故另立用例守住）。
+
+        - 短剧态 `budget.runs.min_window_days: 14`（= 立项书 G4 验收原文"真实数据回流 ≥2 周"，
+          不是发明数字）vs 电影态 **7**（C 路径属短剧线，改电影态属越界，故保持零改动）；
+        - `budget.channels` 的**投放渠道条目仅短剧态**（movie 不登记投放渠道 ⇒ 该路径不因
+          投放渠道或其凭证而失败）；同一档位不得跨渠道串用。
+        """
+        movie, short = self._pair()
+        assert short["budget"]["runs"]["min_window_days"] == 14
+        assert movie["budget"]["runs"]["min_window_days"] == 7
+        assert movie["budget"]["runs"]["gap_tolerance_days"] == 0  # 容差保持现值（开放问题）
+
+        short_channels = short["budget"]["channels"]
+        movie_channels = movie["budget"]["channels"]
+        assert set(movie_channels) < set(short_channels), "投放渠道条目仅短剧态"
+        assert len(movie_channels) == 1
+        media_ids = set(short_channels) - set(movie_channels)
+        assert len(media_ids) == 1
+        media_key = next(iter(media_ids))
+        for key, spec in short_channels.items():
+            assert spec["tiers"], f"channels.{key} 必须带非空 tiers"
+            if key != media_key:
+                assert set(spec["tiers"]).isdisjoint(short_channels[media_key]["tiers"]), (
+                    "同一档位不得跨渠道串用"
+                )
         assert _without_cadence(movie["deployment"]) == _without_cadence(short["deployment"])
 
 
@@ -412,6 +439,26 @@ class Test零形态分支静态断言:
         """形态以配置文件为唯一载体：两套配置存在即两个形态，代码侧无形态枚举/映射表。"""
         configs = sorted(path.name for path in (REPO_ROOT / "configs").glob("*.yaml"))
         assert configs == ["movie.yaml", "shortdrama.yaml"]
+
+    def test_渠道解析不得出现形态字面量或形态判断(self):
+        """T2077②′（C-02 守卫面落差补齐）：本特性在 `agents/pilot/backends.py` 新增渠道解析，
+        而上面的字面量扫描面**显式排除 `agents/pilot`** ⇒ 此处**新增**断言补齐：
+
+        渠道解析路径（`channel_for_adapter(cfg, <装配引用>)`）**不得**按形态取值分支，
+        也不得出现形态字面量——渠道来自配置声明的 `budget.channels.*.adapter`。
+        """
+        path = REPO_ROOT / "agents" / "pilot" / "backends.py"
+        source = path.read_text(encoding="utf-8")
+        lines = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if "channel_for_adapter" in line or "declared_channels" in line
+        ]
+        assert lines, "渠道解析调用点必须仍在本文件（否则本断言空跑）"
+        for banned in self.BANNED_LITERALS:
+            assert banned not in source, f"{path} 不得出现形态字面量：{banned}"
+        for banned in self.BANNED_PATTERNS:
+            assert banned not in source, f"{path} 不得出现形态判断：{banned}"
 
 
 @pytest.mark.parametrize("form", FORMS)

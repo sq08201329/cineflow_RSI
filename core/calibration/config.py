@@ -5,6 +5,13 @@
 - plan 外增补的独立模块：避免 core/evaluators/weights.py 承担非权重配置；
 - self_pairing_exclusions 以防自循环配对的显式声明（research 决策 4），
   读出后归一为 {来源: 排除分量元组} 的不可变形态。
+
+功能 020 新增两件**必需读取**（缺项即报错、不取码内默认，FR-014）：
+
+- `calibration.window_semantics` / `window_semantics_change_date`（半开窗口口径与生效日）；
+- `calibration.transfer.{basis, source_forms, target_forms, conditions, storage, adoption}`
+  （校准结论迁移的可比性条件配置化，契约 C15）——`conditions` 的**键集 = 判定项清单**，
+  键必须 ∈ `TRANSFER_CONDITION_IDS`（判定实现单点在 `core/calibration/transfer.py`）。
 """
 
 from dataclasses import dataclass, field
@@ -17,6 +24,122 @@ from core.calibration.errors import CalibrationConfigError
 from core.calibration.periods import WINDOW_SEMANTICS
 
 _INT_FIELDS = ("period_days", "top_k", "min_samples")
+
+#: 迁移口径取值域（单元素：只迁结论，不迁权重）
+TRANSFER_BASIS = "conclusion_only"
+
+#: 采纳方式取值域（单元素：人工两键，无自动采纳路径）
+TRANSFER_ADOPTION = "manual"
+
+#: 可比性条件 id 取值域（**键集 = 判定项清单**；实现单点在 `core/calibration/transfer.py`）。
+#: 五类覆盖：评估器登记（版本冻结）/ 样本量下限 / 判定口径哈希 / 周期量纲明确 / 真实来源。
+TRANSFER_CONDITION_IDS = (
+    "evaluator_registered",
+    "min_samples",
+    "detector_version_match",
+    "cadence_conversion",
+    "real_coverage_days",
+    "reliability_floor",
+    "max_abs_mean_shift",
+    "require_drift_pass",
+)
+
+
+@dataclass(frozen=True)
+class TransferConfig:
+    """`calibration.transfer` 段配置（迁移口径 + 可比性条件 + 存储与采纳方式）。"""
+
+    basis: str
+    source_forms: tuple[str, ...]
+    target_forms: tuple[str, ...]
+    conditions: dict
+    storage_dir: str
+    adoption: str
+
+    @classmethod
+    def from_dict(cls, section: dict) -> "TransferConfig":
+        if not isinstance(section, dict) or not isinstance(section.get("transfer"), dict):
+            raise CalibrationConfigError("calibration 缺少配置项 'transfer'（映射）")
+        transfer = section["transfer"]
+
+        def req(key):
+            if key not in transfer:
+                raise CalibrationConfigError(f"calibration.transfer 缺少配置项 {key!r}")
+            return transfer[key]
+
+        basis = req("basis")
+        if basis != TRANSFER_BASIS:
+            raise CalibrationConfigError(
+                "calibration.transfer.basis 取值域单元素"
+                f"（唯一取值 {TRANSFER_BASIS!r}：只迁结论、不迁权重），实际为 {basis!r}"
+            )
+        adoption = req("adoption")
+        if adoption != TRANSFER_ADOPTION:
+            raise CalibrationConfigError(
+                "calibration.transfer.adoption 取值域单元素"
+                f"（唯一取值 {TRANSFER_ADOPTION!r}：人工两键，无自动采纳路径），实际为 {adoption!r}"
+            )
+        forms = {}
+        for key in ("source_forms", "target_forms"):
+            raw = req(key)
+            if (
+                not isinstance(raw, list)
+                or not raw
+                or any(not isinstance(item, str) or not item for item in raw)
+            ):
+                raise CalibrationConfigError(
+                    f"calibration.transfer.{key} 必须为非空字符串列表，实际为 {raw!r}"
+                )
+            forms[key] = tuple(raw)
+
+        conditions = req("conditions")
+        if not isinstance(conditions, dict) or not conditions:
+            raise CalibrationConfigError(
+                "calibration.transfer.conditions 必须为非空映射"
+                "（键集 = 判定项清单，缺项即报错、不取码内默认）"
+            )
+        unknown = [key for key in conditions if key not in TRANSFER_CONDITION_IDS]
+        if unknown:
+            raise CalibrationConfigError(
+                f"calibration.transfer.conditions 含未实现的判定项 {sorted(unknown)}"
+                f"（取值域 {TRANSFER_CONDITION_IDS}）"
+            )
+        for key, value in conditions.items():
+            if value is None or isinstance(value, (dict, list)):
+                raise CalibrationConfigError(
+                    f"calibration.transfer.conditions.{key} 必须为标量（数值/布尔/字符串），"
+                    f"实际为 {value!r}"
+                )
+
+        storage = req("storage")
+        if not isinstance(storage, dict) or "dir" not in storage:
+            raise CalibrationConfigError(
+                "calibration.transfer.storage 必须为映射且带 dir（append-only 目录）"
+            )
+        storage_dir = storage["dir"]
+        if not isinstance(storage_dir, str) or not storage_dir.strip():
+            raise CalibrationConfigError(
+                f"calibration.transfer.storage.dir 必须为非空字符串，实际为 {storage_dir!r}"
+            )
+        if Path(storage_dir).is_absolute() or ".." in Path(storage_dir).parts:
+            raise CalibrationConfigError(
+                f"calibration.transfer.storage.dir 必须是 data_dir 下的相对目录名，"
+                f"实际为 {storage_dir!r}"
+            )
+        if Path(storage_dir).name != storage_dir:
+            raise CalibrationConfigError(
+                f"calibration.transfer.storage.dir 必须是单一目录名（不含路径分隔符），"
+                f"实际为 {storage_dir!r}"
+            )
+
+        return cls(
+            basis=basis,
+            source_forms=forms["source_forms"],
+            target_forms=forms["target_forms"],
+            conditions=dict(conditions),
+            storage_dir=storage_dir,
+            adoption=adoption,
+        )
 
 
 @dataclass(frozen=True)
@@ -31,6 +154,7 @@ class CalibrationConfig:
     ridge_lambda: float
     window_semantics: str  # 窗口口径（取值域单元素 half_open；缺项即报错，不取码内默认）
     window_semantics_change_date: str  # 口径生效日（ISO 日期；缺项即报错）
+    transfer: TransferConfig  # 校准结论迁移口径与可比性条件（020；缺项即报错）
     self_pairing_exclusions: dict = field(default_factory=dict)
 
     @classmethod
@@ -132,6 +256,7 @@ class CalibrationConfig:
             ridge_lambda=float(ridge_lambda),
             window_semantics=window_semantics,
             window_semantics_change_date=normalized_change_date,
+            transfer=TransferConfig.from_dict(section),
             self_pairing_exclusions=exclusions,
         )
 

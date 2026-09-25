@@ -267,6 +267,9 @@ REAL_ASSEMBLY_POINTS = ("agents/pilot/backends.py", "ops/smoke_llm.py")
 # ① 离线装配豁免清单常驻：显式 `spend_guard=None`（新增一处即红）
 OFFLINE_ASSEMBLIES = (
     "ops/demo_dev_loop.py",
+    # 020：本特性的离线端到端演示只在"按轮上限"那条腿上建 Mock 网关（mock 生成、零扣费、
+    # 显式 spend_guard=None）；投放面走 RecordingChannelCall 的门禁（真守卫在投放渠道侧）。
+    "ops/demo_shortdrama_feedback.py",
     "ops/demo_editing_loop.py",
     "ops/demo_promo_loop.py",
     "ops/demo_screenplay_loop.py",
@@ -351,7 +354,9 @@ class Test门禁注入两层断言:
 
     def test_构造点普查面有效(self):
         sites = _gateway_constructions()
-        assert len(sites) == 13, [(site["path"], site["line"]) for site in sites]
+        # 13 = 019 基线；020 新增 1 处（`ops/demo_shortdrama_feedback.py` 的 Mock 网关，
+        # 已登记进 OFFLINE_ASSEMBLIES）⇒ **新增未登记构造点即红**的牙齿不变
+        assert len(sites) == 14, [(site["path"], site["line"]) for site in sites]
         assert sorted({site["path"] for site in sites}) == sorted(
             [*REAL_ASSEMBLY_POINTS, *OFFLINE_ASSEMBLIES, *OFFLINE_GUARDED_ASSEMBLIES]
         )

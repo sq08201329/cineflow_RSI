@@ -410,6 +410,21 @@ calibration:
   ridge_lambda: 1.0 # 约束岭回归向现权重收缩的强度
   self_pairing_exclusions: # 防自循环：平台真值锚点不与自身来源分量配对
     platform_truth: ["human.platform_metrics"]
+  transfer: # 校准结论迁移（020 / C15）：**只迁结论、不迁权重**；可比性条件在此声明
+    basis: conclusion_only # 取值域单元素：只迁结论（权重再拟合仍走 010 的提案 → 人工确认）
+    source_forms: [shortdrama] # 允许的来源形态（短剧线）
+    target_forms: [movie] # 允许的目标形态（回灌电影线作先验）
+    conditions: # **键集 = 判定项清单**：缺一项即拒绝（不取码内默认）；判定实现单点在 core
+      evaluator_registered: true # 目标形态须登记同 id 同 version 的评估器（版本冻结，原则一）
+      min_samples: 30 # 来源周期样本量下限（样本不足 ⇒ 不可迁移）
+      detector_version_match: true # 两形态判定口径一致（如漂移 detector_version；量纲差异须由换算口径承接）
+      cadence_conversion: "日级来源按 ISO 周聚合后再与周级目标比较（显式换算口径）" # 空串 ⇒ 未声明 ⇒ 不可迁移
+      real_coverage_days: 14 # 来源**真实**覆盖天数下限（只计 source=real；模拟回流不得迁移）
+      reliability_floor: 0.6 # 来源信度下限（kendall_tau / pearson_r 取非空者）
+      max_abs_mean_shift: 0.05 # 来源偏差幅度上限
+      require_drift_pass: true # 来源漂移状态必须 pass（012 口径：verdict == normal）
+    storage: {dir: transfers} # append-only 目录（相对 data_dir；与 proposals/ 并列）
+    adoption: manual # 取值域单元素：人工两键（提案 → 人工采纳/搁置），无自动采纳路径
   drift: # judge 漂移自动检测（功能 012 F7）：滑动窗口基线 + PSI/分位数偏移双维判定
     window: 3 # 滑动窗口基线周期数（**单位 = cadence 同量纲**：日级 = 3 天、周级 = 3 周）
     buckets: 10 # 分桶数（[0,1] 等宽；须与 010 快照分桶数一致，缺/错即报错）
@@ -640,7 +655,7 @@ budget:
     root: billing # 产物根（相对仓库根；绝对路径原样使用）
     lock_timeout_seconds: 5.0 # 锁超时 ⇒ 拒绝调用（不无锁写、不静默放行）
   runs: # 运行记录窗口机检（覆盖 + 连续双条件）
-    min_window_days: 7 # 覆盖下限（≥1 周里程碑）
+    min_window_days: 14 # 覆盖下限（= 立项书 G4 验收原文"短剧线真实数据回流 ≥2 周"，**不是发明数字**）
     gap_tolerance_days: 0 # 断档容差（0 = 不容断档；缺口如实列出、不插值）
 
 pilot:

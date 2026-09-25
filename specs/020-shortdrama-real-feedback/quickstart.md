@@ -164,8 +164,39 @@ uv run python ops/billing.py alert-check --channel media --config configs/shortd
   `"tests/contract/test_billing_contracts.py::Test对抗与篡改面::test_缺档与渠道不符即配置错误" -q` → **2 passed**
   ——即 C13 清单里 `--channel nope ⇒ 2`、`--channel ghost ⇒ 2 且错误含「不一致」` 两条**今天为绿**，
   本特性对它们的要求是**保留**（见 `contracts/channel-budget.md` C13）。
-- **待实现落地后回填**：B 组全部命令（`test_billing_channels.py` / `test_calibration_transfer.py` /
-  `ops/demo_shortdrama_feedback.py` / `ops/transfer.py` 均为本特性新增面）。本文**不预填**
-  未跑的结论——落地后按 A→B 顺序复跑并把退出码、用例数、demo 用时逐条回填（镜像 019 quickstart 的回填格式）。
-- **运营侧（非本特性可交付）**：真实平台凭证、真实预算档数字、合规审查完成判据、「≥2 周」起算日——
-  属运营侧输入（`spec.md` 开放问题 1~4）；未标定期间如实标注"未标定"，不得发明。
+- **已实跑（020 实现落地后复跑，2026-09-25，本仓）**：
+  - **B1 单测子集**：`uv run pytest tests/unit/test_billing_channels.py -q` → **23 passed**（13.26s）；
+    `uv run pytest tests/unit/test_calibration_transfer.py -q` → **54 passed**（21.39s）；
+    `uv run pytest tests/unit/test_form_switch.py -q` → **17 passed**（8.22s）；本批自检的六文件子集
+    （`test_calibration_transfer` / `test_form_switch` / `test_config_integrity` / `test_period_cadence` /
+    `test_billing_channels` / `test_promo_daily_ingest`）→ **270 passed**（70.65s）。
+  - **B2 契约子集**：`uv run pytest tests/contract/test_calibration_contracts.py tests/contract/test_billing_contracts.py
+    tests/contract/test_pilot_contracts.py tests/contract/test_transfer_contracts.py -q` → **108 passed**（97.73s，退出码 0）
+    ——用例数**不减**（010 契约 17 → **19**：新增 T2016 的两条日级运转用例；019 契约 41；018 契约 25；
+    新增迁移面契约 23），**零断言删除、零放宽**（`test_calibration_contracts.py` 既有周级用例一字不改，
+    仅补足新增必需配置键 `calibration.transfer`）。
+  - **B3 离线端到端演示**：`uv run python ops/demo_shortdrama_feedback.py` → **退出码 0**，七步全 ok
+    （`ok=true`，`elapsed_seconds≈7.6`，`network=none`，`credentials_required=false`；步⑦ 机检到
+    **真实覆盖天数 = 0**、结论「机制已就绪 / 真实回流待运营」）。
+  - **B4 两形态渠道对照**：`uv run python ops/billing.py channels --config configs/shortdrama.yaml` → **退出码 0**
+    （声明渠道 `llm` + `media`，`adapter` = `pilot_llm` / `promo_platform`，含凭证矩阵与每渠道账本路径）；
+    `--config configs/movie.yaml` → **退出码 0**（仅 `llm`，**不出现投放渠道行**）；
+    `uv run python ops/billing.py tiers --channel media --config configs/shortdrama.yaml` → **退出码 0**。
+  - **B5 迁移面四命令**：`uv run python ops/transfer.py transfer --dry-run` → **零落盘**（目录文件集合前后相等；
+    有来源夹具时退出码 0 且判定 `transferable`，无来源时退出码 1 并如实标注）；非 dry-run 落件 ⇒ 同键重产
+    **退出码 1**；`transfer-confirm` → **退出码 0** 且 `weights_changed=false`、已确认件再 `transfer-shelve`
+    → **退出码 1**（终态不可逆）；`transfer-report --data-dir <dir>` 无来源时 → **退出码 0** 且含
+    「无可迁移结论（来源缺失）」；缺 `calibration.transfer` 任一键（两形态配置文件各验一次）→ **退出码 2**。
+  - **静态检查**：`uv run ruff check .` → **All checks passed**；`uv run ruff format --check .` → **585 files already formatted**。
+- **待运营项（如实留白，按 C18 口径标注，不预填未跑结论）**：
+  ① **真实平台凭证**（`PROMO_PLATFORM_BASE_URL` / `PROMO_PLATFORM_API_KEY`）与真实账户未到位 ⇒ C 路径
+  `status` 保持 `not_delivered`（机制已交付、真实凭证/账户/预算未到位）；
+  ② **真实预算档数字**与投放环节档位取值未标定（未标定期间按最小规模档运行并在 `note` 标注）；
+  ③ **合规审查完成判据**未定（业务判定；未定前**不得**扩量）；
+  ④ **「≥2 周」起算日**：短剧态 `budget.runs.min_window_days: 14` 已就位（= 立项书 G4 验收原文），
+  但真实覆盖天数的起算依赖凭证到位与投放启动日期 ⇒ `uv run python ops/billing.py runs --channel media
+  --window-days 14 --config configs/shortdrama.yaml` 在真实窗口积累前**必然退出码 1 并逐段报出缺口**
+  （这是如实结果，不是失败）；
+  ⑤ ⑥ 的 **B6 投放渠道账单对账**（`import-bill` / `reconcile` / `alert-check --channel media`）的**完整两条腿**
+  与真实渠道口径由父代理在宿主机执行（本仓已由 `tests/unit/test_billing_channels.py` 的
+  `Test投放渠道账单对账` 用例覆盖：六类差异齐备 + 未解释项告警 + 报告必引账单批次 + 同批次幂等 + 未识别格式零落盘）。

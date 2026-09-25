@@ -511,6 +511,71 @@ uv run python ops/billing.py runs        --channel llm --window-days 7
 - **不做**：`Decimal` 金额重构（沿用 float + 容差二分）、自动比价路由与汇率引擎、`CostRecord` 增列
   角色/档案（走报告层，历史节点不可按角色/档案回溯，如实登记）、web 侧写入与 billing 看板（前端只读）。
 
+## 短剧形态的真实投放与日级回流（功能 020）
+
+把"日级只在配置里"变成**真的按日运转**，并把 C 路径投放接进 019 的同一套门禁；再把短剧线积累的
+评估器校准结论按**显式声明的可比性条件**回灌电影线作先验（**只迁结论、不迁权重**）。
+门禁与账单面的权威口径见 [真实渠道与账单对账（功能 019）](#真实渠道与账单对账功能-019)；
+短剧形态的模拟生成边界见 [短剧形态试水作品（功能 015）](#短剧形态试水作品功能-015)。
+
+- **周期量纲由 cadence 派生**（`calibration.period_days`）：日级 ⇒ `YYYY-MM-DD`、周级 ⇒ ISO 周；
+  口径唯一实现落在业务无关的 `core/calibration/periods.py`（周级标签**逐字节不变**）；
+  窗口统一**半开** `[start, start + period_days)`（`end - start == period_days` 机检），
+  窗口口径与生效日**进产物**（`window_semantics` / `period_days` / `note`），跨口径变更日的比较必须标注；
+- **日级回流**（`agents/promo/daily.py` + 新表 `promo_daily_metrics`）：按**归属日**（平台显式给出的
+  `metric_date`，缺失即**显式失败**、不以采集时刻兜底）分片，唯一性键 =（活动, 周期）；
+  同一活动跨多日各采一次**合法且零覆盖**，同（活动, 周期）重复采集**幂等拒绝**；
+  锚点写入即冻结（INSERT-only 触发器），覆盖判定**只计 `source=real`**、断档**逐段如实列出、不插值**；
+- **归属日 / 采集墙钟 / 平台时间戳**三者在日级覆盖视图 `days[]` 里**并列可见**（齐备率 100%）；
+- **渠道命名空间**（019 的兼容性扩展）：`budget.channels.<id>.tiers.<环节>` + `declared_channels` /
+  `channel_for_adapter` / `tiers_of` / `tier_of`；`sole_channel()` 的硬拒绝退役为"按声明渠道集合分派"，
+  **旧扁平 `tiers` 仍可读并显式归一**（多渠道 + 扁平 ⇒ 报错，不静默误判）；同一档位不得跨渠道串用；
+- **投放受同一门禁**：投放调用走 `core/billing/runlog.py` 的 `RecordingChannelCall`（投放面**唯一**
+  包装点）——超限**调用前拒绝、平台 0 次调用、零入账**；与 015 进程内**按轮上限**两腿同时生效且
+  **口径可分辨**；声明真实而 `PROMO_PLATFORM_*` 缺失 ⇒ **装配期拒绝启动**，绝不静默回落模拟；
+- **校准结论迁移**（`core/calibration/transfer.py` + 独立脚本 `ops/transfer.py`）：迁移件 append-only
+  （`calibration/transfers/{transfer_id}.json`，同键重产拒绝、系统字段改写即 `system_digest` 校验失败），
+  可比性条件**由配置声明**（`calibration.transfer.conditions`，缺项即报错），不可比 ⇒ **拒绝迁移并逐条
+  记原因**；采纳走**人工两键**（`transfer-confirm` / `transfer-shelve`），**不改变任何既有节点的
+  `eval_breakdown` 与得分**、**不自动改权重**（权重再拟合仍走 010 的提案 → 人工确认）。
+
+```bash
+# 单元面（周期量纲/半开窗口/归属日/日级分片/漂移量纲/渠道命名空间/投放门禁/迁移件/两形态差异）
+uv run pytest tests/unit/test_period_cadence.py tests/unit/test_promo_daily_ingest.py \
+               tests/unit/test_billing_channels.py tests/unit/test_calibration_transfer.py -q
+# 契约面（010 周级机检保持绿 + 迁移面 C15/C17 + 019 既有断言）—— 与功能 019 的契约面同一入口
+uv run pytest tests/contract/test_calibration_contracts.py tests/contract/test_transfer_contracts.py -q
+uv run pytest tests/contract/test_billing_contracts.py -q
+
+# 离线端到端演示（七步；零真实花费、零外部网络、零凭证）
+uv run python ops/demo_shortdrama_feedback.py
+
+# 两形态渠道面与迁移面
+uv run python ops/billing.py channels --config configs/shortdrama.yaml   # llm + media（含量矩阵）
+uv run python ops/billing.py channels --config configs/movie.yaml        # 仅 llm（不登记投放渠道）
+uv run python ops/transfer.py transfer-report --data-dir calibration
+```
+
+### 诚实边界（本特性最核心的工程对象）
+
+- **交付的是机制 + 离线复现**：产物与报告一律写「**机制已就绪 / 真实回流待运营**」；演示与全部单测
+  在**无凭证**环境恒可跑（全模拟链路），**"模拟被标为真实"次数恒 0**（`RUN_SOURCES` 单点取值域 +
+  覆盖只认 `real` + 结论文案取值域三重机检）；
+- **"短剧线真实数据回流 ≥2 周"属运营侧墙钟 + 凭证前提**：短剧态窗口下限取 **14 天**
+  （= 立项书 G4 验收原文，不是发明数字；电影态保持 7），未达标时 `ops/billing.py runs --channel media`
+  **退出码 1 并逐段报出缺口与差值**，**不得**以模拟件凑数后声称"已达成"；
+- **平台名 / 凭证取值 / 预算档数字 / 投放环节档位取值 / 合规审查完成判据**：均属运营侧输入
+  （`spec.md` 开放问题 1~4）——本特性只交付"**缺项即报错 + 最小规模档 + `note` 标未标定**"的形状，
+  **不发明数字**；`PROMO_PLATFORM_*` 变量名**不改名、不新增**（反向机检常驻）；
+- **归属日字段未标定**：平台侧是否提供"指标归属日"字段仍未确认 ⇒ 未标定期间回流条数为 0 且原因明确
+  （「平台未提供指标归属日」），**禁止**以拉取/采集时刻兜底（字段名钉死 `metric_date`）；
+- **迁移不迁权重**：`conclusion` 内**禁止**出现权重键（结构断言），`transfer.py` 零 `refit` import、
+  零 `write` 入口到树/库；跨形态迁移的**真实覆盖天数**是**装配面声明的观测**并在条件条目里标注其来源
+  （离线演练夹具标 `fixture_drill`，**不得**据以宣称真实回流已达成）；
+- **明确不做**：G5 多形态插件验证、B 路径真实生成厂商对接（见
+  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md)）、多租户/公网服务化、
+  自动权重迁移、Decimal 金额重构、web 侧写入口。
+
 ## 电影长片全链路（功能 018）
 
 七环节链 `dev → script → storyboard → visual → sound → editing → promo`：链首插入 017 的开发

@@ -38,6 +38,8 @@ CONFIG_CLASSES = (
     ("budget", "core.billing.budget", "BudgetConfig"),
     ("web", "web.queries", "WebConfig"),
 )
+# 020（T2067②）：`calibration.transfer` 的可比性条件在 `CalibrationConfig` 的 `TransferConfig`
+# 内**必需读取**（缺项即报错）⇒ **不新增**配置类、不新增加载器名（表内 `calibration` 已覆盖）。
 
 # 形态权重读取覆盖的 Agent（evaluator_weights 段）
 WEIGHT_AGENTS = ("screenplay", "storyboard", "visual", "sound", "editing", "promo", "dev")
@@ -72,6 +74,26 @@ REQUIRED_PATHS = (
     # 旧扁平 `budget.tiers` 仍可读（见 `tests/unit/test_billing_channels.py`）
     ("budget", ("budget", "channels", "llm", "tiers")),
     ("budget", ("budget", "channels", "llm", "adapter")),
+    # 020（C11/C14）：逐档的三个必需键（缺任一即装配报错，不取码内默认）
+    ("budget", ("budget", "channels", "llm", "tiers", "screenplay", "limit_usd")),
+    ("budget", ("budget", "channels", "llm", "tiers", "screenplay", "window")),
+    ("budget", ("budget", "channels", "llm", "tiers", "screenplay", "on_exhausted")),
+    # 020（C5）：窗口口径与生效日（两形态均须声明；缺项即报错）
+    ("calibration", ("calibration", "window_semantics")),
+    ("calibration", ("calibration", "window_semantics_change_date")),
+    # 020（C15/C17）：迁移口径与可比性条件六键（缺任一项即拒绝，**不取码内默认**）
+    ("calibration", ("calibration", "transfer")),
+    ("calibration", ("calibration", "transfer", "basis")),
+    ("calibration", ("calibration", "transfer", "source_forms")),
+    ("calibration", ("calibration", "transfer", "target_forms")),
+    ("calibration", ("calibration", "transfer", "conditions")),
+    ("calibration", ("calibration", "transfer", "storage")),
+    ("calibration", ("calibration", "transfer", "adoption")),
+    # 020（C7）：归属日必填口径生效日（历史锚点回退的**唯一边界**）
+    ("promo", ("promo", "attribution_date_required_since")),
+    # 020（C18）：运行窗口下限与断档容差（两形态取值不同，缺项即报错）
+    ("budget", ("budget", "runs", "min_window_days")),
+    ("budget", ("budget", "runs", "gap_tolerance_days")),
     ("web", ("web", "data_dirs")),
 )
 
@@ -129,14 +151,18 @@ def test_权重读取覆盖全部_Agent(agent):
 
 
 @pytest.mark.parametrize("name,keys", REQUIRED_PATHS)
-def test_缺项即红(name, keys, tmp_path):
-    """删掉必需段后加载器必须报错（不静默回退）——本机检的牙齿。"""
-    payload = yaml.safe_load(SHORTDRAMA.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("config_path", (SHORTDRAMA, MOVIE), ids=("shortdrama", "movie"))
+def test_缺项即红(name, keys, config_path, tmp_path):
+    """删掉必需段后加载器必须报错（不静默回退）——本机检的牙齿。
+
+    **两形态各自跑一遍**（T2069）：不得有一侧静默取默认。
+    """
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     cursor = payload
     for key in keys[:-1]:
         cursor = cursor[key]
     del cursor[keys[-1]]
-    broken = tmp_path / "shortdrama.yaml"
+    broken = tmp_path / f"{config_path.stem}.yaml"
     broken.write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )

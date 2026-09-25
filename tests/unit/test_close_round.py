@@ -28,6 +28,14 @@ _CONFIG = CalibrationConfig.from_dict(
             "window_semantics": "half_open",
             "window_semantics_change_date": "2026-09-25",
             "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
+            "transfer": {
+                "basis": "conclusion_only",
+                "source_forms": ["shortdrama"],
+                "target_forms": ["movie"],
+                "conditions": {"min_samples": 3, "real_coverage_days": 1},
+                "storage": {"dir": "transfers"},
+                "adoption": "manual",
+            },
         }
     }
 )

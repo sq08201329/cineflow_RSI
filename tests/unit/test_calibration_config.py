@@ -28,6 +28,14 @@ _VALID_SECTION = {
     "window_semantics": "half_open",
     "window_semantics_change_date": "2026-09-25",
     "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
+    "transfer": {
+        "basis": "conclusion_only",
+        "source_forms": ["shortdrama"],
+        "target_forms": ["movie"],
+        "conditions": {"min_samples": 3, "real_coverage_days": 1},
+        "storage": {"dir": "transfers"},
+        "adoption": "manual",
+    },
 }
 
 
@@ -78,6 +86,8 @@ class Test缺段与缺字段:
             "window_semantics",
             "window_semantics_change_date",
             "self_pairing_exclusions",
+            # 020：校准结论迁移段（缺项即报错、不取码内默认；T2014/T2069）
+            "transfer",
         ],
     )
     def test_缺字段报错并指名(self, tmp_path, missing):

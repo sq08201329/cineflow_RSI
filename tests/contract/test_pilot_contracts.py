@@ -427,6 +427,10 @@ class TestC10到C13试水运行:
         differing = {key for key in set(movie) | set(short) if movie.get(key) != short.get(key)}
         # 形态差异逐项落在配置上（15 个段；017 起含 dev，019 起含 budget，018 起含 pilot）；
         # 形态无关基建段逐字相同
+        # 020（T2067③）登记结论：本断言遍历**顶层段集合**，而 020 的新增键都落在**既有段内**
+        # （`calibration.transfer.*` 在 calibration 段、`budget.channels.<id>.tiers` 与
+        # `budget.runs.min_window_days` 在 budget 段）⇒ **不新增顶层段**，本断言一字不变；
+        # 新增的**取值差异**由 `tests/unit/test_form_switch.py` 的 `test_020新增取值差异登记` 守住。
         assert differing == {
             "form",
             "dev",

@@ -63,6 +63,13 @@ calibration:
   window_semantics_change_date: 2026-09-25
   self_pairing_exclusions:
     platform_truth: ["human.platform_metrics"]
+  transfer:
+    basis: conclusion_only
+    source_forms: [shortdrama]
+    target_forms: [movie]
+    conditions: {min_samples: 3, real_coverage_days: 1}
+    storage: {dir: transfers}
+    adoption: manual
 """
 
 _GATE_KEYS = frozenset({"rule.format_compliance"})
@@ -409,6 +416,14 @@ class TestC7提案生成:
                     "window_semantics": "half_open",
                     "window_semantics_change_date": "2026-09-25",
                     "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
+                    "transfer": {
+                        "basis": "conclusion_only",
+                        "source_forms": ["shortdrama"],
+                        "target_forms": ["movie"],
+                        "conditions": {"min_samples": 3, "real_coverage_days": 1},
+                        "storage": {"dir": "transfers"},
+                        "adoption": "manual",
+                    },
                 }
             }
         )
@@ -457,6 +472,14 @@ class TestC8确认与生效:
                     "window_semantics": "half_open",
                     "window_semantics_change_date": "2026-09-25",
                     "self_pairing_exclusions": {"platform_truth": ["human.platform_metrics"]},
+                    "transfer": {
+                        "basis": "conclusion_only",
+                        "source_forms": ["shortdrama"],
+                        "target_forms": ["movie"],
+                        "conditions": {"min_samples": 3, "real_coverage_days": 1},
+                        "storage": {"dir": "transfers"},
+                        "adoption": "manual",
+                    },
                 }
             }
         )
@@ -632,3 +655,132 @@ class TestFR011零昂贵动作审计:
 
         backend = MockBackend()
         assert backend.call_count == 0  # 校准流程无任何注入网关的入口（签名审计佐证）
+
+
+"""T2016：日级运转契约用例（在既有 010 契约文件上**按扩展更新**，周级用例一字不改）。
+
+- 日级两轮：产物路径不同且**并留存**（零覆盖）、台账行登记 `anchor_count` +
+  `snapshot_fingerprint`、报告 payload 含口径与轮标识（`window_semantics` / `period_days` /
+  `run_id` / `window{start,end,period_days}` / `note`）；
+- 跨"口径变更日"未标注即比较的次数恒 0：窗口横跨变更日 ⇒ 报告 `note` **必须**标注该变更日。
+
+（本段的 import 与 `REPO_ROOT` 复用文件顶部既有声明——不重复定义。）
+"""
+
+_BREAKDOWN_DAILY = {
+    "proxy.aesthetic@1.0.0": {"score": 0.6},
+    "judge.cinematic@1.0.0": {"score": 0.5},
+}
+_DAILY_PERIOD = ("2026-09-25", "2026-09-25")
+
+
+#: 仓库根由本文件的路径推导（不新增模块级 import；本段的其余符号复用文件顶部既有声明）
+_REPO_ROOT = __file__.rsplit("/tests/", 1)[0]
+
+
+def _daily_config() -> CalibrationConfig:
+    return CalibrationConfig.from_yaml(f"{_REPO_ROOT}/configs/shortdrama.yaml")
+
+
+class Test日级运转契约:
+    def test_日级两轮零覆盖且产物自描述(
+        self, tree_store, build_calibration_tree, anchors_engine, calibration_data_dir
+    ):
+        """日级（`period_days: 1`）两轮：台账行 / 报告并留存 + 口径进产物。"""
+        from core.calibration.periods import WINDOW_SEMANTICS
+
+        config = _daily_config()
+        assert config.period_days == 1
+        _, node_ids = build_calibration_tree(
+            [
+                (0.5, dict(_BREAKDOWN_DAILY)),
+                (0.7, dict(_BREAKDOWN_DAILY)),
+                (0.9, dict(_BREAKDOWN_DAILY)),
+            ],
+            agent_id="visual",
+            base_created_at=datetime(2026, 9, 25, 12, tzinfo=UTC).timestamp(),
+        )
+        summaries = []
+        for index in range(2):
+            round_ = build_blind_list(
+                tree_store,
+                agent_id="visual",
+                period_start=_DAILY_PERIOD[0],
+                period_end=_DAILY_PERIOD[1],
+                top_k=3,
+                data_dir=calibration_data_dir,
+                period_days=config.period_days,
+                round_id=f"contract-daily-{index}",
+            )
+            with anchors_engine.begin() as conn:
+                intake_anchors(
+                    conn,
+                    round_.round_id,
+                    [
+                        {"node_id": nid, "score": score, "reviewer": "r1"}
+                        for nid, score in zip(node_ids, (0.55, 0.75, 0.95), strict=True)
+                    ],
+                    data_dir=calibration_data_dir,
+                )
+            with anchors_engine.connect() as conn:
+                summaries.append(
+                    close_round(
+                        tree_store,
+                        conn,
+                        calibration_data_dir,
+                        round_id=round_.round_id,
+                        config=config,
+                    )
+                )
+        # 周期标签 = 日期形态（cadence 派生），两轮落在同一日级周期
+        assert [summary["period"] for summary in summaries] == [_DAILY_PERIOD[0]] * 2
+
+        ledger_records = [
+            json.loads(line)
+            for line in (calibration_data_dir / "ledger" / "visual" / "proxy.aesthetic.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        assert len(ledger_records) == 2  # 两轮各一行（append-only，零覆盖）
+        for record in ledger_records:
+            assert record["period_days"] == 1
+            assert record["anchor_count"] == record["samples"]  # 口径自洽（同值机检）
+            assert record["snapshot_fingerprint"]
+            assert record["round_id"].startswith("contract-daily-")
+
+        reports = sorted((calibration_data_dir / "reports").glob("*.json"))
+        assert len(reports) == 2  # 文件数 == 轮数：同周期多轮**并留存**
+        assert len({path.name for path in reports}) == 2  # 路径不同（不互相覆盖）
+        for path in reports:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            assert payload["period"] == _DAILY_PERIOD[0]
+            assert payload["period_days"] == 1
+            assert payload["window_semantics"] == WINDOW_SEMANTICS
+            assert payload["run_id"] and path.name.endswith(f"{payload['run_id']}.json")
+            assert payload["window"]["period_days"] == 1
+            assert payload["window"]["start"] == _DAILY_PERIOD[0]
+            assert set(payload) >= {"period", "agents", "target", "alerts", "note"}
+
+    def test_跨口径变更日未标注即比较的次数恒零(self, tmp_path):
+        """窗口横跨口径变更日 ⇒ 报告 `note` 必须标注该变更日（禁止静默比较）。"""
+        from core.calibration.periods import WINDOW_SEMANTICS
+        from core.calibration.report import build_report
+
+        report = build_report(
+            tmp_path,
+            "2026-W39",
+            target=0.6,
+            window_semantics=WINDOW_SEMANTICS,
+            window_semantics_change_date="2026-09-23",
+            run_id="contract-change-date",
+        )
+        assert "2026-09-23" in report["note"], report["note"]
+        assert "不可直接比较" in report["note"]
+        payload = json.loads(
+            (tmp_path / "reports" / "2026-W39-contract-change-date.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert payload["window_semantics_change_date"] == "2026-09-23"
+        assert "2026-09-23" in payload["note"]
