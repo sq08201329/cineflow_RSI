@@ -18,6 +18,7 @@
 
 import copy
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -105,15 +106,31 @@ def _media_config(tmp_path: Path, *, delivery_limit_usd: float, name: str = "sho
     return target
 
 
+#: 运行记录按**显式时钟**归属日（与 `test_billing_channels.py` 的 `MOMENT` 同口径）。
+#: 020 遗留缺陷：装配面与包装点此前都未传时钟 ⇒ 记录按**当日**落盘，而断言读固定日期
+#: `2026-09-25`，跨日即红（实测 2026-09-26 起 3 条）。修时钟、**不改断言**。
+_FIXED_MOMENT = datetime(2026, 9, 25, 3, 0, tzinfo=UTC)
+
+
 def _delivery_assembly(config_path: Path):
     cfg = BudgetConfig.from_yaml(config_path)
     channel = channel_for_adapter(cfg, PROMO_ADAPTER)
-    return assemble_guard(config_path, channel_id=channel.channel_id)
+    return assemble_guard(
+        config_path,
+        channel_id=channel.channel_id,
+        clock=lambda: _FIXED_MOMENT,
+    )
 
 
 def _wrapped(config_path: Path, adapter, *, source: str = "real", stage: str = DELIVERY_STAGE):
     assembly = _delivery_assembly(config_path)
-    return RecordingChannelCall(adapter, assembly=assembly, stage=stage, source=source)
+    return RecordingChannelCall(
+        adapter,
+        assembly=assembly,
+        stage=stage,
+        source=source,
+        clock=lambda: _FIXED_MOMENT,
+    )
 
 
 def _ledger_of(config_path: Path, channel_id: str) -> dict:
