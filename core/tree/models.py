@@ -35,9 +35,62 @@ def _require_non_empty(value: str, field_name: str) -> None:
         raise ValidationError(f"{field_name} 必须为非空字符串")
 
 
+_LLM_BREAKDOWN_ENTRY_KEYS = ("calls", "prompt_tokens", "completion_tokens", "cost_usd")
+
+
+def _validate_llm_breakdown(breakdown: dict, llm_calls: int, llm_tokens: int) -> None:
+    """llm_breakdown 结构校验（功能 022 / plan D2）。
+
+    形态 `{role: {profile_id: {calls, prompt_tokens, completion_tokens, cost_usd}}}`，
+    对齐网关 cost_breakdown() 口径。只做结构校验：键为非空字符串、各分量数值 ≥ 0、
+    Σ calls ≤ llm_calls 且 Σ tokens ≤ llm_tokens；不耦合 Role 枚举（原则五），
+    也不校验 cost_usd 总额（六字段无对应标量，口径局限如实登记）。
+    """
+    if not isinstance(breakdown, dict):
+        raise ValidationError(f"CostRecord.llm_breakdown 必须为 dict，实际为 {breakdown!r}")
+    total_calls = 0
+    total_tokens = 0
+    for role, profiles in breakdown.items():
+        _require_non_empty(role, "llm_breakdown 角色键")
+        if not isinstance(profiles, dict):
+            raise ValidationError(f"llm_breakdown[{role!r}] 必须为 dict，实际为 {profiles!r}")
+        for profile_id, entry in profiles.items():
+            _require_non_empty(profile_id, "llm_breakdown 档案键")
+            if not isinstance(entry, dict):
+                raise ValidationError(
+                    f"llm_breakdown[{role!r}][{profile_id!r}] 必须为 dict，实际为 {entry!r}"
+                )
+            for key in _LLM_BREAKDOWN_ENTRY_KEYS:
+                if key not in entry:
+                    raise ValidationError(
+                        f"llm_breakdown[{role!r}][{profile_id!r}] 缺键 {key!r}（四键必须齐全）"
+                    )
+                value = entry[key]
+                if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+                    raise ValidationError(
+                        f"llm_breakdown[{role!r}][{profile_id!r}].{key} 必须为 ≥ 0 的数值，"
+                        f"实际为 {value!r}"
+                    )
+            total_calls += entry["calls"]
+            total_tokens += entry["prompt_tokens"] + entry["completion_tokens"]
+    if total_calls > llm_calls:
+        raise ValidationError(
+            f"llm_breakdown Σ calls={total_calls} 超过 llm_calls={llm_calls}（分解不得超过总量）"
+        )
+    if total_tokens > llm_tokens:
+        raise ValidationError(
+            f"llm_breakdown Σ tokens={total_tokens} 超过 llm_tokens={llm_tokens}"
+            "（分解不得超过总量）"
+        )
+
+
 @dataclass(frozen=True)
 class CostRecord:
-    """成本记录：每个节点必须入账（含 FAILED 节点），全字段 ≥ 0。"""
+    """成本记录：每个节点必须入账（含 FAILED 节点），全字段 ≥ 0。
+
+    llm_breakdown 为 022 新增扩展字段（按扩展更新）：LLM 腿「角色 × 档案」分解，
+    历史行 JSON 缺此键时读回默认空映射（展示层标「未标定」，禁回填）。
+    """
 
     llm_calls: int = 0
     llm_tokens: int = 0
@@ -45,6 +98,7 @@ class CostRecord:
     generation_api_cost_usd: float = 0.0
     human_review_minutes: float = 0.0
     wall_clock_seconds: float = 0.0
+    llm_breakdown: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for f in (
@@ -58,6 +112,7 @@ class CostRecord:
             value = getattr(self, f)
             if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
                 raise ValidationError(f"CostRecord.{f} 必须为 ≥ 0 的数值，实际为 {value!r}")
+        _validate_llm_breakdown(self.llm_breakdown, self.llm_calls, self.llm_tokens)
 
 
 @dataclass(frozen=True)

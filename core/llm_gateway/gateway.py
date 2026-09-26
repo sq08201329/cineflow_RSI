@@ -389,8 +389,9 @@ class LLMGateway:
 
         `{role: {profile_id: {calls, prompt_tokens, completion_tokens, cost_usd}}}`
 
-        缓存命中不计入（零成本、零 token，另见 `cache_hits`）；树节点 `CostRecord` 口径不变
-        （分解只在报告层呈现）。
+        缓存命中不计入（零成本、零 token，另见 `cache_hits`）；树节点 `CostRecord` 六字段
+        口径不变（总成本照旧入账），LLM 腿（角色 × 档案）分解为 022 新增扩展字段，
+        口径与本函数一致。
         """
         return {
             role: {profile_id: dict(entry) for profile_id, entry in sorted(profiles.items())}

@@ -147,6 +147,96 @@ class Test字段校验:
         assert parsed.version == 7
 
 
+class TestLlmBreakdown:
+    """llm_breakdown 扩展字段（功能 022 / plan D1~D2）：结构校验、asdict 往返、旧行读回兼容。"""
+
+    def _entry(self, calls=2, prompt=40, completion=20, cost=0.01):
+        return {
+            "calls": calls,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "cost_usd": cost,
+        }
+
+    def _breakdown(self, **entry_overrides):
+        return {"screenwriter": {"p-cheap": self._entry(**entry_overrides)}}
+
+    def test_默认为空合法(self):
+        cost = CostRecord()
+        assert cost.llm_breakdown == {}
+
+    def test_分解Σ不超总量合法(self):
+        cost = CostRecord(llm_calls=3, llm_tokens=100, llm_breakdown=self._breakdown())
+        assert cost.llm_breakdown["screenwriter"]["p-cheap"]["calls"] == 2
+
+    def test_Σ等于总量合法(self):
+        # 无缓存命中时等号成立（plan D2）
+        CostRecord(llm_calls=2, llm_tokens=60, llm_breakdown=self._breakdown())
+
+    @pytest.mark.parametrize(
+        "key,bad",
+        [("calls", -1), ("prompt_tokens", -1), ("completion_tokens", -1), ("cost_usd", -0.01)],
+    )
+    def test_分量负值拒构造(self, key, bad):
+        bd = self._breakdown()
+        bd["screenwriter"]["p-cheap"][key] = bad
+        with pytest.raises(ValidationError):
+            CostRecord(llm_calls=3, llm_tokens=100, llm_breakdown=bd)
+
+    def test_角色键为空拒构造(self):
+        with pytest.raises(ValidationError):
+            CostRecord(
+                llm_calls=1,
+                llm_tokens=1,
+                llm_breakdown={"": {"p": self._entry(calls=1, prompt=1, completion=0)}},
+            )
+
+    def test_档案键为空拒构造(self):
+        with pytest.raises(ValidationError):
+            CostRecord(
+                llm_calls=1,
+                llm_tokens=1,
+                llm_breakdown={"r": {"": self._entry(calls=1, prompt=1, completion=0)}},
+            )
+
+    def test_条目缺键拒构造(self):
+        with pytest.raises(ValidationError):
+            CostRecord(llm_calls=1, llm_tokens=1, llm_breakdown={"r": {"p": {"calls": 1}}})
+
+    def test_calls_超和拒构造(self):
+        with pytest.raises(ValidationError):
+            CostRecord(llm_calls=1, llm_tokens=100, llm_breakdown=self._breakdown())
+
+    def test_tokens_超和拒构造(self):
+        with pytest.raises(ValidationError):
+            # 分解 tokens 合计 40 + 20 = 60 > llm_tokens=59
+            CostRecord(llm_calls=5, llm_tokens=59, llm_breakdown=self._breakdown())
+
+    def test_cost_usd_不校验总额(self):
+        # D2 口径局限如实登记：六字段无对应标量，cost_usd 总额不做超和校验
+        CostRecord(llm_calls=2, llm_tokens=60, llm_breakdown=self._breakdown(cost=999.0))
+
+    def test_asdict_往返(self):
+        from dataclasses import asdict
+
+        cost = CostRecord(llm_calls=2, llm_tokens=60, llm_breakdown=self._breakdown())
+        assert CostRecord(**asdict(cost)) == cost
+
+    def test_旧dict缺键读回_默认且不报错(self):
+        # 历史行 JSON 无 llm_breakdown 键：CostRecord(**row.cost) 读回默认空映射
+        old_row = {
+            "llm_calls": 2,
+            "llm_tokens": 60,
+            "generation_api_calls": 1,
+            "generation_api_cost_usd": 0.5,
+            "human_review_minutes": 0.0,
+            "wall_clock_seconds": 1.5,
+        }
+        cost = CostRecord(**old_row)
+        assert cost.llm_breakdown == {}
+        assert cost.llm_calls == 2
+
+
 class TestDiscoveryTree:
     def _tree_kwargs(self, **overrides):
         fields = {
