@@ -226,9 +226,7 @@ class Test缺键旧行读回:
         engine = run["engine"]
         store = run["store"]
         tree_id = run["tree_ids"][0]
-        root_id = next(
-            node.node_id for node in store.nodes_of(tree_id) if node.parent_id is None
-        )
+        root_id = next(node.node_id for node in store.nodes_of(tree_id) if node.parent_id is None)
         legacy_cost = {  # 旧六字段形状：022 之前落盘的 cost JSON（无扩展键）
             "llm_calls": 2,
             "llm_tokens": 120,

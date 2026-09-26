@@ -181,7 +181,7 @@ def _in_baseline(ref: str, relative: str) -> bool:
 #: （下方用例同时核"接入侧件确在基线树内"，防"基线取早了把接入改动吃掉"）。
 #: `--mechanism-ref` 与之不同：仍取**引入唯一装配点**的提交（与
 #: `tests/contract/test_form_onboarding_contracts.py` 的 `_mechanism_ref()` 同口径）。
-MECHANISM_LANDED_REF = "6480ed7"  # 022 收口重打：022 机制+接入+parity 修复入库（原 4e90164 = 021 机制落地）
+MECHANISM_LANDED_REF = "6480ed7"  # 022 收口重打（原 4e90164 = 021 机制落地）
 
 
 @pytest.fixture(scope="module")

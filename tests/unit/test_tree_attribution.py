@@ -24,8 +24,12 @@ def _entry(calls=1, prompt=10, completion=5, cost=0.25):
 class TestAddCall:
     def test_首次调用建条目(self):
         bd = add_call(
-            {}, role="screenwriter", profile_id="p-cheap",
-            prompt_tokens=10, completion_tokens=5, cost_usd=0.25,
+            {},
+            role="screenwriter",
+            profile_id="p-cheap",
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=0.25,
         )
         assert bd == {"screenwriter": {"p-cheap": _entry()}}
 
@@ -50,8 +54,12 @@ class TestAddCall:
     def test_空归属拒入(self, role, profile_id):
         with pytest.raises(ValidationError):
             add_call(
-                {}, role=role, profile_id=profile_id,
-                prompt_tokens=1, completion_tokens=1, cost_usd=0.0,
+                {},
+                role=role,
+                profile_id=profile_id,
+                prompt_tokens=1,
+                completion_tokens=1,
+                cost_usd=0.0,
             )
 
     def test_非字符串归属拒入(self):

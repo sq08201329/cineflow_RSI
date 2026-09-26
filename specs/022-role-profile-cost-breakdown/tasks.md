@@ -72,7 +72,8 @@
 | 批次 | 内容 | 提交号 | 门禁实测 | 未决项 |
 | --- | --- | --- | --- | --- |
 | 机制 | T2205~T2209 | 3929cb0（机制提交；设计件前置提交 75a714b） | 单文件 62 例绿 / ruff 触及文件绿 | — |
-| 接入 | T2212~T2222 | （T2223 回填） | （T2224~T2229 回填） | — |
+| 接入 | T2212~T2222 | e39012d（接入提交） | 抽查 74 例绿（web_board 23 + web_server 47 + cost_attribution 4）；慢门禁见下行回填 | ① judge `last_usage` 仅聚合值（评估器零改动红线）⇒ judge 格 prompt/completion 拆分不可得，tokens/cost 合计精确、记于首格，如实登记；② 展示层在三态外如实增设第四态 `no_llm`（键在场且空且 llm_calls==0，父代理裁决认可）；③ `web/server.py` 路由补 `group_by` 透传（T2219 面扩展，父代理裁决）；④ `core/replay/trajectory.py` 无汇总点零改动（simulator 经 `sum_costs` 已覆盖） |
+| 收口修复 | 门禁首轮红两处的修复 | 6480ed7（web parity 修复：get_node 详情成本改全量 `_cost_payload`）+ 8ab83b9（接入清单基线重打 4e90164→6480ed7） | 修复点快核：parity 用例+web 单测 71 例绿；onboarding 18 例绿（越界 0 / exit 0） | 首轮门禁如实登记：契约两腿各 1 红（web_parity 详情字段——`_cost_record` 六字段投影丢了新键）、集成 4 红（021 接入清单检出 022 改动越界——机制件批次再动，按测试内"重打纪律"前移基线，先例 8b413d4/d26e8e7） |
 
 **T2203 构造点清单**（勘查实测，agent-1 回报）：
 

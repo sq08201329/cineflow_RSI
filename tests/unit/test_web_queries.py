@@ -449,7 +449,8 @@ class Test节点详情:
 
     def test_成本明细与_cost_usd_口径(self, web_config, web_fixture_trees):
         detail = get_node(web_config, "tree-alpha-visual-champion-n1")
-        assert set(detail["cost"]) == set(COST_FIELDS)
+        # 022 起详情为全量记录：六字段 + 扩展键 llm_breakdown
+        assert set(detail["cost"]) == set(COST_FIELDS) | {"llm_breakdown"}
         assert detail["cost"]["llm_calls"] == 1
         assert detail["cost"]["llm_tokens"] == 200
         # cost_usd = 001 成本记录的 generation_api_cost_usd（与 tree_total 对账字段同口径）
