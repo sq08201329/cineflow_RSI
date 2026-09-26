@@ -47,12 +47,35 @@ from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
     gateway_profile_snapshot,
     with_llm_profiles,
 )
+from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 from core.tree.artifacts import ArtifactStore
+from core.tree.attribution import add_call  # 功能 022：角色 × 档案分解归集
 from core.tree.errors import DuplicateError, ValidationError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
 from core.tree.store import TreeStore
 
 PLACEHOLDER_HASH = "00" * 32  # 未产出工件的拒绝节点占位哈希（无工件可引）
+
+
+def _judge_breakdown(gateway: LLMGateway | None, usage: dict) -> dict:
+    """judge 计费用量的分解归集（022 裁决）：role 静态已知（Role.JUDGE），profile_id 取
+    `gateway.route(role)` 判定值。`last_usage` 只暴露聚合口径（既有评估器实现零改动红线，
+    prompt/completion 拆分不可得）：calls 逐格累入、tokens/cost 合计记于首格（总和精确）。
+    零调用、无网关或未接档案旧路径 ⇒ 空分解。"""
+    if usage["llm_calls"] <= 0 or gateway is None or gateway.profiles is None:
+        return {}
+    decision = gateway.route(Role.JUDGE)
+    breakdown: dict = {}
+    for index in range(int(usage["llm_calls"])):
+        breakdown = add_call(
+            breakdown,
+            role=str(decision.role),
+            profile_id=decision.profile_id,
+            prompt_tokens=int(usage["llm_tokens"]) if index == 0 else 0,
+            completion_tokens=0,
+            cost_usd=float(usage["cost_usd"]) if index == 0 else 0.0,
+        )
+    return breakdown
 
 
 class StoryboardLoopError(Exception):
@@ -204,6 +227,7 @@ def run_storyboard_round(
                 config=config,
                 evaluators=evaluators,
                 script=script,
+                gateway=gateway,
                 drift_gate=drift_gate,
             )
         )
@@ -389,6 +413,7 @@ def _run_job(
     config,
     evaluators,
     script,
+    gateway=None,
     drift_gate=None,
 ) -> dict:
     """单 ShotList 流水线：C1 校验 → 预算门禁 → 渲染 → 内容寻址 → 评估 → 落盘。"""
@@ -578,6 +603,7 @@ def _run_job(
                 llm_tokens=judge_usage["llm_tokens"],
                 generation_api_calls=1,
                 generation_api_cost_usd=animatic.actual_cost_usd + judge_usage["cost_usd"],
+                llm_breakdown=_judge_breakdown(gateway, judge_usage),  # 022：judge 聚合归集
             ),
             reason=None,
         )

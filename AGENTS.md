@@ -6,7 +6,7 @@
 ## 0. 先读什么
 
 - 项目定位与最新交付状态：`README.md`、`docs/三期交付总览.md`（一/二期：`docs/一期交付总览.md`、`docs/二期交付总览.md`）
-- 最高工程约定（**宪章 v2.0.0**）：`.specify/memory/constitution.md`
+- 最高工程约定（**宪章 v2.1.0**）：`.specify/memory/constitution.md`
 - 某特性的依据与施工图：`specs/<NNN>-<短名>/`（`spec.md` / `plan.md` / `tasks.md`）
 - 立项依据与运营侧前提：`docs/三期立项书.md`
 

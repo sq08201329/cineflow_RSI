@@ -60,6 +60,7 @@ from core.llm_gateway.profiles import (  # noqa: E402 - 功能 016 快照接线
 )
 from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 from core.tree.artifacts import ArtifactStore
+from core.tree.attribution import add_call, merge  # 功能 022：角色 × 档案分解归集
 from core.tree.errors import DuplicateError, ValidationError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
 from core.tree.store import TreeStore
@@ -326,6 +327,59 @@ def _score(
             usage["llm_tokens"] += int(last_usage.get("llm_tokens", 0))
             usage["cost_usd"] += float(last_usage.get("cost_usd", 0.0))
     return breakdown, quantize_score(composite_screenplay(breakdown, weights)), usage
+
+
+def _result_breakdown(result) -> dict:
+    """单次生成调用的分解归集（功能 022 / plan D4）：cached（零计费）跳过；
+    未接档案（role/profile_id 空，旧路径）无归属可记 ⇒ 空分解（既有行为不变）。"""
+    if result.cached or not result.role or not result.profile_id:
+        return {}
+    return add_call(
+        {},
+        role=result.role,
+        profile_id=result.profile_id,
+        prompt_tokens=int(result.usage["prompt_tokens"]),
+        completion_tokens=int(result.usage["completion_tokens"]),
+        cost_usd=float(result.cost_usd),
+    )
+
+
+def _planned_failure_breakdown(gateway: LLMGateway, cost_usd: float) -> dict:
+    """失败/预估入账的分解（plan D4）：按"拟走角色 × 档案"记 calls=1、tokens=0、
+    cost_usd=已发生/预估额；profile_id 取 `gateway.route(role)` 判定值
+    （价目随快照冻结 ⇒ 与调用时一致）。未接档案旧路径 ⇒ 空分解。"""
+    if gateway.profiles is None:
+        return {}
+    decision = gateway.route(Role.GENERATION)
+    return add_call(
+        {},
+        role=str(decision.role),
+        profile_id=decision.profile_id,
+        prompt_tokens=0,
+        completion_tokens=0,
+        cost_usd=cost_usd,
+    )
+
+
+def _judge_breakdown(gateway: LLMGateway, usage: dict) -> dict:
+    """judge 计费用量的分解归集（022 裁决）：role 静态已知（Role.JUDGE），profile_id 取
+    `gateway.route(role)` 判定值。`last_usage` 只暴露聚合口径（既有评估器实现零改动红线，
+    prompt/completion 拆分不可得）：calls 逐格累入、tokens/cost 合计记于首格（总和精确）。
+    零调用或未接档案旧路径 ⇒ 空分解。"""
+    if usage["llm_calls"] <= 0 or gateway.profiles is None:
+        return {}
+    decision = gateway.route(Role.JUDGE)
+    breakdown: dict = {}
+    for index in range(int(usage["llm_calls"])):
+        breakdown = add_call(
+            breakdown,
+            role=str(decision.role),
+            profile_id=decision.profile_id,
+            prompt_tokens=int(usage["llm_tokens"]) if index == 0 else 0,
+            completion_tokens=0,
+            cost_usd=float(usage["cost_usd"]) if index == 0 else 0.0,
+        )
+    return breakdown
 
 
 def _config_snapshot(config: ScreenplayConfig, evaluators) -> dict:
@@ -763,7 +817,12 @@ def _run_stage(
             estimated=estimated,
             actual=estimated,  # 失败照计预估成本（原则二）
             artifact_hash=None,
-            cost=CostRecord(llm_calls=1, generation_api_cost_usd=estimated),
+            cost=CostRecord(
+                llm_calls=1,
+                generation_api_cost_usd=estimated,
+                # 022（plan D4）：失败/预估入账按"拟走角色 × 档案"记 calls=1、tokens=0
+                llm_breakdown=_planned_failure_breakdown(gateway, estimated),
+            ),
             observation=observation,
             prompt=prompt,
             store=store,
@@ -773,6 +832,7 @@ def _run_stage(
     response_hash = blake3.blake3(generated.text.encode()).hexdigest()
     observation["response_hash"] = response_hash
     actual = float(generated.cost_usd)
+    tokens = int(generated.usage["prompt_tokens"] + generated.usage["completion_tokens"])
 
     # 2) 工件构造（网关正文 + 计划标记）：构造失败也照计已发生的费用
     try:
@@ -793,7 +853,13 @@ def _run_stage(
             estimated=estimated,
             actual=actual,
             artifact_hash=None,
-            cost=CostRecord(llm_calls=1, generation_api_cost_usd=actual),
+            # 022 欠计修正（裁决登记①）：generated.usage 在手 ⇒ llm_tokens 补填真实值
+            cost=CostRecord(
+                llm_calls=1,
+                llm_tokens=tokens,
+                generation_api_cost_usd=actual,
+                llm_breakdown=_result_breakdown(generated),
+            ),
             observation=observation,
             prompt=prompt,
             store=store,
@@ -819,7 +885,6 @@ def _run_stage(
         artifact_hash=artifact_hash,
         error=None,
     )
-    tokens = int(generated.usage["prompt_tokens"] + generated.usage["completion_tokens"])
 
     # 4) 评估器协议注入打分（崩溃隔离：FAILED 成本照计，轮次继续）
     artifact_ref = ArtifactRef(artifact_hash=artifact_hash, metadata={"stage": stage})
@@ -875,6 +940,8 @@ def _run_stage(
             llm_calls=1 + usage["llm_calls"],
             llm_tokens=tokens + usage["llm_tokens"],
             generation_api_cost_usd=actual + usage["cost_usd"],
+            # 022：生成调用逐笔归集 + judge 聚合归集（多分组并存）
+            llm_breakdown=merge(_result_breakdown(generated), _judge_breakdown(gateway, usage)),
         ),
         observation=observation,
         prompt=prompt,

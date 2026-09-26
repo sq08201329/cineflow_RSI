@@ -51,6 +51,7 @@ from core.llm_gateway.gateway import GatewayError, LLMGateway
 from core.llm_gateway.profiles import gateway_profile_snapshot, with_llm_profiles
 from core.llm_gateway.routing import Role
 from core.tree.artifacts import ArtifactStore
+from core.tree.attribution import add_call, merge  # 功能 022：角色 × 档案分解归集
 from core.tree.errors import DuplicateError, ValidationError
 from core.tree.models import CostRecord, DiscoveryTree, NodeStatus, TreeNode
 from core.tree.store import TreeStore
@@ -162,6 +163,59 @@ def generation_cache_key(model: str, prompt: str, temperature: float, max_tokens
 def _aggregate(values: list[str]) -> str:
     """逐调用摘要的规范化汇总（单产出表的 cache_key/response_hash 两列）。"""
     return blake3.blake3(_canonical(values).encode()).hexdigest()
+
+
+def _accumulate_result(breakdown: dict, result) -> dict:
+    """逐调用分解归集（功能 022 / plan D4）：cached（零计费）跳过；
+    未接档案（role/profile_id 空，旧路径）无归属可记 ⇒ 原样返回（既有行为不变）。"""
+    if result.cached or not result.role or not result.profile_id:
+        return breakdown
+    return add_call(
+        breakdown,
+        role=result.role,
+        profile_id=result.profile_id,
+        prompt_tokens=int(result.usage["prompt_tokens"]),
+        completion_tokens=int(result.usage["completion_tokens"]),
+        cost_usd=float(result.cost_usd),
+    )
+
+
+def _planned_failure_breakdown(breakdown: dict, gateway: LLMGateway, cost_usd: float) -> dict:
+    """失败/预估入账的分解（plan D4）：在已完成调用分解上，为失败笔按"拟走角色 × 档案"
+    记 calls=1、tokens=0、cost_usd=预估余额；profile_id 取 `gateway.route(role)` 判定值
+    （价目随快照冻结 ⇒ 与调用时一致）。未接档案旧路径 ⇒ 原样返回。"""
+    if gateway.profiles is None:
+        return breakdown
+    decision = gateway.route(Role.GENERATION)
+    return add_call(
+        breakdown,
+        role=str(decision.role),
+        profile_id=decision.profile_id,
+        prompt_tokens=0,
+        completion_tokens=0,
+        cost_usd=cost_usd,
+    )
+
+
+def _judge_breakdown(gateway: LLMGateway, usage: dict) -> dict:
+    """评估器计费用量的分解归集（022 裁决）：role 静态已知（Role.JUDGE），profile_id 取
+    `gateway.route(role)` 判定值。`last_usage` 只暴露聚合口径（既有评估器实现零改动红线，
+    prompt/completion 拆分不可得）：calls 逐格累入、tokens/cost 合计记于首格（总和精确）。
+    零调用或未接档案旧路径 ⇒ 空分解。"""
+    if usage["llm_calls"] <= 0 or gateway.profiles is None:
+        return {}
+    decision = gateway.route(Role.JUDGE)
+    breakdown: dict = {}
+    for index in range(int(usage["llm_calls"])):
+        breakdown = add_call(
+            breakdown,
+            role=str(decision.role),
+            profile_id=decision.profile_id,
+            prompt_tokens=int(usage["llm_tokens"]) if index == 0 else 0,
+            completion_tokens=0,
+            cost_usd=float(usage["cost_usd"]) if index == 0 else 0.0,
+        )
+    return breakdown
 
 
 def _string_list(value, field_name: str) -> list[str]:
@@ -621,6 +675,7 @@ def run_dev_round(
     # 1) 逐条目生成经网关（唯一昂贵动作，原则三）：失败 → 节点 FAILED + 预估成本照计
     texts: list[str] = []
     calls: list[dict] = []
+    cost_breakdown: dict = {}  # 022：逐调用角色 × 档案分解（cached 跳过）
     try:
         for entry, prompt, cache_key in zip(entries, prompts, cache_keys, strict=True):
             generated = gateway.chat(
@@ -631,6 +686,7 @@ def run_dev_round(
                 max_tokens=config.max_tokens,
                 stage="dev",  # 019（C9）：环节 id = budget.tiers 的键（立项论证生成档）
             )
+            cost_breakdown = _accumulate_result(cost_breakdown, generated)
             texts.append(generated.text)
             calls.append(
                 {
@@ -660,11 +716,15 @@ def run_dev_round(
                 llm_calls=len(calls),
                 llm_tokens=booked_tokens,
                 generation_api_cost_usd=booked,
+                llm_breakdown=cost_breakdown,  # 022：已完成调用逐笔归集（被拒笔不入账）
             ),
             observation={"gen_params": match_key, "params_hash": params_hash, "calls": calls},
             prompt="\n\n".join(prompts),
         )
     except GatewayError as exc:
+        booked = sum(call["cost_usd"] for call in calls)
+        # 022 欠计修正（裁决登记①）：已完成调用的 tokens 补入 llm_tokens（usage 在手）
+        booked_tokens = sum(call["prompt_tokens"] + call["completion_tokens"] for call in calls)
         return _fail_round(
             f"网关失败：{exc}",
             **shared,
@@ -672,7 +732,16 @@ def run_dev_round(
             response_hash=None,
             actual=estimated,  # 失败照计预估成本（原则二）
             artifact_hash=None,
-            cost=CostRecord(llm_calls=len(calls) + 1, generation_api_cost_usd=estimated),
+            cost=CostRecord(
+                llm_calls=len(calls) + 1,
+                llm_tokens=booked_tokens,
+                generation_api_cost_usd=estimated,
+                # 022（plan D4）：失败笔按"拟走角色 × 档案"记 calls=1、tokens=0、
+                # cost=预估余额（Σ 分解成本可回溯到节点总额）
+                llm_breakdown=_planned_failure_breakdown(
+                    cost_breakdown, gateway, max(estimated - booked, 0.0)
+                ),
+            ),
             observation={"gen_params": match_key, "params_hash": params_hash, "calls": calls},
             prompt="\n\n".join(prompts),
         )
@@ -710,7 +779,10 @@ def run_dev_round(
             actual=actual,
             artifact_hash=None,
             cost=CostRecord(
-                llm_calls=len(calls), llm_tokens=tokens, generation_api_cost_usd=actual
+                llm_calls=len(calls),
+                llm_tokens=tokens,
+                generation_api_cost_usd=actual,
+                llm_breakdown=cost_breakdown,  # 022：已完成调用逐笔归集
             ),
             observation=observation,
             prompt="\n\n".join(prompts),
@@ -759,7 +831,11 @@ def run_dev_round(
             actual=actual,
             artifact_hash=artifact_hash,
             cost=CostRecord(
-                llm_calls=len(calls), llm_tokens=tokens, generation_api_cost_usd=actual
+                llm_calls=len(calls),
+                llm_tokens=tokens,
+                generation_api_cost_usd=actual,
+                # 022：judge 用量崩溃即失（b' 不归集），已完成调用分解照记
+                llm_breakdown=cost_breakdown,
             ),
             observation=observation,
             prompt="\n\n".join(prompts),
@@ -780,6 +856,8 @@ def run_dev_round(
             llm_calls=len(calls) + usage["llm_calls"],
             llm_tokens=tokens + usage["llm_tokens"],
             generation_api_cost_usd=actual + usage["cost_usd"],
+            # 022：生成逐笔归集 + 评估器聚合归集（多分组并存）
+            llm_breakdown=merge(cost_breakdown, _judge_breakdown(gateway, usage)),
         ),
         observation=observation,
         prompt="\n\n".join(prompts),

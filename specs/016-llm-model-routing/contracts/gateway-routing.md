@@ -35,7 +35,8 @@ route(role: Role, routing: RoleRouting) -> RouteDecision
 - 折算：`cost = prompt_tokens/1k × profile.prices.prompt_per_1k + completion_tokens/1k × profile.prices.completion_per_1k`
 - `BackendResult` 携带 `role` / `profile_id`；网关累积
   `cost_breakdown() -> {role: {profile_id: {calls, prompt_tokens, completion_tokens, cost_usd}}}`
-- 树节点 `CostRecord` 口径不变（总成本照旧入账）
+- 树节点 `CostRecord` 六字段口径不变（总成本照旧入账）；LLM 腿（角色 × 档案）分解为 022 新增扩展字段
+  `llm_breakdown`，口径与本条 `cost_breakdown()` 一致（缓存命中不进分解；历史落盘记录无该字段，禁止回填）
 
 ### 场景
 

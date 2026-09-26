@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from core.tree.attribution import merge  # 功能 022：角色 × 档案分解合并
 from core.tree.models import CostRecord, TreeNode
 
 # 观测字段白名单在 config_snapshot 中的配置键
@@ -61,7 +62,11 @@ def observation_whitelist(config_snapshot: dict) -> tuple[str, ...]:
 
 
 def sum_costs(records: Iterable[CostRecord]) -> CostRecord:
-    """虚拟成本合计：一批揭示节点的成本逐项相加。"""
+    """虚拟成本合计：一批揭示节点的成本逐项相加。
+
+    022：角色 × 档案分解随汇总 merge（同键累加），`ReplayTrajectory.total_cost`
+    的分解因此可回溯到逐节点来源（汇总只合并、不改写）。
+    """
     total = CostRecord()
     for record in records:
         total = CostRecord(
@@ -73,5 +78,6 @@ def sum_costs(records: Iterable[CostRecord]) -> CostRecord:
             ),
             human_review_minutes=total.human_review_minutes + record.human_review_minutes,
             wall_clock_seconds=total.wall_clock_seconds + record.wall_clock_seconds,
+            llm_breakdown=merge(total.llm_breakdown, record.llm_breakdown),
         )
     return total

@@ -336,13 +336,19 @@ def _load_json(path: Path) -> dict | None:
     return payload
 
 
-def _cost_record(value: Any, source: str) -> dict:
+def _cost_payload(value: Any, source: str) -> dict:
+    """成本记录原始 JSON：六字段齐全性校验后返回**全量**映射（含 022 扩展键的在场性）。"""
     record = _json_column(value, default=None, source=source)
     if not isinstance(record, dict):
         raise DataSourceError(f"{source} 必须为成本记录对象，实际为 {type(record).__name__}")
     missing = [field for field in _COST_FIELDS if field not in record]
     if missing:
         raise DataSourceError(f"{source} 缺成本字段 {missing}（与 001 口径不符）")
+    return record
+
+
+def _cost_record(value: Any, source: str) -> dict:
+    record = _cost_payload(value, source)
     return {field: record[field] for field in _COST_FIELDS}
 
 
@@ -777,14 +783,149 @@ def _iso_period(created_at: Any) -> str:
     return moment.strftime("%G-W%V")
 
 
-def get_costs(config: WebConfig, *, agent_id: str | None = None) -> dict:
+# group_by="role_profile" 的分组状态标签（功能 022 / plan D3 三态 + 无 LLM 腿单列）
+_COST_GROUP_ATTRIBUTED = "attributed"
+_COST_GROUP_CACHE_HIT = "cache_hit_zero_cost"
+_COST_GROUP_NO_LLM = "no_llm"
+_COST_GROUP_UNCALIBRATED = "uncalibrated"
+_BREAKDOWN_ENTRY_KEYS = ("calls", "prompt_tokens", "completion_tokens", "cost_usd")
+
+
+def _breakdown_entry_values(entry: Any, role: str, profile_id: str) -> dict:
+    """分解条目取值：四键齐全性校验（022 口径；损坏即报错，不静默取零）。"""
+    if not isinstance(entry, dict):
+        raise DataSourceError(
+            f"tree_nodes.cost.llm_breakdown[{role!r}][{profile_id!r}] 必须为对象，"
+            f"实际为 {type(entry).__name__}"
+        )
+    missing = [key for key in _BREAKDOWN_ENTRY_KEYS if key not in entry]
+    if missing:
+        raise DataSourceError(
+            f"tree_nodes.cost.llm_breakdown[{role!r}][{profile_id!r}] 缺键 {missing}"
+            "（022 口径不符）"
+        )
+    return entry
+
+
+def _role_profile_costs(rows: list[dict]) -> dict:
+    """「角色 × 档案」分组聚合（plan D3/D5）：读原始 JSON 的 llm_breakdown 键在场性区分。
+
+    - 键**缺席** → 「未标定」（历史行，禁回填）：调用计数取六字段 llm_calls 合计，
+      金额如实为 None——六字段无 LLM 专属金额标量（generation_api_cost_usd 为网关折算
+      与投放花费的混合口径），不拿它冒充 LLM 金额；
+    - 键在场且空且 llm_calls > 0 → 「缓存命中（零计费）」（与「未标定」不混标）；
+    - 键在场且空且 llm_calls == 0 → 无 LLM 腿节点，如实单列；
+    - 键在场非空 → 按 (role, profile_id) 逐格累加（与网关 cost_breakdown() 同键同口径，
+      未标定节点不摊入任何分组）。
+    """
+    groups: dict[tuple[str, str], dict] = {}
+    special = {
+        state: {"calls": 0, "node_count": 0}
+        for state in (_COST_GROUP_CACHE_HIT, _COST_GROUP_NO_LLM, _COST_GROUP_UNCALIBRATED)
+    }
+    node_count = 0
+    for row in rows:
+        record = _cost_payload(row["cost"], "tree_nodes.cost")
+        node_count += 1
+        llm_calls = int(record["llm_calls"])
+        if "llm_breakdown" not in record:
+            special[_COST_GROUP_UNCALIBRATED]["calls"] += llm_calls
+            special[_COST_GROUP_UNCALIBRATED]["node_count"] += 1
+            continue
+        breakdown = record["llm_breakdown"]
+        if not isinstance(breakdown, dict):
+            raise DataSourceError(
+                "tree_nodes.cost.llm_breakdown 必须为对象（022 口径），"
+                f"实际为 {type(breakdown).__name__}"
+            )
+        if not breakdown:
+            state = _COST_GROUP_CACHE_HIT if llm_calls > 0 else _COST_GROUP_NO_LLM
+            special[state]["calls"] += llm_calls
+            special[state]["node_count"] += 1
+            continue
+        for role, profiles in breakdown.items():
+            if not isinstance(profiles, dict):
+                raise DataSourceError(
+                    f"tree_nodes.cost.llm_breakdown[{role!r}] 必须为对象，"
+                    f"实际为 {type(profiles).__name__}"
+                )
+            for profile_id, raw_entry in profiles.items():
+                entry = _breakdown_entry_values(raw_entry, role, profile_id)
+                group = groups.setdefault(
+                    (role, profile_id),
+                    {
+                        "calls": 0,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "cost_usd": 0.0,
+                        "_nodes": 0,
+                    },
+                )
+                group["calls"] += entry["calls"]
+                group["prompt_tokens"] += entry["prompt_tokens"]
+                group["completion_tokens"] += entry["completion_tokens"]
+                group["cost_usd"] += entry["cost_usd"]
+        # 节点计数按"对该分组有贡献的节点数"计（一节点可贡献多个分组）
+        node_keys = {(role, profile_id) for role, ps in breakdown.items() for profile_id in ps}
+        for key in node_keys:
+            groups[key]["_nodes"] += 1
+    items = [
+        {
+            "state": _COST_GROUP_ATTRIBUTED,
+            "role": role,
+            "profile_id": profile_id,
+            "calls": group["calls"],
+            "prompt_tokens": group["prompt_tokens"],
+            "completion_tokens": group["completion_tokens"],
+            "cost_usd": group["cost_usd"],
+            "node_count": group["_nodes"],
+        }
+        for (role, profile_id), group in sorted(groups.items())
+    ]
+    for state in (_COST_GROUP_CACHE_HIT, _COST_GROUP_NO_LLM, _COST_GROUP_UNCALIBRATED):
+        bucket = special[state]
+        if not bucket["node_count"]:
+            continue
+        items.append(
+            {
+                "state": state,
+                "role": None,
+                "profile_id": None,
+                "calls": bucket["calls"],
+                # 六字段只有合并 llm_tokens，无 prompt/completion 拆分，如实为 null
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "cost_usd": None if state == _COST_GROUP_UNCALIBRATED else 0.0,
+                "node_count": bucket["node_count"],
+            }
+        )
+    return {
+        "group_by": "role_profile",
+        "items": items,
+        # 仅「已归属」分组的分解金额合计（缓存命中零计费；未标定金额未知不计入）
+        "total_cost_usd": sum(group["cost_usd"] for group in groups.values()),
+        "node_count": node_count,
+    }
+
+
+def get_costs(
+    config: WebConfig, *, agent_id: str | None = None, group_by: str | None = None
+) -> dict:
     """成本汇总（按 Agent / 周期）：读树库聚合 `generation_api_cost_usd`，不重算任何口径。
 
     - 成本口径 = 成本记录的 `generation_api_cost_usd`（各 Agent 的 `tree_total` 同字段）；
     - 周期口径 = 节点 `created_at` 换算的 ISO 周（与 010 信度报告/012 漂移报表的周期同形）；
     - 与 CostRecord 聚合的对账一致性由 tests/unit/test_web_board.py 独立聚合机检。
+
+    `group_by="role_profile"`（功能 022 / plan D5）：改按「角色 × 档案」分组，读原始 JSON
+    的 llm_breakdown 键在场性区分三态（已归属 / 缓存命中（零计费）/ 未标定，外加无 LLM 腿
+    节点单列）；既有默认维度（group_by=None）行为不变。未知维度报 WebQueryError。
     """
     where, params = _where_clause((("n.agent_id", "agent_id", agent_id),))
+    if group_by is not None:
+        if group_by != "role_profile":
+            raise WebQueryError(f"未知成本分组维度 {group_by!r}（可选：'role_profile'）")
+        return _role_profile_costs(_fetch(config, _COST_SQL + where, params))
     rows = _fetch(config, _COST_SQL + where, params)
     buckets: dict[tuple[str, str], dict] = {}
     agent_totals: dict[str, dict] = {}

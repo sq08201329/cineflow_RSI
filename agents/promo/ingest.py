@@ -133,6 +133,8 @@ def build_metrics_node(
             generation_api_calls=1,
             generation_api_cost_usd=cost_info.get("total_usd", 0.0),
             wall_clock_seconds=cost_info.get("wall_clock_seconds", 0.0),
+            # 022：生成时归集的分解随 metrics 透传（旧 metrics 行缺键 ⇒ 空分解，不报错）
+            llm_breakdown=cost_info.get("llm_breakdown", {}),
         ),
         status=NodeStatus.EVALUATED,
         created_at=created_at,

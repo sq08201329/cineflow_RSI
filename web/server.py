@@ -254,7 +254,13 @@ class WebRequestHandler(BaseHTTPRequestHandler):
 
     def api_costs(self, *, query: dict) -> None:
         self._send_json(
-            200, queries.get_costs(self.config, agent_id=self._str_param(query, "agent_id"))
+            200,
+            queries.get_costs(
+                self.config,
+                agent_id=self._str_param(query, "agent_id"),
+                # 功能 022：角色 × 档案分组维度；非法值由查询层报 WebQueryError → 400
+                group_by=self._str_param(query, "group_by"),
+            ),
         )
 
     def api_trees(self, *, query: dict) -> None:

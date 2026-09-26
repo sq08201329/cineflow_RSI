@@ -106,6 +106,23 @@ class Test只读数据接口:
         assert status == 400
         assert "必须为" in payload["detail"]
 
+    def test_成本按角色档案分组透传(self, live_server, web_fixture_trees):
+        """功能 022：group_by=role_profile 透传给查询层（夹具节点键在场且空且 llm_calls>0
+        ⇒ 归「缓存命中（零计费）」组，不与「未标定」混标）。"""
+        status, _headers, payload = live_server.json("GET", "/api/costs?group_by=role_profile")
+        assert status == 200
+        assert payload["group_by"] == "role_profile"
+        assert payload["node_count"] == 8  # 夹具树共 8 个节点
+        states = {item["state"]: item for item in payload["items"]}
+        assert set(states) == {"cache_hit_zero_cost"}
+        assert states["cache_hit_zero_cost"]["node_count"] == 8
+        assert states["cache_hit_zero_cost"]["cost_usd"] == 0.0
+
+    def test_成本非法分组维度_400(self, live_server, web_fixture_trees):
+        status, _headers, payload = live_server.json("GET", "/api/costs?group_by=bogus")
+        assert status == 400
+        assert "分组维度" in payload["detail"]
+
     def test_未注册路径_404(self, live_server):
         status, _headers, payload = live_server.json("GET", "/api/nope")
         assert status == 404

@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from web.queries import get_costs, get_evolution, get_summary
+from web.queries import WebQueryError, get_costs, get_evolution, get_summary
 
 AGENT = "visual"
 JUDGE_KEY = "judge.cinematic@1.0.0"
@@ -156,6 +156,227 @@ class TestC7成本汇总:
         assert status == 200
         assert {row["agent_id"] for row in payload["agents"]} == {AGENT}
         assert payload["node_count"] == 6
+
+
+# ---------------------------------------------------------------------------
+# 功能 022 / T2218：get_costs 新增 group_by="role_profile"（plan D3 三态区分）
+# ---------------------------------------------------------------------------
+
+_ROLE = "screenwriter"
+_PROFILE = "p-fast"
+
+
+def _cost_json(*, llm_calls, llm_tokens, cost_usd, breakdown=None, with_key=True):
+    """成本记录原始 JSON：with_key=False 复现历史行（llm_breakdown 键缺席）。"""
+    record = {
+        "llm_calls": llm_calls,
+        "llm_tokens": llm_tokens,
+        "generation_api_calls": llm_calls,
+        "generation_api_cost_usd": cost_usd,
+        "human_review_minutes": 0.0,
+        "wall_clock_seconds": 0.5,
+    }
+    if with_key:
+        record["llm_breakdown"] = breakdown if breakdown is not None else {}
+    return record
+
+
+def _breakdown_entry(calls, prompt, completion, cost):
+    return {
+        "calls": calls,
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "cost_usd": cost,
+    }
+
+
+@pytest.fixture()
+def cost_nodes(web_tree_engine):
+    """022 成本分解夹具：占位树 + 逐节点成本 JSON 直写（可控 llm_breakdown 键在场性）。
+
+    直写 SQL 而不经 TreeStore：新 CostRecord 序列化恒带 llm_breakdown 键，
+    历史行缺键形态只能由原始 JSON 构造（D3 三态之「未标定」的复现路径）。
+    """
+    from sqlalchemy import insert
+
+    from core.tree.db import discovery_trees, tree_nodes
+
+    with web_tree_engine.begin() as conn:
+        conn.execute(
+            insert(discovery_trees).values(
+                tree_id="tree-cost-022",
+                project_id="proj-cost",
+                agent_id="visual",
+                policy_version="a1b2c3d4e5f6",
+                root_id="cost-022-n0",
+                node_ids=[],
+                config_snapshot={},
+            )
+        )
+
+    counter = {"n": 0}
+
+    def _add(cost: dict, *, agent_id: str = "visual") -> str:
+        counter["n"] += 1
+        node_id = f"cost-022-n{counter['n']}"
+        with web_tree_engine.begin() as conn:
+            conn.execute(
+                insert(tree_nodes).values(
+                    node_id=node_id,
+                    tree_id="tree-cost-022",
+                    parent_id=None,
+                    depth=0,
+                    agent_id=agent_id,
+                    policy_version="a1b2c3d4e5f6",
+                    prompt="",
+                    observation_context={},
+                    artifact_hash="ab" * 32,
+                    eval_breakdown={},
+                    score=0.5,
+                    status="evaluated",
+                    cost=cost,
+                    created_at=1000.0 + counter["n"],
+                )
+            )
+        return node_id
+
+    return _add
+
+
+class Test角色档案成本分解:
+    """功能 022 / T2218：`get_costs(group_by="role_profile")` 分组（plan D3/D5）。
+
+    分组值直接取自原始 JSON 的 llm_breakdown 键（与网关 cost_breakdown() 同键）；
+    「未标定」（历史行缺键）单列、不摊入任何分组，与「缓存命中（零计费）」不混标。
+    """
+
+    def test_分组值取分解同键且逐格对账(self, web_config, cost_nodes):
+        cost_nodes(
+            _cost_json(
+                llm_calls=2,
+                llm_tokens=150,
+                cost_usd=0.05,
+                breakdown={_ROLE: {_PROFILE: _breakdown_entry(2, 100, 50, 0.03)}},
+            )
+        )
+        cost_nodes(
+            _cost_json(
+                llm_calls=1,
+                llm_tokens=50,
+                cost_usd=0.02,
+                breakdown={_ROLE: {_PROFILE: _breakdown_entry(1, 40, 10, 0.01)}},
+            )
+        )
+        cost_nodes(
+            _cost_json(
+                llm_calls=1,
+                llm_tokens=30,
+                cost_usd=0.02,
+                breakdown={"judge": {"p-judge": _breakdown_entry(1, 20, 10, 0.02)}},
+            )
+        )
+        payload = get_costs(web_config, group_by="role_profile")
+        attributed = {
+            (item["role"], item["profile_id"]): item
+            for item in payload["items"]
+            if item["state"] == "attributed"
+        }
+        assert set(attributed) == {(_ROLE, _PROFILE), ("judge", "p-judge")}
+        entry = attributed[(_ROLE, _PROFILE)]
+        assert entry["calls"] == 3
+        assert entry["prompt_tokens"] == 140
+        assert entry["completion_tokens"] == 60
+        assert entry["cost_usd"] == pytest.approx(0.04)
+        assert entry["node_count"] == 2
+        assert attributed[("judge", "p-judge")]["node_count"] == 1
+        assert payload["node_count"] == 3
+        assert payload["total_cost_usd"] == pytest.approx(0.06)
+
+    def test_历史行未标定单列不摊入任何分组(self, web_config, cost_nodes):
+        cost_nodes(_cost_json(llm_calls=2, llm_tokens=120, cost_usd=0.05, with_key=False))
+        cost_nodes(
+            _cost_json(
+                llm_calls=1,
+                llm_tokens=50,
+                cost_usd=0.02,
+                breakdown={_ROLE: {_PROFILE: _breakdown_entry(1, 40, 10, 0.02)}},
+            )
+        )
+        payload = get_costs(web_config, group_by="role_profile")
+        uncalibrated = [item for item in payload["items"] if item["state"] == "uncalibrated"]
+        assert len(uncalibrated) == 1
+        item = uncalibrated[0]
+        assert item["role"] is None and item["profile_id"] is None
+        assert item["node_count"] == 1
+        assert item["calls"] == 2  # 计数取六字段 llm_calls 合计
+        assert item["cost_usd"] is None  # 历史行无 LLM 专属金额标量，如实为 null
+        attributed = [i for i in payload["items"] if i["state"] == "attributed"]
+        assert sum(i["node_count"] for i in attributed) == 1
+
+    def test_缓存命中零计费与未标定不混标(self, web_config, cost_nodes):
+        # 键在场且空、llm_calls>0 → 缓存命中（零计费）；键缺席 → 未标定（历史行）
+        cost_nodes(_cost_json(llm_calls=1, llm_tokens=80, cost_usd=0.0, breakdown={}))
+        cost_nodes(_cost_json(llm_calls=1, llm_tokens=60, cost_usd=0.03, with_key=False))
+        payload = get_costs(web_config, group_by="role_profile")
+        states = {item["state"]: item for item in payload["items"]}
+        assert set(states) == {"cache_hit_zero_cost", "uncalibrated"}
+        hit = states["cache_hit_zero_cost"]
+        assert hit["cost_usd"] == 0.0
+        assert hit["calls"] == 1
+        assert hit["node_count"] == 1
+        assert states["uncalibrated"]["node_count"] == 1
+
+    def test_未标定组计数与占比可断言取得(self, web_config, cost_nodes):
+        cost_nodes(
+            _cost_json(
+                llm_calls=1,
+                llm_tokens=50,
+                cost_usd=0.02,
+                breakdown={_ROLE: {_PROFILE: _breakdown_entry(1, 40, 10, 0.02)}},
+            )
+        )
+        cost_nodes(_cost_json(llm_calls=1, llm_tokens=80, cost_usd=0.0, breakdown={}))
+        cost_nodes(_cost_json(llm_calls=3, llm_tokens=60, cost_usd=0.03, with_key=False))
+        payload = get_costs(web_config, group_by="role_profile")
+        uncalibrated = next(item for item in payload["items"] if item["state"] == "uncalibrated")
+        assert payload["node_count"] == 3
+        assert uncalibrated["node_count"] / payload["node_count"] == pytest.approx(1 / 3)
+
+    def test_无_LLM_调用节点单列不入缓存命中(self, web_config, cost_nodes):
+        # 键在场且空、llm_calls==0 → 无 LLM 腿（与缓存命中不混标，如实单列）
+        cost_nodes(_cost_json(llm_calls=0, llm_tokens=0, cost_usd=0.0, breakdown={}))
+        cost_nodes(_cost_json(llm_calls=1, llm_tokens=10, cost_usd=0.0, breakdown={}))
+        payload = get_costs(web_config, group_by="role_profile")
+        states = {item["state"]: item for item in payload["items"]}
+        assert set(states) == {"no_llm", "cache_hit_zero_cost"}
+        assert states["no_llm"]["calls"] == 0
+        assert states["no_llm"]["node_count"] == 1
+
+    def test_Agent_过滤仍生效(self, web_config, cost_nodes):
+        cost_nodes(
+            _cost_json(
+                llm_calls=1,
+                llm_tokens=50,
+                cost_usd=0.02,
+                breakdown={_ROLE: {_PROFILE: _breakdown_entry(1, 40, 10, 0.02)}},
+            )
+        )
+        cost_nodes(
+            _cost_json(
+                llm_calls=1,
+                llm_tokens=30,
+                cost_usd=0.01,
+                breakdown={"judge": {"p-judge": _breakdown_entry(1, 20, 10, 0.01)}},
+            ),
+            agent_id="storyboard",
+        )
+        payload = get_costs(web_config, agent_id="storyboard", group_by="role_profile")
+        assert payload["node_count"] == 1
+        assert {(i["role"], i["profile_id"]) for i in payload["items"]} == {("judge", "p-judge")}
+
+    def test_未知分组维度报错(self, web_config):
+        with pytest.raises(WebQueryError, match="分组维度"):
+            get_costs(web_config, group_by="bogus")
 
 
 class TestC7摘要徽标:

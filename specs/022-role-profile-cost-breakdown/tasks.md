@@ -19,33 +19,33 @@
 
 ## 阶段 1 机制侧（US1 数据面，= 机制提交）
 
-- [ ] T2205 [P] [US1] 扩展 `tests/unit/test_tree_models.py`：`llm_breakdown` D2 校验（负值/空键/Σ 超和拒绝、Σ ≤ 总量合法、空合法）、`asdict` 往返、**缺键旧 dict 读回 ⇒ 默认 + 不报错**——先红
-- [ ] T2206 [P] [US1] 新建 `tests/unit/test_tree_attribution.py`：`add_call`（空 role/profile_id 即 ValidationError；cached 调用由调用侧跳过、工具不复查）、`merge`（同键累加、可结合性、不改入参）——先红
-- [ ] T2207 [US1] `core/tree/models.py`：`CostRecord` 增列 `llm_breakdown: dict = field(default_factory=dict)` + `__post_init__` 结构校验（不耦合 Role 枚举，原则五）——绿 T2205
-- [ ] T2208 [P] [US1] 新建 `core/tree/attribution.py`：`add_call` / `merge` 薄工具（纯函数，零网关依赖）——绿 T2206
-- [ ] T2209 [P] [US3] `core/llm_gateway/gateway.py` 的 `cost_breakdown()` docstring 过时口径（"CostRecord 口径不变（分解只在报告层呈现）"）改为新口径
-- [ ] T2210 快速核对：单文件跑 T2205/T2206 两测试文件 + `ruff check` 触及文件
-- [ ] T2211 **机制提交**（父代理）：仅 T2205~T2209 触及文件入库，提交号记为 `mechanism_ref` 并登记末节
+- [x] T2205 [P] [US1] 扩展 `tests/unit/test_tree_models.py`：`llm_breakdown` D2 校验（负值/空键/Σ 超和拒绝、Σ ≤ 总量合法、空合法）、`asdict` 往返、**缺键旧 dict 读回 ⇒ 默认 + 不报错**——先红
+- [x] T2206 [P] [US1] 新建 `tests/unit/test_tree_attribution.py`：`add_call`（空 role/profile_id 即 ValidationError；cached 调用由调用侧跳过、工具不复查）、`merge`（同键累加、可结合性、不改入参）——先红
+- [x] T2207 [US1] `core/tree/models.py`：`CostRecord` 增列 `llm_breakdown: dict = field(default_factory=dict)` + `__post_init__` 结构校验（不耦合 Role 枚举，原则五）——绿 T2205
+- [x] T2208 [P] [US1] 新建 `core/tree/attribution.py`：`add_call` / `merge` 薄工具（纯函数，零网关依赖）——绿 T2206
+- [x] T2209 [P] [US3] `core/llm_gateway/gateway.py` 的 `cost_breakdown()` docstring 过时口径（"CostRecord 口径不变（分解只在报告层呈现）"）改为新口径
+- [x] T2210 快速核对：单文件跑 T2205/T2206 两测试文件 + `ruff check` 触及文件
+- [x] T2211 **机制提交**（父代理）：仅 T2205~T2209 触及文件入库，提交号记为 `mechanism_ref` 并登记末节
 
 ## 阶段 2 接入侧 A（US1 loops 与汇总，基线 = T2211 提交）
 
-- [ ] T2212 [P] [US1] 新建 `tests/integration/test_cost_attribution.py`：固定种子多 Agent 运行 ⇒ 逐节点 Σ calls/tokens ≤ 总量且非缓存节点取等；**全部新节点分解Σ与运行内网关 `cost_breakdown()` 逐格一致**（SC-001/002）；含一条"缺键旧行读回 ⇒ 展示三态之「未标定」"用例——先红
-- [ ] T2213 [US1] `agents/screenplay/loop.py` 接入 `add_call`（含失败/预估节点按 plan D4"拟走角色 × 档案"记录 `calls=1, tokens=0`，profile_id 取 `gateway.route(role)` 判定值）；**顺带修正 :796 欠计缺陷**——`generated.usage` 在手 ⇒ `llm_tokens` 补填真实值（断言按扩展更新）
-- [ ] T2214 [P] [US1] `agents/promo/{material.py,loop.py,ingest.py}` 接入（`_cost_record` 增参传递 breakdown；cached 结果跳过；归属直接取 `LLMResult.role`/`profile_id`）
-- [ ] T2215 [P] [US1] 其余 loops 按 T2203 清单接入（visual / storyboard / editing / dev 中带 llm_calls 的构造点；judge 归属 profile_id 取 `gateway.route(role)` 判定值）；**顺带修正 `dev/loop.py:675` 欠计缺陷**——已完成调用 tokens 补入 `llm_tokens`（断言按扩展更新）；**sound 零接入**（无 LLM 字段）
-- [ ] T2216 [P] [US1] `core/replay/{observation.py,trajectory.py}` 的 `CostRecord` 汇总接入 `merge`（`total_cost` 分解可回溯）
-- [ ] T2217 核对：T2212 转绿 + 触及文件单测单文件跑 + ruff
+- [x] T2212 [P] [US1] 新建 `tests/integration/test_cost_attribution.py`：固定种子多 Agent 运行 ⇒ 逐节点 Σ calls/tokens ≤ 总量且非缓存节点取等；**全部新节点分解Σ与运行内网关 `cost_breakdown()` 逐格一致**（SC-001/002）；含一条"缺键旧行读回 ⇒ 展示三态之「未标定」"用例——先红
+- [x] T2213 [US1] `agents/screenplay/loop.py` 接入 `add_call`（含失败/预估节点按 plan D4"拟走角色 × 档案"记录 `calls=1, tokens=0`，profile_id 取 `gateway.route(role)` 判定值）；**顺带修正 :796 欠计缺陷**——`generated.usage` 在手 ⇒ `llm_tokens` 补填真实值（断言按扩展更新）
+- [x] T2214 [P] [US1] `agents/promo/{material.py,loop.py,ingest.py}` 接入（`_cost_record` 增参传递 breakdown；cached 结果跳过；归属直接取 `LLMResult.role`/`profile_id`）
+- [x] T2215 [P] [US1] 其余 loops 按 T2203 清单接入（visual / storyboard / editing / dev 中带 llm_calls 的构造点；judge 归属 profile_id 取 `gateway.route(role)` 判定值）；**顺带修正 `dev/loop.py:675` 欠计缺陷**——已完成调用 tokens 补入 `llm_tokens`（断言按扩展更新）；**sound 零接入**（无 LLM 字段）
+- [x] T2216 [P] [US1] `core/replay/{observation.py,trajectory.py}` 的 `CostRecord` 汇总接入 `merge`（`total_cost` 分解可回溯）
+- [x] T2217 核对：T2212 转绿 + 触及文件单测单文件跑 + ruff
 
 ## 阶段 3 接入侧 B（US2 消费面）
 
-- [ ] T2218 [P] [US2] `web` 查询分组测试先红（文件依 T2204 结论）：`group_by=role_profile` 分组值 == 网关分解同键；含历史节点时「未标定」单列、不摊入任何分组；「缓存命中（零计费）」与「未标定」不混标（D3 三态）；「未标定」组计数/占比可断言取得（SC-003）
-- [ ] T2219 [US2] `web/queries.py`：`get_costs` 新增 `group_by=role_profile` 维度（读原始 JSON 键在场性区分三态；既有维度行为不变）——绿 T2218
+- [x] T2218 [P] [US2] `web` 查询分组测试先红（文件依 T2204 结论）：`group_by=role_profile` 分组值 == 网关分解同键；含历史节点时「未标定」单列、不摊入任何分组；「缓存命中（零计费）」与「未标定」不混标（D3 三态）；「未标定」组计数/占比可断言取得（SC-003）
+- [x] T2219 [US2] `web/queries.py`：`get_costs` 新增 `group_by=role_profile` 维度（读原始 JSON 键在场性区分三态；既有维度行为不变）——绿 T2218
 
 ## 阶段 4 治理件（US3）
 
-- [ ] T2220 [US3] `specs/016-llm-model-routing/contracts/gateway-routing.md` C6 **仅替换末句**为"六字段口径不变 + 分解为 022 扩展字段、口径同 `cost_breakdown()`"（diff 除此句外为空）
-- [ ] T2221 [P] [US3] `.specify/memory/constitution.md` 原则二 `CostRecord` 条目后**增句**登记扩展字段口径（不删改既有条款；版本与日期按治理规则登记）
-- [ ] T2222 [US3] 规格勾稽：`spec.md` 开放问题 1（表示形态=嵌套映射）已被 D1 裁决、假设段"网关采样边界"条已被 D6 闭环（analyze 修订已就地落实）⇒ 规格状态 Draft → Reviewed 并登记
+- [x] T2220 [US3] `specs/016-llm-model-routing/contracts/gateway-routing.md` C6 **仅替换末句**为"六字段口径不变 + 分解为 022 扩展字段、口径同 `cost_breakdown()`"（diff 除此句外为空）
+- [x] T2221 [P] [US3] `.specify/memory/constitution.md` 原则二 `CostRecord` 条目后**增句**登记扩展字段口径（不删改既有条款；版本 v2.0.0 → **v2.1.0** MINOR，2026-09-26；`AGENTS.md` 引用同步）
+- [x] T2222 [US3] 规格勾稽：`spec.md` 开放问题 1（表示形态=嵌套映射）已被 D1 裁决、假设段"网关采样边界"条已被 D6 闭环（analyze 修订已就地落实）⇒ 规格状态 Draft → Reviewed 并登记
 - [ ] T2223 **接入提交**（父代理）：T2212~T2222 触及文件入库
 
 ## 阶段 5 收口门禁（父代理宿主机，**串行**，贴实测数字）
@@ -71,7 +71,7 @@
 
 | 批次 | 内容 | 提交号 | 门禁实测 | 未决项 |
 | --- | --- | --- | --- | --- |
-| 机制 | T2205~T2209 | （T2211 回填） | （回填） | — |
+| 机制 | T2205~T2209 | 3929cb0（机制提交；设计件前置提交 75a714b） | 单文件 62 例绿 / ruff 触及文件绿 | — |
 | 接入 | T2212~T2222 | （T2223 回填） | （T2224~T2229 回填） | — |
 
 **T2203 构造点清单**（勘查实测，agent-1 回报）：

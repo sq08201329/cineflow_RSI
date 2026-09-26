@@ -11,6 +11,7 @@ from agents.promo.platform.base import PromoMaterial
 from core.llm_gateway.gateway import LLMGateway
 from core.llm_gateway.routing import Role  # 功能 016：调用角色（路由只在网关）
 from core.tree.artifacts import ArtifactStore
+from core.tree.attribution import add_call  # 功能 022：角色 × 档案分解归集
 
 
 def generate_material(
@@ -50,10 +51,23 @@ def generate_material(
         platform=brief.get("platform", "simulated"),
         tags=list(brief.get("tags", [])),
     )
+    # 022：角色 × 档案分解——归属直接取 LLMResult 自带 role/profile_id；
+    # cached（零计费）跳过、未接档案旧路径（归属空）⇒ 空分解（既有行为不变）
+    breakdown: dict = {}
+    if not result.cached and result.role and result.profile_id:
+        breakdown = add_call(
+            {},
+            role=result.role,
+            profile_id=result.profile_id,
+            prompt_tokens=int(result.usage["prompt_tokens"]),
+            completion_tokens=int(result.usage["completion_tokens"]),
+            cost_usd=float(result.cost_usd),
+        )
     cost = {
         "llm_calls": 1,
         "llm_tokens": result.usage["prompt_tokens"] + result.usage["completion_tokens"],
         "gateway_usd": result.cost_usd,
         "wall_clock_seconds": time.perf_counter() - start,
+        "llm_breakdown": breakdown,
     }
     return material, cost

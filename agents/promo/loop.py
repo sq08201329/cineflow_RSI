@@ -90,13 +90,17 @@ def _material_id(round_id: str, index: int) -> str:
 
 
 def _cost_record(cost: dict, spent_usd: float = 0.0) -> CostRecord:
-    """成本映射：网关折算 + 投放花费同入 generation_api_cost_usd（对账口径一致）。"""
+    """成本映射：网关折算 + 投放花费同入 generation_api_cost_usd（对账口径一致）。
+
+    022：角色 × 档案分解透传（键缺席 ⇒ 空分解，旧行/旧调用方兼容）。
+    """
     return CostRecord(
         llm_calls=cost.get("llm_calls", 0),
         llm_tokens=cost.get("llm_tokens", 0),
         generation_api_calls=1 if spent_usd > 0 else 0,
         generation_api_cost_usd=cost.get("gateway_usd", 0.0) + spent_usd,
         wall_clock_seconds=cost.get("wall_clock_seconds", 0.0),
+        llm_breakdown=cost.get("llm_breakdown", {}),
     )
 
 
