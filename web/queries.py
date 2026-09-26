@@ -542,7 +542,8 @@ def get_node(config: WebConfig, node_id: str) -> dict | None:
                 "diagnostics_keys": sorted(diagnostics),
             }
         )
-    cost = _cost_record(row["cost"], "tree_nodes.cost")
+    # 详情 = 全量记录（含 022 扩展键 llm_breakdown），与 001 parity 口径一致
+    cost = _cost_payload(row["cost"], "tree_nodes.cost")
     return {
         "node_id": row["node_id"],
         "tree_id": row["tree_id"],
