@@ -46,16 +46,16 @@
 - [x] T2220 [US3] `specs/016-llm-model-routing/contracts/gateway-routing.md` C6 **仅替换末句**为"六字段口径不变 + 分解为 022 扩展字段、口径同 `cost_breakdown()`"（diff 除此句外为空）
 - [x] T2221 [P] [US3] `.specify/memory/constitution.md` 原则二 `CostRecord` 条目后**增句**登记扩展字段口径（不删改既有条款；版本 v2.0.0 → **v2.1.0** MINOR，2026-09-26；`AGENTS.md` 引用同步）
 - [x] T2222 [US3] 规格勾稽：`spec.md` 开放问题 1（表示形态=嵌套映射）已被 D1 裁决、假设段"网关采样边界"条已被 D6 闭环（analyze 修订已就地落实）⇒ 规格状态 Draft → Reviewed 并登记
-- [ ] T2223 **接入提交**（父代理）：T2212~T2222 触及文件入库
+- [x] T2223 **接入提交**（父代理）：T2212~T2222 触及文件入库
 
 ## 阶段 5 收口门禁（父代理宿主机，**串行**，贴实测数字）
 
-- [ ] T2224 覆盖率 `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85`（≥85%）
-- [ ] T2225 契约两腿：`uv run pytest tests/contract` 与 `CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q`
-- [ ] T2226 集成 `uv run pytest tests/integration -m integration`
-- [ ] T2227 对抗 `uv run pytest tests/adversarial -m adversarial`（**必须串行**，不与任何套件并跑）
-- [ ] T2228 无偏性 `uv run pytest tests/unbiasedness -m unbiasedness`（τ≥0.95）
-- [ ] T2229 `uv run ruff check . && uv run ruff format --check .`
+- [x] T2224 覆盖率 `uv run pytest tests/unit --cov=core --cov=agents --cov=dreaming --cov=web --cov-report=term-missing --cov-fail-under=85`（≥85%）
+- [x] T2225 契约两腿：`uv run pytest tests/contract` 与 `CINEFLOW_CONTRACT_STUB=1 uv run pytest tests/contract -q`
+- [x] T2226 集成 `uv run pytest tests/integration -m integration`
+- [x] T2227 对抗 `uv run pytest tests/adversarial -m adversarial`（**必须串行**，不与任何套件并跑）
+- [x] T2228 无偏性 `uv run pytest tests/unbiasedness -m unbiasedness`（τ≥0.95）
+- [x] T2229 `uv run ruff check . && uv run ruff format --check .`
 - [ ] T2230 勾选回填 + 实测数字入本文件 + 批次/未决登记（含 pilot 五件套逐字节比对既有测试仍绿的证据行）
 
 ---
@@ -72,8 +72,9 @@
 | 批次 | 内容 | 提交号 | 门禁实测 | 未决项 |
 | --- | --- | --- | --- | --- |
 | 机制 | T2205~T2209 | 3929cb0（机制提交；设计件前置提交 75a714b） | 单文件 62 例绿 / ruff 触及文件绿 | — |
-| 接入 | T2212~T2222 | e39012d（接入提交） | 抽查 74 例绿（web_board 23 + web_server 47 + cost_attribution 4）；慢门禁见下行回填 | ① judge `last_usage` 仅聚合值（评估器零改动红线）⇒ judge 格 prompt/completion 拆分不可得，tokens/cost 合计精确、记于首格，如实登记；② 展示层在三态外如实增设第四态 `no_llm`（键在场且空且 llm_calls==0，父代理裁决认可）；③ `web/server.py` 路由补 `group_by` 透传（T2219 面扩展，父代理裁决）；④ `core/replay/trajectory.py` 无汇总点零改动（simulator 经 `sum_costs` 已覆盖） |
-| 收口修复 | 门禁首轮红两处的修复 | 6480ed7（web parity 修复：get_node 详情成本改全量 `_cost_payload`）+ 8ab83b9（接入清单基线重打 4e90164→6480ed7） | 修复点快核：parity 用例+web 单测 71 例绿；onboarding 18 例绿（越界 0 / exit 0） | 首轮门禁如实登记：契约两腿各 1 红（web_parity 详情字段——`_cost_record` 六字段投影丢了新键）、集成 4 红（021 接入清单检出 022 改动越界——机制件批次再动，按测试内"重打纪律"前移基线，先例 8b413d4/d26e8e7） |
+| 接入 | T2212~T2222 | e39012d（接入提交） | 抽查 74 例绿（web_board 23 + web_server 47 + cost_attribution 4）；慢门禁见"门禁终轮"行 | ① judge `last_usage` 仅聚合值（评估器零改动红线）⇒ judge 格 prompt/completion 拆分不可得，tokens/cost 合计精确、记于首格，如实登记；② 展示层在三态外如实增设第四态 `no_llm`（键在场且空且 llm_calls==0，父代理裁决认可）；③ `web/server.py` 路由补 `group_by` 透传（T2219 面扩展，父代理裁决）；④ `core/replay/trajectory.py` 无汇总点零改动（simulator 经 `sum_costs` 已覆盖） |
+| 收口修复 | 门禁首轮红两处的修复 | 6480ed7（web parity 修复：get_node 详情成本改全量 `_cost_payload`）+ 8ab83b9（接入清单基线重打 4e90164→6480ed7）+ 86b9cfa（web_queries 断言按扩展加键 + 3 新文件 format + E501） | 修复点快核：parity 用例+web 单测 71 例绿；onboarding 18 例绿（越界 0 / exit 0）；ruff 614 全绿 | 首轮门禁如实登记：契约两腿各 1 红（web_parity 详情字段——`_cost_record` 六字段投影丢了新键）、集成 4 红（021 接入清单检出 022 改动越界——机制件批次再动，按测试内"重打纪律"前移基线，先例 8b413d4/d26e8e7）；第二轮 1 红 `test_deploy_cli.py::test_spot_check_creates_task_and_lists_pending`（与 022 改动面无交集，单跑/文件级跑均绿，终轮未复现 ⇒ 记一次性 flake，留观察） |
+| 门禁终轮 | T2224~T2229（父代理宿主机串行，树 = 86b9cfa） | — | **覆盖率 92.75% ≥85%（4561 passed，1:05:29）**；契约腿1 **542 passed**（56 skipped）；契约腿2 stub **598 passed**；集成 **120 passed**（55 deselected）；对抗 **25 passed**；无偏性 **40 passed**；ruff check 全绿 + format **614 files** 已格式化 | — |
 
 **T2203 构造点清单**（勘查实测，agent-1 回报）：
 
