@@ -159,12 +159,16 @@ class Test类别判定:
             ("tests/unit/test_new.py", "A", "test_doc"),
             ("tests/unit/test_x.py", "M", "test_doc"),
             ("docs/x.md", "M", "test_doc"),
+            ("docs/三期立项书.md", "M", "test_doc"),
             ("specs/021-x/spec.md", "A", "test_doc"),
+            ("README.md", "M", "test_doc"),
+            ("README.md", "A", "test_doc"),
             ("ops/demo_new.py", "A", "out_of_scope"),
             ("ops/form_plugin.py", "M", "out_of_scope"),
             ("core/evaluators/composite.py", "M", "out_of_scope"),
             ("web/server.py", "D", "out_of_scope"),
-            ("README.md", "A", "out_of_scope"),
+            # 牙齿：放行面**只**含文档路径——仓库根的非文档文件修改仍越界
+            ("pyproject.toml", "M", "out_of_scope"),
         ),
     )
     def test_类别取自英文枚举(self, path, status, expected):
@@ -183,6 +187,55 @@ class Test类别判定:
     def test_非法状态即报错(self):
         with pytest.raises(OnboardingError):
             classify("configs/nf.yaml", "X")
+
+
+class Test非ASCII路径与文档放行面:
+    """两处真缺陷的回归用例（裁决 2026-09-26）。
+
+    ① **路径解码**：`git diff --name-status` 默认对**非 ASCII 路径**输出 C 转义引号
+    （如 `"docs/\344\270\211\346\234\237..."`）⇒ 前缀判定失配、中文路径被误判 `out_of_scope`。
+    清单条目的 `path` 必须**逐字等于真实路径**（不含引号、不含 `\\344` 转义）；
+    ② **文档面分类**：`README.md`（仓库根）与 `docs/**` 属"测试与文档"面、放行。
+    """
+
+    def test_中文路径在diff与未跟踪两支都逐字还原(self, repo):
+        tracked = "docs/三期交付说明.md"
+        untracked = "specs/021-中文/需求.md"
+        _write(repo["root"], tracked, "# 交付说明\n")
+        _commit(repo["root"], "中文交付文档")  # ⇒ 只经 `git diff` 一支出现
+        _write(repo["root"], untracked, "# 需求\n")  # ⇒ 只经 `ls-files --others` 一支出现
+        changes = {
+            item.path: item for item in changed_files(repo["baseline_ref"], repo_root=repo["root"])
+        }
+        for relative in (tracked, untracked):
+            assert relative in changes, f"中文路径未被逐字还原：{sorted(changes)}"
+            item = changes[relative]
+            assert item.status == "A"
+            assert (repo["root"] / item.path).is_file(), "清单路径必须可还原回真实文件"
+            assert classify(item.path, item.status) == "test_doc"
+
+    def test_中文文档与README修改在清单里归test_doc且零越界(self, repo):
+        chinese = "docs/三期立项书.md"
+        _write(repo["root"], chinese, "# 立项书\n")
+        _write(repo["root"], "README.md", "# demo（改）\n")
+        manifest = build_manifest(
+            repo["config_path"],
+            repo["baseline_ref"],
+            mechanism_ledger_ref=repo["mechanism_ref"],
+            repo_root=repo["root"],
+        )
+        entries = {change["path"]: change for change in manifest["changes"]}
+        assert entries[chinese]["category"] == "test_doc", sorted(entries)
+        readme = entries["README.md"]
+        assert (readme["status"], readme["category"], readme["violation"]) == (
+            "M",
+            "test_doc",
+            False,
+        )
+        assert manifest["violations"] == []
+        assert manifest["counts"]["越界"] == 0
+        assert manifest["counts"]["既有模块被修改"] == 0
+        assert manifest["exit_code"] == EXIT_OK
 
 
 class Test清单形状与越界:

@@ -658,7 +658,13 @@ class TestC18诚实分层:
         # 装配面显式声明 ⇒ 运行记录如实标注（不按"跑通了"推断）
         for source in ("real", "simulated"):
             call = RecordingChannelCall(
-                _StubAdapter(), assembly=assembly, stage="promo_launch", source=source
+                _StubAdapter(),
+                assembly=assembly,
+                stage="promo_launch",
+                source=source,
+                # 运行记录按**显式时钟**归属日（该文件既有口径 `MOMENT`）：不依赖运行日，
+                # 否则写入按当日、下方 `load_run("2026-09-25", …)` 会在次日变红
+                clock=lambda: MOMENT,
             )
             campaign = call.create_campaign(_material(), 0.1, idempotency_key="k")
             assert campaign.spent_usd == 0.05
@@ -697,7 +703,14 @@ class TestC18诚实分层:
         cfg = BudgetConfig.from_yaml(path)
         assembly = assemble_guard(path, channel_id=media)
         adapter = _StubAdapter()
-        call = RecordingChannelCall(adapter, assembly=assembly, stage="promo_launch", source="real")
+        call = RecordingChannelCall(
+            adapter,
+            assembly=assembly,
+            stage="promo_launch",
+            source="real",
+            # 显式时钟（同 `MOMENT` 口径）：运行记录归属日不随运行日漂移
+            clock=lambda: MOMENT,
+        )
         with pytest.raises(BudgetRefusedError) as excinfo:
             call.create_campaign(_material(), 1.0, idempotency_key="k")
         assert excinfo.value.reason == "over_limit"

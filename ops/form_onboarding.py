@@ -655,6 +655,10 @@ _CATEGORY_COUNTS_KEY = {
 STATUS_CODES: tuple[str, ...] = ("A", "M", "D")
 # 放行面（按**类别**判定，不按路径前缀）
 _TEST_DOC_PREFIXES: tuple[str, ...] = ("tests/", "docs/", "specs/")
+# 仓库根的**交付文档**（裁决 2026-09-26）：`README.md` 属"测试与文档"面、不是模块逻辑改动。
+# **牙齿保留**：本放行面**只**含文档路径——`core/` / `agents/` / `ops/` / `web/` / `dreaming/` /
+# `policies/` 的**既有文件修改**仍是 `out_of_scope`，新增 `ops/**` 亦一律越界（判据不动）。
+_TEST_DOC_FILES: tuple[str, ...] = ("README.md",)
 _PLUGIN_TARGET_PREFIX = "core/evaluators/plugins/"
 _CONFIG_PREFIX = "configs/"
 # `index.jsonl` 每行的字段集（**恰好七键**；C12 的字段权威表）
@@ -687,8 +691,15 @@ class ChangedFile:
 
 
 def _git(args: list[str], repo_root: Path) -> str:
+    # `core.quotePath=false`：git 默认对**非 ASCII 路径**输出 C 转义引号
+    # （如 `"docs/\344\270\211..."`）⇒ 路径前缀判定会失配（中文路径被误判 `out_of_scope`）。
+    # 关闭引号后拿到**原样 UTF-8 路径**，清单条目的 `path` 与真实路径逐字相同。
     completed = subprocess.run(
-        ["git", *args], cwd=repo_root, capture_output=True, text=True, check=False
+        ["git", "-c", "core.quotePath=false", *args],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if completed.returncode != 0:
         raise OnboardingError(f"git {' '.join(args)} 失败：{completed.stderr.strip()}")
@@ -751,6 +762,11 @@ def classify(path: str, status: str) -> str:
     ——前缀判定**无法区分这两件事**，故必须同时看 `status` 与类别。`ops/**` 的**任何**改动
     （新增或修改）都判 `out_of_scope`：一旦给 `ops/` 开放行面，本清单就再也证明不了
     "新形态接入 = 仅新增配置 + 插件"。
+
+    **测试与文档面**（裁决 2026-09-26）= `tests/**` / `docs/**` / `specs/**` 的新增或修改
+    **与仓库根 `README.md`**（交付文档，不是模块逻辑改动）；放行面**只**含文档路径——
+    六目录（`core/` / `agents/` / `ops/` / `web/` / `dreaming/` / `policies/`）的既有文件修改、
+    以及三类之外的新增文件（含新增 `ops/**`）**一律仍是 `out_of_scope`**。
     """
     code = _normalize_status(status)
     if code == "A" and path.startswith(_CONFIG_PREFIX) and path.endswith(".yaml"):
@@ -760,7 +776,7 @@ def classify(path: str, status: str) -> str:
         or (path.startswith("agents/") and "/evaluators/" in path)
     ):
         return "plugin"
-    if path.startswith(_TEST_DOC_PREFIXES):
+    if path in _TEST_DOC_FILES or path.startswith(_TEST_DOC_PREFIXES):
         return "test_doc"
     return "out_of_scope"
 

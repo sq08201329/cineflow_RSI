@@ -54,13 +54,15 @@
 | --- | --- | --- |
 | **配置** = `config` | **新增** `configs/*.yaml` | 放行 |
 | **插件** = `plugin` | **新增** `core/evaluators/plugins/**`（业务无关的通用件）或 `agents/<agent>/evaluators/**`（语义与某 Agent 绑定时） | 放行；两类都**必须经 `impl` 声明才生效**（"目录不决定可用性、配置声明才决定"，机检在 `contracts/plugin-config.md` C1） |
-| **测试与文档** = `test_doc` | **新增或修改** `tests/**`、`docs/**`、`specs/**` | 放行（登记点同步与文档必然要改这些；规格裁决把"改动面 = 配置 + 插件 + 测试与文档"逐字写定） |
+| **测试与文档** = `test_doc` | **新增或修改** `tests/**`、`docs/**`、`specs/**`，**以及仓库根 `README.md`**（交付文档，裁决 2026-09-26） | 放行（登记点同步与文档必然要改这些；规格裁决把"改动面 = 配置 + 插件 + 测试与文档"逐字写定）。**放行面只含文档路径**——六目录的既有文件修改与"三类之外的新增文件"仍是越界 |
 | **越界** = `out_of_scope` | **任何既有文件的修改或删除**位于 `core/` / `agents/` / `ops/` / `web/` / `dreaming/` / `policies/`；**或**上述三类之外的**新增**文件（例如新增 core 机制模块、新增 ops CLI） | **越界**：退出码 **1** + **逐条点名**路径与类别（**不得**只报总数、**不得**静默放行） |
 
 - **为什么必须是"类别"而不是"前缀"**：`agents/<agent>/evaluators/` 前缀下，**新增**插件文件是放行的、
   而**修改**该前缀下的既有文件是越界的——前缀判定**无法区分这两件事**（规格裁决 2 的理由）。
   机检因此对每个改动同时看 `status`（`A` 新增 / `M` 修改 / `D` 删除）与**类别**，
-  `M` / `D` 落在上述六个目录即越界（`tests/**` / `docs/**` / `specs/**` 除外）。
+  `M` / `D` 落在上述六个目录即越界（`tests/**` / `docs/**` / `specs/**` 与仓库根 `README.md` 除外）。
+  **路径解码**：清单由 `git -c core.quotePath=false` 派生 ⇒ 非 ASCII 路径（中文文件名）**原样 UTF-8**
+  进入 `path` 字段（默认的 C 转义引号会让前缀判定失配、把中文文档误判越界；机检 = 清单路径与真实路径逐字相同）。
 - **`ops/` 不设放行面（"新增 ops CLI = 越界"的牙齿必须保住）**：`ops/**` 的**任何**改动
   （新增或修改）都判 **`out_of_scope`**——**不得**把 `ops/demo_*.py`、`ops/form_*.py` 一类文件加进放行面
   （一旦加，本清单就再也证明不了"新形态接入 = 仅新增配置 + 插件"）。
@@ -118,7 +120,7 @@
 | `changes[]` | list | 每条 = `{path, status, category, violation, reason}`；条目与 git 派生集合**逐条相等** |
 | `changes[].path` | str | 非空；相对仓库根（与 git 的路径拼写逐字一致） |
 | `changes[].status` | str | **枚举 `{"A", "M", "D"}`**（= `git diff --name-status` 的取值；未跟踪新增文件恒为 `"A"`） |
-| `changes[].category` | str | **枚举 `{"config", "plugin", "test_doc", "out_of_scope"}`**（**英文，权威**）：`config` = **新增** `configs/*.yaml`；`plugin` = **新增** `core/evaluators/plugins/**` 或 `agents/<agent>/evaluators/**`（且仍须经 `impl` 声明才生效）；`test_doc` = `tests/**`、`docs/**`、`specs/**` 的新增或修改；`out_of_scope` = **越界**（既有文件的修改/删除落在 `core/`/`agents/`/`ops/`/`web/`/`dreaming/`/`policies/`，或四类之外的新增文件） |
+| `changes[].category` | str | **枚举 `{"config", "plugin", "test_doc", "out_of_scope"}`**（**英文，权威**）：`config` = **新增** `configs/*.yaml`；`plugin` = **新增** `core/evaluators/plugins/**` 或 `agents/<agent>/evaluators/**`（且仍须经 `impl` 声明才生效）；`test_doc` = `tests/**`、`docs/**`、`specs/**` 的新增或修改，**以及仓库根 `README.md`**（交付文档；裁决 2026-09-26）；`out_of_scope` = **越界**（既有文件的修改/删除落在 `core/`/`agents/`/`ops/`/`web/`/`dreaming/`/`policies/`，或四类之外的新增文件） |
 | `changes[].violation` | bool | `== (category == "out_of_scope")`（**恒等式**，机检） |
 | `changes[].reason` | str | 非空的人可读理由（**不得**为空串；越界条必须点名**具体规则**，如"修改既有模块 `core/evaluators/composite.py`"） |
 | `counts` | dict | **键名（中文，权威）**：`{"配置", "插件", "测试与文档", "越界", "既有模块被修改"}`；值为 int；前四项分别 = `changes` 中四个 `category` 的条数，末项 = `violation is True` 且 `status ∈ {"M","D"}` 的条数（SC-001① 的落点）。**键名与 `category` 的英文枚举是两套标识**：`counts` 的**中文键**只作报表人读面，**判定一律走 `category` 的英文枚举**（不得按中文键判定） |

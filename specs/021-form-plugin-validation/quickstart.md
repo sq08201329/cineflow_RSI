@@ -8,14 +8,17 @@
 `contracts/form-registration.md`（C9~C11，五处登记点 / 登记完备 / 020 口径完备）、
 `contracts/onboarding-ops.md`（C12~C14，接入改动清单 / 机制侧总账 / CLI 与离线演示）。
 
-**当前状态如实标注**：本特性处于 **spec / research / plan / 契约阶段**——下文 **B 组命令所依赖的
-实现**（`core/evaluators/plugin.py`、`core/evaluators/plugins/`、六个 `agents/<agent>/evaluators/plugins.py`、
-`ops/form_guard.py`、`ops/form_onboarding.py`、`ops/form_plugin.py`、`ops/demo_form_plugin.py`
-与相应的新增测试文件）**尚未落地** ⇒ B 组命令现在**必然找不到文件而失败**；A 组命令今天即可跑。
+**当前状态如实标注（T2185④：落地态）**：本特性**机制侧（A1~A5）与接入侧（B1~B3）均已落地**——
+B 组命令所依赖的实现（`core/evaluators/plugin.py`、`core/evaluators/plugins/`、六个
+`agents/<agent>/evaluators/plugins.py`、`ops/form_guard.py`、`ops/form_onboarding.py`、
+`ops/form_plugin.py`、`ops/demo_form_plugin.py` 与相应的新增测试文件）**已全部落地** ⇒ **B 组命令可跑**
+（实测退出码与结论见文末"验证记录"）。A 组命令仍可跑：其 A3~A6 四条（机制缺口 / 守卫失明 / 词边界 /
+基线派生）是**改造前**的事实基线，**保留原样、不回改**——它们正是"机制侧不是零代码改动"的对照面。
 文末"验证记录"**只回填已实跑的结果**，不预填未跑的结论。
 
-**今天"仅新增配置 + 插件"不成立（本特性必须先补机制）**：B 组不是"补测试"，而是"**机制不存在**"——
-A 组里第 5~7 条命令即为该事实的三条取证。
+**"仅新增配置 + 插件"的成立范围（如实分层，FR-013 末句）**：**机制侧 A1~A5 是本特性的代码改动主体、
+不是零代码改动**（六项总账见下文"机制侧总账"节）——只有**此后**的新形态接入（B1/B2）才是
+"仅新增配置 + 插件"。A 组里第 5~7 条命令记录的是**改造前"机制不存在"**这一事实。
 
 ---
 
@@ -68,7 +71,7 @@ A6 两支命令合计给出的路径集合**只有未跟踪的 `specs/021-form-p
 
 ---
 
-## B. 本特性落地后可跑（B1~B5；实现尚未落地）
+## B. 本特性落地后可跑（B1~B5；实现已落地）
 
 ### B1 守卫与派生面（C5 / C6 / C7）
 
@@ -299,6 +302,15 @@ uv run python ops/demo_form_plugin.py --form <形态 id> --out "$OUT2" --baselin
 **本表与 `MECHANISM_LEDGER_PATHS` 的集合相等（判据，**不比较条数**）**：常量实测 **69** 条、
 上表 69 行（编号 1~69 连续）⇒ **双向差集为空**。
 
+**T2202 的差集收口登记（2026-09-26，按集合相等口径复核）**：本任务清单里的差集前提（"本表 **55** 行 vs
+常量 **56** 条 ⇒ 1 条待收口"）**已在 `44edc1b` 的 ledger 穷举中收口**——那一次迭代**补齐 22 条**
+（①组 8：六份 `agents/*/config.py` 声明面 + `tests/plugin_fixtures.py` + `tests/plugin_stubs.py`；③组 14：
+`ops/{dev,screenplay,demo_shortdrama_feedback}.py` + 11 份同族副本），**剔除 13 条**（10 条"符号命中但
+实测未改动"的夹具 + 3 条注释/文档面，逐条登记在 `NOT_LEDGER_ITEMS`）；口径也由"符号命中面"改为
+**"实际改动面"**。**本次（T2202）复核的实测结论**：两侧**均不缺**——`表 \ 常量 == 常量 \ 表 == ∅`
+（表 69 行 / 常量 69 条；`kind` 列逐行与常量一致，`ops/form_guard.py` 与 `tests/unit/test_form_switch.py`
+各只出现一行）⇒ **本表无需再补条**，差集判定结论 = "谁都没缺，差额已被 ledger 穷举收口"。
+
 **不属于机制侧 ledger 的两类（避免自相矛盾）**：① `core/evaluators/plugins/**`（含其 `__init__.py`）——
 它是 **B 阶段接入侧**的新增面（清单里恒为 `category = "plugin"` ⇒ 放行）；② `specs/**` / `docs/**` 的
 机制侧文档变更——它们在清单里恒属 `test_doc` 放行类，**不重复登记**。
@@ -411,14 +423,59 @@ uv run python ops/demo_form_plugin.py --form <形态 id> --out "$OUT2" --baselin
     （逐条登记在 `NOT_LEDGER_ITEMS` 的剔除面）；
     其中 **无** `tests/unit/test_visual_composite.py`、**无** `tests/contract/test_{screenplay,storyboard,editing,sound}_contracts.py`
     （实测偏差已如实登记在本文"机制侧总账"节与 `contracts/onboarding-ops.md` C13 的剔除面）
-- **未跑（如实留白，B 组）**：`tests/unit/test_form_guard.py`、`tests/unit/test_form_registration.py`、
-  `tests/unit/test_form_clause_completeness.py`、`tests/unit/test_form_onboarding.py`、
-  `tests/unit/test_evaluator_plugin_assembly.py`、`tests/contract/test_plugin_contracts.py`、
-  `tests/contract/test_form_onboarding_contracts.py` 与 `ops/form_guard.py` / `ops/form_onboarding.py` /
-  `ops/form_plugin.py` / `ops/demo_form_plugin.py` **均尚未落地**（已核实：文件不存在）⇒
-  B 组命令与"期望结果"**属待验证契约**，本文**不预填**其结论；实现落地后回填。
-- **未跑（覆盖率 / 集成 / 对抗 / 无偏性 / 全量 unit）**：按本次交付纪律**不在本机跑**，
-  属常驻 CI 与定时工作流面；口径**不放松**（覆盖率 ≥85% 含 `web`）。
+- **已实跑（B 组，2026-09-26，本仓；`--out` 一律 `mktemp -d` 临时目录）**：
+  - `uv run python ops/form_plugin.py guard` → **退出码 0**（字面量层 `violations 0` / `candidates 1`，分支层
+    `violations 0` / `candidates 0`；例外 E1 **恰好 1 处** = `core/deployment/evidence.py::_unbiasedness_result:97`）
+  - `uv run python ops/form_plugin.py registration --config configs/movie.yaml` → **0**（五处逐一"已登记 + 已委派"、
+    `forms = [ad, animated, movie, shortdrama]`、`sixth_sites []`、`completeness.violations []`）；
+    对 `configs/ad.yaml` 与 `configs/animated.yaml` 各再跑一次 → 均 **0**
+  - `uv run python ops/form_plugin.py sync-versions --check --config configs/shortdrama.yaml` → **0**（`diffs []`）
+  - `uv run python ops/form_plugin.py onboarding --baseline 75181dc --mechanism-ref def1e14 --config configs/ad.yaml --out "$T"` → **0**
+    （`violations []`、`counts = {配置 0, 插件 0, 测试与文档 2, 越界 0, 既有模块被修改 0}`、`config_fingerprint 97456ad7e897`）；
+    `--config configs/animated.yaml` → **0**（同形 `counts`、`config_fingerprint 8505eaff8062` ⇒ 两份配置可指认）；
+    缺 `--baseline` ⇒ **2**。**注**：以 `75181dc` 为基线时"配置/插件 = 0"是**该 ref 已含接入件**的后果
+    （提交卫生，见 T2180）；权威接入取证 = 以 `44edc1b` 为基线的那两次运行（`counts = {配置 2, 插件 2, 测试与文档 6, 越界 0, 既有模块被修改 0}`）。
+  - `uv run python ops/demo_form_plugin.py --form movie --out "$(mktemp -d)"` → **0**（`elapsed_seconds 60.063`）；
+    `--form ad` → **0**（`52.245`）；`--form animated` → **0**（`56.378`）；`steps` **九步逐条 ok**、
+    `network "none"` / `credentials_required false` / `uncalibrated true` / `uncalibrated_reason` 非空；
+    `--form nope`（未声明形态）⇒ **2**；`--help` ⇒ **0**；跑完 `git status --porcelain` **无运行期产物**。
+  - **产物齐备与 append-only**：同一 `--out` 依次跑 `guard` / `registration` / `onboarding`（对 ad 连跑两次）/ `demo`
+    ⇒ **五类产物齐备**（六件：清单类 `onboarding-ad-0001.json` 与 `onboarding-ad-0002.json`、`index.jsonl`、
+    `guard-report.json`、`registration-report.json`、`demo-report.json`）；`index.jsonl` 行数 **2**、
+    `onboarding-ad-0001.json` 的 sha256 **前后不变** ⇒ append-only 成立。
+  - **单文件测试子集（T2187 口径）**：`uv run pytest tests/unit/test_form_onboarding.py tests/contract/test_form_onboarding_contracts.py
+    tests/unit/test_pilot_upgrade_path.py tests/unit/test_config_integrity.py tests/unit/test_form_switch.py
+    tests/unit/test_form_no_new_dependency.py -q` → **428 passed**（exit 0），逐文件采集数
+    **38 / 31 / 8 / 325 / 20 / 6**（`test_form_switch.py` 基线 **17**、`test_config_integrity.py` 基线 **125**
+    ⇒ 用例数**只增不减**）；`uv run pytest tests/unit/test_form_guard.py tests/unit/test_form_registration.py -q` → **52 passed**。
+  - **阶段 2~5 的其余单文件子集（本次实跑，2026-09-26）**：`tests/unit/test_form_clause_completeness.py`
+    `tests/unit/test_evaluator_plugin_assembly.py` `tests/unit/test_core_plugin_artifact_metadata.py`
+    `tests/contract/test_plugin_contracts.py` `tests/unit/test_pilot_chain_seven.py` `tests/unit/test_pilot_rehearsal.py`
+    `tests/unit/test_billing_channels.py` `tests/unit/test_billing_core_purity.py` `tests/unit/test_no_vendor_literals.py`
+    `tests/unit/test_dev_core_degraded_purity.py` `tests/unit/test_sound_composite.py` `tests/unit/test_dev_compare_adopt.py`
+    `tests/unit/test_calibration_config.py` `tests/unit/test_visual_loop.py` `tests/unit/test_visual_consistency.py`
+    `tests/unit/test_screenplay_composite.py` `tests/unit/test_storyboard_composite.py` `tests/unit/test_editing_composite.py`
+    `tests/unit/test_dev_composite.py` `tests/unit/test_screenplay_cli.py` `-q` → **482 passed / 2 failed**。
+    **两处失败全部落在 `tests/unit/test_billing_channels.py::TestC18诚实分层`**（`test_source_只能由装配面声明` /
+    `test_拒绝即零调用零入账且来源记_refused`，报 `RunLogError: 运行记录不存在：…/runs/2026-09-25.json`），
+    根因是 **020 遗留的日期依赖**（两处 `RecordingChannelCall` 未传 `clock` ⇒ 运行记录按**当日** `2026-09-26`
+    落盘、断言却写死读 `2026-09-25`；021 对该文件的改动**只有** `FORMS = declared_forms(...)` 三行）
+    ⇒ **与 021 判据无关**、**当日已修复**（两处 `RecordingChannelCall` 传 `clock=lambda: MOMENT`，同该文件既有口径）；
+    修复后 `tests/unit/test_billing_channels.py` 复跑绿（并入下条 ① 的 **111 passed**）⇒ 该 20 文件子集**现已全绿**。
+  - **清单工具两处缺陷的修复（2026-09-26，机制侧，`ops/form_onboarding.py`）**：① 给 git 调用加
+    `-c core.quotePath=false` ⇒ **非 ASCII 路径逐字还原**（此前中文文档被 C 转义引号带偏、误判 `out_of_scope`）；
+    ② `README.md`（仓库根）纳入 `test_doc` 放行面（裁决：交付文档不是模块逻辑改动；六目录既有文件修改与
+    新增 `ops/**` **仍越界**，牙齿不变）。**实测**：以 `75181dc` 为基线的 `onboarding` 输出里
+    `README.md` 与 `docs/三期立项书.md` **均为 `test_doc`**，**唯一**越界项是 `ops/form_onboarding.py`
+    ——**本次修复本身**（`ops/**` 任何改动按判据越界；未提交 ⇒ 位于基线之后）⇒ 待该修复**提交**并把
+    基线/`MECHANISM_LANDED_REF` 前移后即为 `violations []`（判据未改）。回归用例：
+    `tests/unit/test_form_onboarding.py::Test非ASCII路径与文档放行面`。
+  - **`onboarding` 的文档面口径（2026-09-26 修复后已可复跑）**：工作树**含 stage 10 文档收口**时，
+    `README.md` 与 `docs/**`（含中文路径）均归 **`test_doc`**、`violations []`、退出码 0——修复与回归用例
+    见 `docs/三期立项书.md` 的 G5 交付说明"如实登记"④（`README.md` 放行裁决 + `git -c core.quotePath=false`
+    的路径解码；六目录既有文件修改与新增 `ops/**` **仍越界**，牙齿不变）。
+- **未跑（覆盖率 / 契约两条腿 / 集成 / 对抗 / 无偏性 / 全量 unit）**：**由父代理在宿主机执行**，本次交付纪律
+  不在本机跑；本节**如实留白**、不预填结论，属常驻 CI 与定时工作流面；口径**不放松**（覆盖率 ≥85% 含 `web`）。
 - **待业务侧裁决（开放问题，不属本特性可交付面）**：① 广告 / 漫剧形态的**真实业务定义**
   （受众 / 指标口径 / 素材规格 / 评估器组合的业务正确性）与"最小可行形态"的签字形式；
   ② 广告 / 漫剧的**真实节律是否落在 `calibration.period_days ∈ {1,7}` 内**——本特性**不扩量纲**

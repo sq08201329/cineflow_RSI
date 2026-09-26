@@ -572,9 +572,94 @@ uv run python ops/transfer.py transfer-report --data-dir calibration
 - **迁移不迁权重**：`conclusion` 内**禁止**出现权重键（结构断言），`transfer.py` 零 `refit` import、
   零 `write` 入口到树/库；跨形态迁移的**真实覆盖天数**是**装配面声明的观测**并在条件条目里标注其来源
   （离线演练夹具标 `fixture_drill`，**不得**据以宣称真实回流已达成）；
-- **明确不做**：G5 多形态插件验证、B 路径真实生成厂商对接（见
-  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md)）、多租户/公网服务化、
+- **明确不做**：B 路径真实生成厂商对接（见
+  [docs/二期升级路径-真实生成与投放.md](docs/二期升级路径-真实生成与投放.md)）；G5 多形态插件验证
+  **已由 [形态插件扩展性验证（功能 021）](#形态插件扩展性验证功能-021) 交付**（020 自身不含该项）；多租户/公网服务化、
   自动权重迁移、Decimal 金额重构、web 侧写入口。
+
+## 形态插件扩展性验证（功能 021）
+
+把"新形态接入 = 仅新增配置 + 评估器插件"从**口号**变成**可审计的机制**：广告（`ad`）与漫剧（`animated`）
+两形态**只新增配置与插件**即从配置跑到跑通，且"**静态断言无形态分支**"两层常驻。**机制侧的改动是本特性的
+代码改动主体**（六项总账，见下）——只有**此后**的新形态接入才是"仅新增配置 + 插件"。
+契约落点 `specs/021-form-plugin-validation/contracts/`（C1~C14）；形态差异的**唯一载体**仍是 `configs/*.yaml`
+（与 [短剧形态的真实投放与日级回流（功能 020）](#短剧形态的真实投放与日级回流功能-020)、
+[短剧形态试水作品（功能 015）](#短剧形态试水作品功能-015) 同一口径）。
+
+- **声明面**：`evaluators.plugins.<agent>.<slot>.<evaluator_id>.{impl, version, params}` ——
+  **配置声明集 = 可用插件全集**、**目录不决定可用性**（插件文件放进目录但不在配置里声明 ⇒ 装配期**不可用**）；
+  叶子键**恰好三键**（缺任一 / 出现第四键 ⇒ `PluginDeclarationError`），参数**全部来自 `params` 或注入槽位**
+  （缺项即报错、**不取码内默认**；签名含 `*args`/`**kwargs` ⇒ 报错）。
+- **唯一装配点与通用参数通道**：`core/evaluators/plugin.py` 的 `parse_manifest(document, agent, *, slots)` /
+  `assemble(manifest, *, agent_config, gateway=None, artifacts=None, registry=None)`——`impl`（`module:attr`）
+  的**唯一解析点**，纯关键字注入、按签名 opt-in（`INJECTION_SLOTS = ("agent_config","gateway","artifacts","registry")`）；
+  该模块**零 Agent 名、零形态名、零形态分支**；六个既有装配函数**签名与返回形状逐字不变**（只换函数体 ⇒ 委派）。
+- **扫描面补面 + 形态名派生**：`ops/form_guard.py` 是**单一实现**（副本数 ⇒ 1）——扫描面 = `core/` + `agents/`
+  **含 `agents/pilot`**（020 登记的盲区已补去），形态名一律由 `configs/*.yaml` 的 `form:` 与 `form_aliases`
+  派生（**人工常量清单 0**）；两层扫描（形态**字面量** + 形态**判断分支**）在 `guard` 下**零违规**；
+  **全仓形式枚举普查（含函数体内元组与装饰器实参）命中数恒 0**。
+- **五处登记点与登记完备口径**：① `tests/unit/test_form_switch.py` ② `tests/unit/test_config_integrity.py`
+  ③ `tests/contract/test_pilot_contracts.py` ④ `agents/pilot/pilot.py` 的 `config_completeness`
+  ⑤ `tests/conftest.py`——①②③⑤ 由 `declared_forms()` 派生、④ 按**配置路径**通用；"恰好两份"升级为
+  **登记完备三条**（`form:` 取值两两唯一 ∧ 派生形态集与各登记点**双向相等** ∧ 配置数 ≥ 2，下界保留）；
+  **不新造第六处**（反向扫描常驻）。
+- **接入改动清单与三步验收流程**：`ops/form_onboarding.py` 由 git 派生（**含未跟踪新增文件**）逐条判类别
+  （`config` / `plugin` / `test_doc` / `out_of_scope`），`counts["既有模块被修改"]` 必须为 **0**、
+  越界 ⇒ 退出码 **1** 且**逐条点名**；产物 append-only，含 `baseline_ref` / `mechanism_ledger_ref` /
+  `config_fingerprint`（BLAKE3 前 12 位）。**三步不得颠倒**：① 机制支线提交（打一个 ref）→
+  ② 以 ① 为基线做新形态接入（**只新增配置 + 插件**，外加测试与文档）→ ③ `onboarding --baseline <①>`
+  必须 `violations == []`。**反证**：以 ① **之前**的 ref 为基线 ⇒ `violations` 必然非空且逐条命中 `modified` 项。
+- **CLI 四子命令**（`ops/form_plugin.py`；退出码 `0` 通过 / `1` 判定失败或越界 / `2` 用法或配置错误）：
+  `guard [--configs-dir configs] [--roots core agents]`、`registration --config <路径>`、
+  `onboarding --baseline <ref> --config <路径> --out <目录>`、`sync-versions --check|--write --config <路径>`
+  （门禁只跑 `--check`，**禁止**以改写权威配置换取绿灯）。
+- **形态无关的离线九步演示**：`ops/demo_form_plugin.py`（**A5 创建**、机制侧资产、对**任何已声明形态零改动**
+  即可演示）——配置加载与预检 → 缺项即拒绝 → 插件装配 → 评估与合成分数 → 留痕 → 两形态共用同一份插件代码
+  → 静态守卫 → 登记点完备 → 诚实分层与零成本；`--out` **一律落临时目录**（仓库根零新增文件）；
+  未声明形态 ⇒ 退出码 **2**。
+- **机制侧六项总账（明文：不得表述为零代码改动，FR-013 末句）**：① 配置驱动的插件声明与唯一装配点
+  ② 扫描面补面 ③ 形态名派生 + 三副本委派收敛 + 枚举普查清零 ④ `agents/pilot/pilot.py` 裸词收敛 +
+  020 口径逐项机检 ⑤ "恰好两份"升级为**登记完备** ⑥ 接入改动清单机检 + CLI + 演示。
+  机制侧**必然含 `modified` 项**——这正是"机制侧不是零代码改动"的机器证明。总账逐条见
+  [quickstart 的"机制侧总账"](specs/021-form-plugin-validation/quickstart.md)。
+
+```bash
+# 守卫与派生面（退出码 0：字面量层 0 违规 + 分支层 0 违规 + E1 例外恰好 1 处）
+uv run python ops/form_plugin.py guard
+# 五处登记点逐一"已登记 + 已委派" + 登记完备三条 + 无第六处
+uv run python ops/form_plugin.py registration --config configs/ad.yaml
+# 版本声明与实现的一致性（只校验、不回写）
+uv run python ops/form_plugin.py sync-versions --check --config configs/movie.yaml
+# 接入改动清单（基线 = 机制落地 ref；--out 必须落临时目录）
+uv run python ops/form_plugin.py onboarding --baseline <机制落地 ref> --config configs/ad.yaml --out "$(mktemp -d)"
+# 形态无关的离线九步演示（形态集合遍历 declared_forms()；未声明形态 ⇒ 退出码 2）
+uv run python ops/demo_form_plugin.py --form ad --out "$(mktemp -d)"
+
+# 单元面（装配 / 守卫 / 登记 / 020 口径完备 / 清单机制 / 零新增依赖）
+uv run pytest tests/unit/test_evaluator_plugin_assembly.py tests/unit/test_form_guard.py \
+               tests/unit/test_form_registration.py tests/unit/test_form_clause_completeness.py \
+               tests/unit/test_form_onboarding.py tests/unit/test_form_no_new_dependency.py -q
+uv run pytest tests/contract/test_plugin_contracts.py tests/contract/test_form_onboarding_contracts.py -q
+```
+
+### 诚实边界（与验收口径一致）
+
+- **"机制已就绪 / 广告与漫剧的业务定义未标定"**：`ad` / `animated` 按**最小可行形态**接入
+  （`pilot.rehearsal.status: unstandardized` + 五段段级 `note` + 产物 `uncalibrated_reason` **三层标注**；
+  **最小形态不声明 judge ⇒ 演示不构造 `LLMGateway`**，零花费/零网络/零凭证是**结构性事实**）；
+  受众 / 指标口径 / 素材规格 / 评估器组合的业务正确性 / 平台名 / 预算档数字均属**业务侧输入**，
+  未给定期间**不发明数字**；**真实节律**若确需 `{1,7}` 之外的量纲 ⇒ **另立特性**
+  （本特性不扩量纲，`core/calibration/periods.py` 一字不改）。
+- **触及的宪章条款与合规方式**（逐条，**含"不触及"的显式理由**：原则四——本特性无新增策略执行面、
+  不触模拟器、不引入新的执行路径）与**复杂度论证核销**（新增抽象逐项给出"落地路径 / 为什么既有能力不足 /
+  被否决的更简方案"）见 [docs/三期立项书.md](docs/三期立项书.md) 的 **G5 交付说明**。
+- **零新增运行时依赖**（FR-012）：常驻用例断言"当前依赖集合 == 基线快照"（`pyproject.toml` 的
+  `dependencies`/`optional-dependencies` + `uv.lock` 包名），差集**逐条点名**；
+  `grep -n "entry_points" pyproject.toml` ⇒ **0 命中**（不引入第三方插件框架）。
+- **回放对比证据 / N/A 理由**：新增插件附**回放对比证据**（同一工件、同一配置各跑一次 + **确定性复跑一致**）；
+  **既有评估器零行为变更** ⇒ 回放对比**不适用**，理由与证据面（装配序列基线夹具
+  `tests/unit/fixtures/evaluator_assembly_baseline.json` + 实现文件零改动机检）登记在 G5 交付说明——
+  **"不适用"也写明理由，不省略**。
 
 ## 电影长片全链路（功能 018）
 
