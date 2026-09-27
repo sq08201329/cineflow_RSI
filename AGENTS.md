@@ -61,3 +61,17 @@
 - 既有评估器实现文件**零改动**（文件字节进 `implementation_version` 哈希）；历史产物**零回改**。
 - 偏离、失败、未验证项**必须如实登记**（写进 `tasks.md` 的批次登记或交付总览），**不得**用未跑的结果充证据。
 - 子代理一律**不提交**；`git add`/`commit` 由父代理做。
+
+## 5. 推送 GitHub（WSL 中转通道）
+
+WSL 里 github.com 被解析到回环（不可直连），推送走「WSL → 本地裸仓 → Windows 中转 → GitHub」：
+
+1. **WSL 侧**：`git push win main`（远端 `win` = `/mnt/d/repos/cineflow_RSI.git` 裸仓）。
+2. **Windows 侧**（可从 WSL 用 interop 直接调）：
+   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'D:\repos\push-to-github.ps1' -ExpectSha <本地 HEAD 短 sha> -NoForce`
+   - `-ExpectSha` 必须传：锁定裸仓指针与本地 HEAD 一致，防推错版本。
+   - `-NoForce` 优先（快进）；仅远端历史有污点时才去掉它走脚本默认的 force。
+   - 连接被重置属常见网络抖动，**直接重试**；凭证在 Windows 凭证助手里（HTTPS）。
+3. **核验**：`powershell.exe -NoProfile -Command "git ls-remote https://github.com/sq08201329/cineflow_RSI.git main"` 与本地 HEAD 逐字一致。
+4. 脚本自带护栏：每次重 clone 且禁 autocrlf（`policies/history` 文件名=内容 BLAKE3，行尾转换会破坏不变量）、
+   工作区脏即拒推。脚本的坑位说明见 `/mnt/d/repos/push-to-github.ps1` 头部注释。
